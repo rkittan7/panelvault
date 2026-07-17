@@ -633,7 +633,7 @@ struct DashboardView: View {
         case .boardTypes:
           BoardTypesSheet(theme: theme, boardTypes: boardTypes)
         case .recentProjects:
-          ProjectsListSheet(theme: theme, projects: projects, boards: $boards, boardTypes: boardTypes, manufacturers: manufacturers)
+          ProjectsListSheet(theme: theme, projects: $projects, boards: $boards, boardTypes: boardTypes, manufacturers: manufacturers)
         case .stats:
           DashboardStatsSheet(theme: theme, projects: projects, boardCount: boardCount)
         case .companies:
@@ -669,6 +669,9 @@ struct DashboardView: View {
         for index in boards.indices where boards[index].project == previousName {
           boards[index].project = updatedProject.name
         }
+      } onDeleteProject: {
+        deleteProject(project)
+        selectedProject = nil
       }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -676,7 +679,10 @@ struct DashboardView: View {
     .sheet(item: selectedBoardBinding) { boardID in
       if let index = boards.firstIndex(where: { $0.id == boardID.id }) {
         NavigationStack {
-          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers) {
+          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+            deleteBoard(id: boardID.id)
+            selectedBoardID = nil
+          }) {
             selectedBoardID = nil
           }
         }
@@ -708,6 +714,19 @@ struct DashboardView: View {
     recentVisits.removeAll { $0.kind == kind && $0.itemID == id }
     recentVisits.insert(RecentVisit(kind: kind, id: id), at: 0)
     recentVisits = Array(recentVisits.prefix(12))
+  }
+
+  private func deleteProject(_ project: ProjectItem) {
+    projects.removeAll { $0.id == project.id }
+    for index in boards.indices where boards[index].project == project.name {
+      boards[index].project = "No Project"
+    }
+    recentVisits.removeAll { $0.kind == .project && $0.itemID == project.id }
+  }
+
+  private func deleteBoard(id: String) {
+    boards.removeAll { $0.id == id }
+    recentVisits.removeAll { $0.kind == .board && $0.itemID == id }
   }
 
   private var selectedBoardBinding: Binding<RecentBoardSelection?> {
@@ -2335,6 +2354,38 @@ struct DeleteIconButton: View {
   }
 }
 
+struct DeleteRecordButton: View {
+  let title: String
+  let itemName: String
+  let action: () -> Void
+  @State private var confirmingDelete = false
+
+  var body: some View {
+    Button(role: .destructive) {
+      confirmingDelete = true
+    } label: {
+      Label(title, systemImage: "trash.fill")
+        .font(.system(size: 16, weight: .bold))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .foregroundStyle(Color(hex: 0xFF6B6B))
+        .background(Color(hex: 0xD94B4B).opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(Color(hex: 0xFF6B6B).opacity(0.32), lineWidth: 1)
+        )
+    }
+    .buttonStyle(PanelPressButtonStyle())
+    .confirmationDialog("Delete \(itemName)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+      Button(title, role: .destructive, action: action)
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This action cannot be undone.")
+    }
+  }
+}
+
 struct AccentChoice: Identifiable {
   let id: UInt32
   let name: String
@@ -2556,7 +2607,7 @@ struct ProjectDetailSheet: View {
   @State private var projectSchemes: [SchemeAttachment]
   @State private var hasDueDate: Bool
   @State private var dueDate: Date
-  @State private var isEditing = false
+  @State private var editOpen = false
   @State private var attachBoardsOpen = false
 
   init(
@@ -2616,46 +2667,22 @@ struct ProjectDetailSheet: View {
             saveProjectChanges()
           }
 
-          if isEditing {
-            ProjectEditPanel(theme: theme, projectColor: $projectColor) {
-              saveProjectChanges()
-            } onDelete: {
-              onDeleteProject?()
-              dismiss()
-            }
-          }
-
           GlassCard(theme: theme) {
             VStack(alignment: .leading, spacing: 10) {
               Label("Project Properties", systemImage: "folder.fill")
                 .font(.headline)
                 .foregroundStyle(projectColor)
 
-              if isEditing {
-                CreationTextInput(theme: theme, title: "Project name", placeholder: "Project name", symbol: "folder.fill", text: $projectName, capitalization: .words)
-                  .onChange(of: projectName) { _ in saveProjectChanges() }
-                CreationTextInput(theme: theme, title: "Customer", placeholder: "Customer", symbol: "person.crop.circle.fill", text: $customer, capitalization: .words)
-                  .onChange(of: customer) { _ in saveProjectChanges() }
-                CreationTextInput(theme: theme, title: "Project detail", placeholder: "Site or notes", symbol: "mappin.and.ellipse", text: $detail, capitalization: .words)
-                  .onChange(of: detail) { _ in saveProjectChanges() }
-                CreationToggleInput(theme: theme, title: "Expected finish date", symbol: "clock.badge.exclamationmark.fill", isOn: $hasDueDate)
-                  .onChange(of: hasDueDate) { _ in saveProjectChanges() }
-                if hasDueDate {
-                  CreationDateInput(theme: theme, title: "Due", symbol: "calendar.badge.clock", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
-                    .onChange(of: dueDate) { _ in saveProjectChanges() }
-                }
-              } else {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(projectName)
-                    .font(.title2.bold())
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                  Text(customer.isEmpty ? "No customer selected" : customer)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                }
+              VStack(alignment: .leading, spacing: 4) {
+                Text(projectName)
+                  .font(.title2.bold())
+                  .lineLimit(2)
+                  .minimumScaleFactor(0.72)
+                Text(customer.isEmpty ? "No customer selected" : customer)
+                  .font(.subheadline.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                  .lineLimit(2)
+                  .minimumScaleFactor(0.72)
               }
 
               ProjectPropertiesOverview(
@@ -2739,8 +2766,10 @@ struct ProjectDetailSheet: View {
       .navigationTitle(projectName)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
-          Button(isEditing ? "Done Editing" : "Edit") {
-            isEditing.toggle()
+          Button("Edit") {
+            withAnimation(.easeInOut(duration: 0.24)) {
+              editOpen = true
+            }
           }
           .fontWeight(.bold)
         }
@@ -2751,7 +2780,10 @@ struct ProjectDetailSheet: View {
       .sheet(item: $selectedBoard) { board in
         NavigationStack {
           if let index = boards.firstIndex(where: { $0.id == board.id }) {
-            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers) {
+            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+              boards.removeAll { $0.id == board.id }
+              selectedBoard = nil
+            }) {
               selectedBoard = nil
             }
           } else {
@@ -2765,6 +2797,27 @@ struct ProjectDetailSheet: View {
         BoardAttachPickerSheet(theme: theme, projectName: projectName, projectCustomer: customer, boards: $boards)
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
+      }
+      .sheet(isPresented: $editOpen) {
+        ProjectEditSheet(
+          theme: theme,
+          projectName: $projectName,
+          customer: $customer,
+          detail: $detail,
+          projectColor: $projectColor,
+          hasDueDate: $hasDueDate,
+          dueDate: $dueDate,
+          onSave: saveProjectChanges,
+          onDelete: onDeleteProject.map { deleteProject in
+            {
+              deleteProject()
+              dismiss()
+            }
+          }
+        )
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(30)
       }
     }
   }
@@ -2969,7 +3022,7 @@ struct DueDateBadge: View {
       Text(DateDisplay.due.string(from: date))
         .font(.system(size: compact ? 10 : 12, weight: .black))
         .lineLimit(1)
-        .minimumScaleFactor(0.84)
+        .fixedSize(horizontal: true, vertical: false)
     }
     .foregroundStyle(color)
     .padding(.horizontal, compact ? 8 : 10)
@@ -2981,6 +3034,8 @@ struct DueDateBadge: View {
         .stroke(color.opacity(0.34), lineWidth: 1)
     )
     .shadow(color: color.opacity(0.22), radius: compact ? 4 : 7, y: 1)
+    .fixedSize(horizontal: true, vertical: false)
+    .layoutPriority(2)
   }
 }
 
@@ -3144,6 +3199,64 @@ struct ProjectEditPanel: View {
           DeleteIconButton(theme: theme, action: onDelete)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
+      }
+    }
+  }
+}
+
+struct ProjectEditSheet: View {
+  let theme: PanelTheme
+  @Binding var projectName: String
+  @Binding var customer: String
+  @Binding var detail: String
+  @Binding var projectColor: Color
+  @Binding var hasDueDate: Bool
+  @Binding var dueDate: Date
+  let onSave: () -> Void
+  var onDelete: (() -> Void)? = nil
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          CreationFormSection(theme: theme, title: "Project Details", symbol: "folder.fill", subtitle: "Identity and customer") {
+            CreationTextInput(theme: theme, title: "Project name", placeholder: "Project name", symbol: "folder.fill", text: $projectName, capitalization: .words)
+            CreationTextInput(theme: theme, title: "Customer", placeholder: "Customer", symbol: "person.crop.circle.fill", text: $customer, capitalization: .words)
+            CreationTextInput(theme: theme, title: "Project detail", placeholder: "Site or notes", symbol: "mappin.and.ellipse", text: $detail, capitalization: .words)
+          }
+
+          CreationFormSection(theme: theme, title: "Schedule & Appearance", symbol: "slider.horizontal.3") {
+            CreationToggleInput(theme: theme, title: "Expected finish date", symbol: "clock.badge.exclamationmark.fill", isOn: $hasDueDate)
+            if hasDueDate {
+              CreationDateInput(theme: theme, title: "Due", symbol: "calendar.badge.clock", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
+            }
+            BoardColorEditPicker(title: "Project color", color: $projectColor)
+          }
+
+          if let onDelete {
+            DeleteRecordButton(title: "Delete Project", itemName: projectName, action: onDelete)
+              .padding(.top, 8)
+          }
+          BottomTabClearance(height: 72)
+        }
+        .padding(18)
+      }
+      .scrollDismissesKeyboard(.interactively)
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Edit Project")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") {
+            onSave()
+            dismiss()
+          }
+          .fontWeight(.bold)
+        }
+      }
+      .onDisappear {
+        onSave()
       }
     }
   }
@@ -3316,7 +3429,7 @@ struct BoardBulletList: View {
 
 struct ProjectsListSheet: View {
   let theme: PanelTheme
-  let projects: [ProjectItem]
+  @Binding var projects: [ProjectItem]
   @Binding var boards: [BoardDraft]
   let boardTypes: [BoardType]
   let manufacturers: [ManufacturerItem]
@@ -3349,7 +3462,21 @@ struct ProjectsListSheet: View {
         }
       }
       .sheet(item: $selectedProject) { project in
-          ProjectDetailSheet(theme: theme, project: project, boards: $boards, boardTypes: boardTypes, manufacturers: manufacturers)
+        ProjectDetailSheet(theme: theme, project: project, boards: $boards, boardTypes: boardTypes, manufacturers: manufacturers) { _ in
+        } onUpdateProject: { updatedProject, previousName in
+          if let index = projects.firstIndex(where: { $0.id == updatedProject.id }) {
+            projects[index] = updatedProject
+          }
+          for index in boards.indices where boards[index].project == previousName {
+            boards[index].project = updatedProject.name
+          }
+        } onDeleteProject: {
+          projects.removeAll { $0.id == project.id }
+          for index in boards.indices where boards[index].project == project.name {
+            boards[index].project = "No Project"
+          }
+          selectedProject = nil
+        }
       }
     }
   }
@@ -4981,7 +5108,9 @@ struct CreatedBoardScreen: View {
       }
       ToolbarItem(placement: .topBarTrailing) {
         Button("Edit") {
-          editOpen = true
+          withAnimation(.easeInOut(duration: 0.24)) {
+            editOpen = true
+          }
         }
         .fontWeight(.bold)
       }
@@ -4990,6 +5119,7 @@ struct CreatedBoardScreen: View {
       BoardEditSheet(theme: theme, board: $board, boardTypes: boardTypes, manufacturers: manufacturers, onDelete: onDeleteBoard)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .presentationCornerRadius(30)
     }
     .fullScreenCover(isPresented: $catalogOpen) {
       NavigationStack {
@@ -5183,11 +5313,11 @@ struct BoardEditSheet: View {
           }
 
           if let onDelete {
-            DeleteIconButton(theme: theme) {
+            DeleteRecordButton(title: "Delete Board", itemName: board.name) {
               onDelete()
               dismiss()
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.top, 8)
           }
           BottomTabClearance(height: 84)
         }
@@ -6231,7 +6361,12 @@ struct PhotoPickerSection: View {
       var images: [UIImage] = []
       for item in items {
         if let data = try? await item.loadTransferable(type: Data.self),
-           let image = UIImage(data: data) {
+           let image = await Task.detached(priority: .userInitiated, operation: {
+             guard let decodedImage = UIImage(data: data) else { return nil as UIImage? }
+             let preparedImage = ImageArchive.preparedForStorage(decodedImage)
+             ImageArchive.warmCache(for: preparedImage)
+             return preparedImage
+           }).value {
           images.append(image)
         }
       }
@@ -6688,13 +6823,24 @@ struct SearchView: View {
           for index in boards.indices where boards[index].project == previousName {
             boards[index].project = updatedProject.name
           }
+        } onDeleteProject: {
+          projects.removeAll { $0.id == project.id }
+          for index in boards.indices where boards[index].project == project.name {
+            boards[index].project = "No Project"
+          }
+          recentVisits.removeAll { $0.kind == .project && $0.itemID == project.id }
+          selectedProject = nil
         }
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
       }
       .sheet(item: $selectedBoard) { board in
         if let index = boards.firstIndex(where: { $0.id == board.id }) {
-          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers) {
+          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+            boards.removeAll { $0.id == board.id }
+            recentVisits.removeAll { $0.kind == .board && $0.itemID == board.id }
+            selectedBoard = nil
+          }) {
             selectedBoard = nil
           }
         } else {
@@ -10200,12 +10346,23 @@ struct PanelVaultSnapshot: Codable {
 }
 
 enum ImageArchive {
+  private static let encodedImageCache = NSCache<UIImage, NSString>()
+
   static func encode(_ image: UIImage?) -> String? {
     guard let image else { return nil }
-    if image.hasTransparency, let data = image.pngData() {
-      return data.base64EncodedString()
+    if let cached = encodedImageCache.object(forKey: image) {
+      return cached as String
     }
-    return image.jpegData(compressionQuality: 0.72)?.base64EncodedString()
+    let encoded: String?
+    if image.hasTransparency, let data = image.pngData() {
+      encoded = data.base64EncodedString()
+    } else {
+      encoded = image.jpegData(compressionQuality: 0.72)?.base64EncodedString()
+    }
+    if let encoded {
+      encodedImageCache.setObject(encoded as NSString, forKey: image)
+    }
+    return encoded
   }
 
   static func encode(_ images: [UIImage]) -> [String] {
@@ -10214,7 +10371,9 @@ enum ImageArchive {
 
   static func decode(_ rawValue: String?) -> UIImage? {
     guard let rawValue, let data = Data(base64Encoded: rawValue) else { return nil }
-    return UIImage(data: data)
+    guard let image = UIImage(data: data) else { return nil }
+    encodedImageCache.setObject(rawValue as NSString, forKey: image)
+    return image
   }
 
   static func decode(_ rawValues: [String]?) -> [UIImage] {
@@ -10224,6 +10383,27 @@ enum ImageArchive {
   static func signature(for image: UIImage?) -> String {
     guard let image else { return "no-image" }
     return "\(Int(image.size.width))x\(Int(image.size.height)):\(image.scale):\(image.imageOrientation.rawValue):\(ObjectIdentifier(image).hashValue)"
+  }
+
+  static func warmCache(for image: UIImage) {
+    _ = encode(image)
+  }
+
+  static func preparedForStorage(_ image: UIImage, maximumDimension: CGFloat = 2200) -> UIImage {
+    let longestSide = max(image.size.width, image.size.height)
+    guard longestSide > maximumDimension else { return image }
+
+    let scale = maximumDimension / longestSide
+    let targetSize = CGSize(
+      width: max((image.size.width * scale).rounded(), 1),
+      height: max((image.size.height * scale).rounded(), 1)
+    )
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    format.opaque = !image.hasTransparency
+    return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: targetSize))
+    }
   }
 }
 
