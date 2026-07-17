@@ -88,12 +88,15 @@ struct PanelVaultAppView: View {
       }
     }
     .onChange(of: projectPersistenceSignature) { _ in
+      applyCustomerColors()
       schedulePersistSnapshot()
     }
     .onChange(of: boardPersistenceSignature) { _ in
+      applyCustomerColors()
       schedulePersistSnapshot()
     }
     .onChange(of: customerPersistenceSignature) { _ in
+      applyCustomerColors()
       schedulePersistSnapshot()
     }
     .onChange(of: companyPersistenceSignature) { _ in
@@ -161,7 +164,7 @@ struct PanelVaultAppView: View {
           createdBoards.insert(board, at: 0)
           let trimmedCustomer = board.customer.trimmingCharacters(in: .whitespacesAndNewlines)
           if !trimmedCustomer.isEmpty && !customers.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmedCustomer) == .orderedSame }) {
-            customers.insert(CustomerItem(name: trimmedCustomer), at: 0)
+            customers.insert(CustomerItem(name: trimmedCustomer, colorHex: board.color.archiveHex), at: 0)
           }
           persistSnapshot()
         },
@@ -173,6 +176,10 @@ struct PanelVaultAppView: View {
         },
         onCreateProject: { project in
           projects.insert(project, at: 0)
+          let trimmedCustomer = project.customer.trimmingCharacters(in: .whitespacesAndNewlines)
+          if !trimmedCustomer.isEmpty && !customers.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmedCustomer) == .orderedSame }) {
+            customers.insert(CustomerItem(name: trimmedCustomer, colorHex: project.color.archiveHex), at: 0)
+          }
           pendingProjectOpenID = project.id
           archiveMode = .projects
           archiveStatusFilter = "All"
@@ -212,12 +219,44 @@ struct PanelVaultAppView: View {
     guard let snapshot = PanelVaultSnapshot.decode(savedSnapshot) else { return }
     projects = snapshot.projects.map(\.project)
     createdBoards = snapshot.boards.map(\.board)
-    customers = snapshot.customers.map(\.customer)
+    customers = snapshot.customers.map { record in
+      var customer = record.customer
+      if record.colorHex == nil {
+        customer.colorHex = projects.first(where: {
+          $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame
+        })?.color.archiveHex ?? createdBoards.first(where: {
+          $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame
+        })?.color.archiveHex ?? 0x5E78FF
+      }
+      return customer
+    }
     if let savedCompanies = snapshot.companies {
       contractorCompanies = savedCompanies.map(\.company)
     }
     if let savedManufacturers = snapshot.manufacturers {
       manufacturers = savedManufacturers.map(\.manufacturer)
+    }
+    applyCustomerColors()
+  }
+
+  private func applyCustomerColors() {
+    for index in createdBoards.indices {
+      guard !createdBoards[index].customer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+      guard let customer = customers.first(where: {
+        $0.name.localizedCaseInsensitiveCompare(createdBoards[index].customer) == .orderedSame
+      }) else { continue }
+      if createdBoards[index].color.archiveHex != customer.colorHex {
+        createdBoards[index].color = customer.color
+      }
+    }
+    for index in projects.indices {
+      guard !projects[index].customer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+      guard let customer = customers.first(where: {
+        $0.name.localizedCaseInsensitiveCompare(projects[index].customer) == .orderedSame
+      }) else { continue }
+      if projects[index].color.archiveHex != customer.colorHex {
+        projects[index].color = customer.color
+      }
     }
   }
 
@@ -2090,16 +2129,20 @@ struct DashboardBoardProgressRow: View {
     8 + (progress * 20)
   }
 
-  private var timingText: String {
-    "\(board.number) • \(board.type) • \(board.manufacturer)"
-  }
-
   var body: some View {
     GlassCard(theme: theme) {
-      HStack(spacing: 12) {
-        BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+      VStack(alignment: .leading, spacing: 9) {
+        HStack(spacing: 7) {
+          RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
+          RecentStatusBadge(status: board.statusTitle)
+          Spacer(minLength: 10)
+          RecentBoardTypeChip(boardType: boardType, color: board.color, minimumWidth: 108)
+        }
 
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 12) {
+          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+
+          VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 6) {
             Text(board.name)
               .font(.system(size: 17, weight: .heavy))
@@ -2108,12 +2151,21 @@ struct DashboardBoardProgressRow: View {
             if let dueDate = board.dueDate {
               DueDateBadge(date: dueDate, compact: true)
             }
+            Spacer(minLength: 5)
+            Text("\(board.completion)%")
+              .font(.system(size: 17, weight: .black))
+              .foregroundStyle(progressColor)
+              .monospacedDigit()
+            Image(systemName: "chevron.right")
+              .font(.system(size: 13, weight: .bold))
+              .foregroundStyle(.secondary)
           }
-          Text(timingText)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
+          HStack(spacing: 5) {
+            RecentBoardInfoChip(symbol: "number", text: board.number, color: board.color)
+            RecentBoardInfoChip(symbol: "bolt.shield.fill", text: board.mainBreakerType, color: Color(hex: 0x64D2FF))
+            RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
+          }
+          .fixedSize(horizontal: false, vertical: true)
           GeometryReader { proxy in
             ZStack(alignment: .leading) {
               Capsule()
@@ -2131,22 +2183,10 @@ struct DashboardBoardProgressRow: View {
             }
           }
           .frame(height: 7)
+          }
         }
-
-        Spacer()
-
-        HStack(spacing: 8) {
-          Text("\(board.completion)%")
-            .font(.system(size: 17, weight: .black))
-            .foregroundStyle(progressColor)
-            .monospacedDigit()
-          Image(systemName: "chevron.right")
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(.secondary)
-        }
-        .frame(width: 76, alignment: .trailing)
       }
-      .frame(minHeight: 74)
+      .frame(minHeight: 104)
     }
     .background(progressColor.opacity(0.06 + Double(progress) * 0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     .overlay(
@@ -2247,31 +2287,34 @@ struct DashboardBoardRecentRow: View {
 
   var body: some View {
     GlassCard(theme: theme) {
-      HStack(spacing: 12) {
-        BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
-        VStack(alignment: .leading, spacing: 5) {
-          HStack(spacing: 7) {
-            RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
-            RecentStatusBadge(status: board.statusTitle)
-          }
-          Text(board.name)
-            .font(.system(size: 17, weight: .heavy))
-            .lineLimit(1)
-            .minimumScaleFactor(0.65)
-          Text("\(board.number) • \(board.type) • \(board.ampere)")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-          Text(board.manufacturer)
-            .font(.caption2.bold())
-            .foregroundStyle(board.color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
+      VStack(alignment: .leading, spacing: 9) {
+        HStack(spacing: 7) {
+          RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
+          RecentStatusBadge(status: board.statusTitle)
+          Spacer(minLength: 10)
+          RecentBoardTypeChip(boardType: boardType, color: board.color, minimumWidth: 108)
         }
-        Spacer()
-        Image(systemName: "chevron.right")
-          .foregroundStyle(.secondary)
+
+        HStack(spacing: 12) {
+          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+          VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+              Text(board.name)
+                .font(.system(size: 17, weight: .heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+              Spacer(minLength: 5)
+              Image(systemName: "chevron.right")
+                .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 5) {
+              RecentBoardInfoChip(symbol: "number", text: board.number, color: board.color)
+              RecentBoardInfoChip(symbol: "bolt.shield.fill", text: board.mainBreakerType, color: Color(hex: 0x64D2FF))
+              RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+          }
+        }
       }
     }
     .background(board.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -2280,6 +2323,76 @@ struct DashboardBoardRecentRow: View {
         .stroke(board.color.opacity(0.24), lineWidth: 1)
     )
     .shadow(color: board.color.opacity(0.22), radius: 18, y: 7)
+  }
+}
+
+struct RecentBoardTypeChip: View {
+  let boardType: BoardType
+  let color: Color
+  var minimumWidth: CGFloat = 0
+
+  var body: some View {
+    HStack(spacing: 5) {
+      BoardTypeIcon(board: boardType, size: 18, overrideColor: color)
+      Text(boardType.name)
+        .font(.system(size: 11, weight: .black))
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+    .frame(minWidth: minimumWidth, alignment: .leading)
+    .foregroundStyle(color)
+    .padding(.horizontal, 7)
+    .padding(.vertical, 5)
+    .background(color.opacity(0.13))
+    .clipShape(Capsule())
+    .overlay(Capsule().stroke(color.opacity(0.24), lineWidth: 1))
+  }
+}
+
+struct RecentBoardInfoChip: View {
+  let symbol: String
+  let text: String
+  let color: Color
+
+  var body: some View {
+    HStack(spacing: 5) {
+      Image(systemName: symbol)
+        .font(.system(size: 10, weight: .black))
+      Text(text.isEmpty ? "-" : text)
+        .font(.system(size: 11, weight: .black))
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+    .foregroundStyle(color)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 5)
+    .background(color.opacity(0.12))
+    .clipShape(Capsule())
+    .overlay(Capsule().stroke(color.opacity(0.22), lineWidth: 1))
+  }
+}
+
+struct RecentManufacturerChip: View {
+  let manufacturer: ManufacturerItem?
+  let fallbackName: String
+
+  private var color: Color {
+    manufacturer?.color ?? Color(hex: 0xAEB4BC)
+  }
+
+  private var name: String {
+    let trimmed = fallbackName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return manufacturer?.name ?? (trimmed.isEmpty ? "Manufacturer" : trimmed)
+  }
+
+  var body: some View {
+    ManufacturerMarkView(manufacturer: manufacturer, fallbackName: name, size: 22)
+    .padding(.horizontal, 5)
+    .padding(.vertical, 3)
+    .background(color.opacity(0.13))
+    .clipShape(Capsule())
+    .overlay(Capsule().stroke(color.opacity(0.24), lineWidth: 1))
+    .accessibilityLabel(name)
   }
 }
 
@@ -2804,7 +2917,6 @@ struct ProjectDetailSheet: View {
           projectName: $projectName,
           customer: $customer,
           detail: $detail,
-          projectColor: $projectColor,
           hasDueDate: $hasDueDate,
           dueDate: $dueDate,
           onSave: saveProjectChanges,
@@ -2817,7 +2929,6 @@ struct ProjectDetailSheet: View {
         )
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(30)
       }
     }
   }
@@ -3172,44 +3283,11 @@ struct BoardPropertiesOverview: View {
   }
 }
 
-struct ProjectEditPanel: View {
-  let theme: PanelTheme
-  @Binding var projectColor: Color
-  let onChange: () -> Void
-  var onDelete: (() -> Void)? = nil
-
-  var body: some View {
-    GlassCard(theme: theme) {
-      VStack(alignment: .leading, spacing: 12) {
-        HStack {
-          Label("Edit Project", systemImage: "slider.horizontal.3")
-            .font(.headline)
-          Spacer()
-          Text("Color")
-            .font(.caption.bold())
-            .foregroundStyle(.secondary)
-        }
-
-        BoardColorEditPicker(title: "Project color", color: $projectColor)
-          .onChange(of: projectColor) { _ in
-            onChange()
-          }
-
-        if let onDelete {
-          DeleteIconButton(theme: theme, action: onDelete)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-      }
-    }
-  }
-}
-
 struct ProjectEditSheet: View {
   let theme: PanelTheme
   @Binding var projectName: String
   @Binding var customer: String
   @Binding var detail: String
-  @Binding var projectColor: Color
   @Binding var hasDueDate: Bool
   @Binding var dueDate: Date
   let onSave: () -> Void
@@ -3226,12 +3304,11 @@ struct ProjectEditSheet: View {
             CreationTextInput(theme: theme, title: "Project detail", placeholder: "Site or notes", symbol: "mappin.and.ellipse", text: $detail, capitalization: .words)
           }
 
-          CreationFormSection(theme: theme, title: "Schedule & Appearance", symbol: "slider.horizontal.3") {
+          CreationFormSection(theme: theme, title: "Schedule", symbol: "calendar.badge.clock") {
             CreationToggleInput(theme: theme, title: "Expected finish date", symbol: "clock.badge.exclamationmark.fill", isOn: $hasDueDate)
             if hasDueDate {
               CreationDateInput(theme: theme, title: "Due", symbol: "calendar.badge.clock", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
             }
-            BoardColorEditPicker(title: "Project color", color: $projectColor)
           }
 
           if let onDelete {
@@ -3781,6 +3858,36 @@ struct CreationPickerInput: View {
   }
 }
 
+struct ManufacturerPickerInput: View {
+  let theme: PanelTheme
+  let title: String
+  let value: String
+  let manufacturers: [ManufacturerItem]
+  let action: () -> Void
+
+  private var manufacturer: ManufacturerItem? {
+    syncedManufacturer(named: value, in: manufacturers)
+  }
+
+  var body: some View {
+    Button(action: action) {
+      CreationFieldShell(theme: theme, title: title, symbol: "building.2.fill") {
+        HStack(spacing: 7) {
+          ManufacturerMarkView(manufacturer: manufacturer, fallbackName: value, size: 24)
+          Text(value.isEmpty ? "Choose" : value)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+          Image(systemName: "chevron.right")
+            .font(.caption2.bold())
+        }
+        .font(.system(size: 15, weight: .bold))
+        .foregroundStyle(manufacturer?.color ?? theme.primary)
+      }
+    }
+    .buttonStyle(PanelPressButtonStyle())
+  }
+}
+
 struct CreationDateInput: View {
   let theme: PanelTheme
   let title: String
@@ -4300,7 +4407,6 @@ struct NewBoardView: View {
   @State private var mainBreakerType = "Main Breaker"
   @State private var mainBreakerModel = ManufacturerItem.defaults.first?.name ?? "ABB"
   @State private var mainBreakerAmpere = "630A"
-  @State private var selectedBoardColorHex: UInt32 = 0x5E78FF
   @State private var createdBoard: BoardDraft?
   @State private var mainBreakerOpen = false
   @State private var createdMessage = false
@@ -4348,6 +4454,18 @@ struct NewBoardView: View {
   private var suggestedGroup: String {
     guard let dashIndex = boardNumber.lastIndex(of: "-") else { return "" }
     return String(boardNumber[..<dashIndex])
+  }
+
+  private var assignedCustomerColor: Color {
+    if let customer = customers.first(where: {
+      $0.name.localizedCaseInsensitiveCompare(customerName) == .orderedSame
+    }) {
+      return customer.color
+    }
+    if let selectedProject = projects.first(where: { $0.name == project }) {
+      return selectedProject.color
+    }
+    return theme.primary
   }
 
   var body: some View {
@@ -4427,7 +4545,7 @@ struct NewBoardView: View {
             CreationPickerInput(theme: theme, title: "Subtype", symbol: "rectangle.grid.1x2.fill", value: boardSubtype) {
               pickerSheet = .subtype
             }
-            CreationPickerInput(theme: theme, title: "Board manufacturer", symbol: "building.2.fill", value: boardManufacturer) {
+            ManufacturerPickerInput(theme: theme, title: "Board manufacturer", value: boardManufacturer, manufacturers: manufacturers) {
               pickerSheet = .manufacturer
             }
             HStack(spacing: 10) {
@@ -4443,7 +4561,6 @@ struct NewBoardView: View {
             if hasFinishDate {
               CreationDateInput(theme: theme, title: "Finished date", symbol: "checkmark.seal.fill", selection: $boardFinishDate, displayedComponents: .date)
             }
-            ColorSwatchPicker(title: "Board card color", selectedHex: $selectedBoardColorHex)
           }
 
           CreationFormSection(theme: theme, title: "Project & Customer", symbol: "folder.badge.person.crop") {
@@ -4525,7 +4642,7 @@ struct NewBoardView: View {
       .navigationDestination(isPresented: $mainBreakerOpen) {
         MainBreakerStepView(
           theme: theme,
-          actionColor: Color(hex: selectedBoardColorHex),
+          actionColor: assignedCustomerColor,
           mainBreakerType: $mainBreakerType,
           mainBreakerModel: $mainBreakerModel,
           mainBreakerAmpere: $mainBreakerAmpere,
@@ -4554,7 +4671,7 @@ struct NewBoardView: View {
                 mainBreakerModel: mainBreakerModel.trimmingCharacters(in: .whitespacesAndNewlines),
                 mainBreakerAmpere: normalizedAmpere,
                 componentTypes: inferredComponentTypes(),
-                color: Color(hex: selectedBoardColorHex),
+                color: assignedCustomerColor,
                 schemeAttachments: pendingSchemeAttachments
               )
               onCreate(board)
@@ -4581,7 +4698,6 @@ struct NewBoardView: View {
               mainBreakerType = "Main Breaker"
               mainBreakerModel = manufacturerNames.first ?? "ABB"
               mainBreakerAmpere = "630A"
-              selectedBoardColorHex = 0x5E78FF
               pendingSchemeAttachments = []
               aiScanComplete = false
               createdMessage = true
@@ -4887,7 +5003,7 @@ struct MainBreakerStepView: View {
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Choose the breaker details") {
             CreationMenuInput(theme: theme, title: "Breaker type", symbol: "bolt.fill", value: mainBreakerType, options: ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"], selection: $mainBreakerType)
-            CreationPickerInput(theme: theme, title: "Manufacturer", symbol: "building.2.fill", value: mainBreakerModel) {
+            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: mainBreakerModel, manufacturers: manufacturers) {
               pickerSheet = .manufacturer
             }
             CreationPickerInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: mainBreakerAmpere) {
@@ -5119,7 +5235,6 @@ struct CreatedBoardScreen: View {
       BoardEditSheet(theme: theme, board: $board, boardTypes: boardTypes, manufacturers: manufacturers, onDelete: onDeleteBoard)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(30)
     }
     .fullScreenCover(isPresented: $catalogOpen) {
       NavigationStack {
@@ -5249,7 +5364,7 @@ struct CreatedBoardScreen: View {
       flushBoardSync()
     }
     pendingBoardSyncWorkItem = workItem
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: workItem)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: workItem)
   }
 
   private func flushBoardSync() {
@@ -5273,6 +5388,7 @@ struct BoardEditSheet: View {
   let manufacturers: [ManufacturerItem]
   var onDelete: (() -> Void)? = nil
   @Environment(\.dismiss) private var dismiss
+  @State private var pickerSheet: BoardEditPickerSheet?
 
   var body: some View {
     NavigationStack {
@@ -5286,9 +5402,15 @@ struct BoardEditSheet: View {
           }
 
           CreationFormSection(theme: theme, title: "Board Setup", symbol: "slider.horizontal.3") {
-            CreationMenuInput(theme: theme, title: "Board type", symbol: "square.grid.2x2.fill", value: board.type, options: boardTypeNames, selection: boardTypeBinding)
-            CreationMenuInput(theme: theme, title: "Subtype", symbol: "rectangle.grid.1x2.fill", value: board.subtype, options: BoardSubtypeCatalog.options(for: board.type), selection: subtypeBinding)
-            CreationMenuInput(theme: theme, title: "Manufacturer", symbol: "building.2.fill", value: board.manufacturer, options: manufacturerNames, selection: manufacturerBinding)
+            CreationPickerInput(theme: theme, title: "Board type", symbol: "square.grid.2x2.fill", value: board.type) {
+              pickerSheet = .boardType
+            }
+            CreationPickerInput(theme: theme, title: "Subtype", symbol: "rectangle.grid.1x2.fill", value: board.subtype) {
+              pickerSheet = .subtype
+            }
+            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: board.manufacturer, manufacturers: manufacturers) {
+              pickerSheet = .manufacturer
+            }
             HStack(spacing: 10) {
               CreationMenuInput(theme: theme, title: "Cabinets", symbol: "cabinet.fill", value: board.cabinetCount, options: (1...12).map(String.init), selection: $board.cabinetCount)
               CreationMenuInput(theme: theme, title: "Build", symbol: "rectangle.split.2x1.fill", value: board.buildFormat, options: ["Panels", "Plate"], selection: $board.buildFormat)
@@ -5303,12 +5425,13 @@ struct BoardEditSheet: View {
               CreationDateInput(theme: theme, title: "Finished date", symbol: "checkmark.seal.fill", selection: finishDateBinding, displayedComponents: .date)
             }
             CreationTextInput(theme: theme, title: "Finish time", placeholder: "Hours", symbol: "timer", text: $board.finishTimeHours, keyboardType: .decimalPad)
-            BoardColorEditPicker(title: "Card color", color: $board.color)
           }
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill") {
             CreationMenuInput(theme: theme, title: "Main breaker", symbol: "bolt.fill", value: board.mainBreakerType, options: ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"], selection: $board.mainBreakerType)
-            CreationMenuInput(theme: theme, title: "Model or family", symbol: "building.2.fill", value: board.mainBreakerModel, options: manufacturerNames, selection: $board.mainBreakerModel)
+            ManufacturerPickerInput(theme: theme, title: "Model or family", value: board.mainBreakerModel, manufacturers: manufacturers) {
+              pickerSheet = .mainBreakerManufacturer
+            }
             CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: board.mainBreakerAmpere, options: AmpereRating.all, selection: ampereBinding)
           }
 
@@ -5330,6 +5453,26 @@ struct BoardEditSheet: View {
         ToolbarItem(placement: .topBarTrailing) {
           Button("Done") { dismiss() }
             .fontWeight(.bold)
+        }
+      }
+      .sheet(item: $pickerSheet) { sheet in
+        switch sheet {
+        case .boardType:
+          BoardTypeCreationPickerSheet(theme: theme, boardTypes: mergedBoardTypes, selected: board.type) { selected in
+            boardTypeBinding.wrappedValue = selected
+          }
+        case .subtype:
+          CreationOptionPickerSheet(theme: theme, title: "Subtype", symbol: "rectangle.grid.1x2.fill", options: BoardSubtypeCatalog.options(for: board.type), selected: board.subtype) {
+            subtypeBinding.wrappedValue = $0
+          }
+        case .manufacturer:
+          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: board.manufacturer) {
+            board.manufacturer = $0
+          }
+        case .mainBreakerManufacturer:
+          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: board.mainBreakerModel) {
+            board.mainBreakerModel = $0
+          }
         }
       }
     }
@@ -5360,6 +5503,11 @@ struct BoardEditSheet: View {
   private var boardTypeNames: [String] {
     let names = boardTypes.map(\.name) + BoardType.samples.map(\.name) + [board.type]
     return Array(Set(names.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })).sorted()
+  }
+
+  private var mergedBoardTypes: [BoardType] {
+    var seen: Set<String> = []
+    return (boardTypes + BoardType.samples).filter { seen.insert($0.name.lowercased()).inserted }
   }
 
   private var boardTypeBinding: Binding<String> {
@@ -5415,23 +5563,13 @@ struct BoardEditSheet: View {
   }
 }
 
-struct BoardColorEditPicker: View {
-  let title: String
-  @Binding var color: Color
-  @State private var selectedHex: UInt32 = 0x5E78FF
+enum BoardEditPickerSheet: String, Identifiable {
+  case boardType
+  case subtype
+  case manufacturer
+  case mainBreakerManufacturer
 
-  var body: some View {
-    ColorSwatchPicker(title: title, selectedHex: Binding(
-      get: { selectedHex },
-      set: { newValue in
-        selectedHex = newValue
-        color = Color(hex: newValue)
-      }
-    ))
-    .onAppear {
-      selectedHex = color.archiveHex
-    }
-  }
+  var id: String { rawValue }
 }
 
 struct BoardCoverPhotoSection: View {
@@ -6008,19 +6146,19 @@ struct ChecklistProgressSection: View {
 
         VStack(spacing: 8) {
           ForEach(sortedItems) { item in
+            let isChecked = checkedItems.contains(item.id)
             Button {
-              withAnimation(.easeOut(duration: 0.16)) {
-                if checkedItems.contains(item.id) {
-                  checkedItems.remove(item.id)
-                } else {
-                  checkedItems.insert(item.id)
-                }
+              if isChecked {
+                checkedItems.remove(item.id)
+              } else {
+                checkedItems.insert(item.id)
               }
             } label: {
               HStack {
-                Image(systemName: checkedItems.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                  .foregroundStyle(checkedItems.contains(item.id) ? progressColor : .secondary)
-                  .scaleEffect(checkedItems.contains(item.id) ? 1.08 : 1)
+                Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                  .foregroundStyle(isChecked ? progressColor : .secondary)
+                  .scaleEffect(isChecked ? 1.06 : 1)
+                  .animation(.easeOut(duration: 0.14), value: isChecked)
                 Text(item.title)
                   .foregroundStyle(.primary)
                 Spacer()
@@ -6028,12 +6166,12 @@ struct ChecklistProgressSection: View {
               .padding(12)
               .background(theme.surface.opacity(0.78))
               .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+              .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(PanelPressButtonStyle())
+            .buttonStyle(.plain)
           }
         }
       }
-      .animation(.easeOut(duration: 0.22), value: completion)
     }
   }
 }
@@ -6394,7 +6532,6 @@ struct NewProjectSheet: View {
   @State private var site = ""
   @State private var hasDueDate = false
   @State private var dueDate = Date()
-  @State private var selectedColorHex: UInt32 = 0x5E78FF
   @State private var createdProjectName: String?
 
   private var canCreate: Bool {
@@ -6412,6 +6549,12 @@ struct NewProjectSheet: View {
     let query = customer.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else { return knownCustomers }
     return knownCustomers.filter { $0.localizedCaseInsensitiveContains(query) }
+  }
+
+  private var assignedCustomerColor: Color {
+    customers.first {
+      $0.name.localizedCaseInsensitiveCompare(customer) == .orderedSame
+    }?.color ?? theme.primary
   }
 
   var body: some View {
@@ -6438,12 +6581,11 @@ struct NewProjectSheet: View {
               CreationTextInput(theme: theme, title: "Site or building", placeholder: "Optional location", symbol: "mappin.and.ellipse", text: $site, capitalization: .words)
             }
 
-            CreationFormSection(theme: theme, title: "Schedule & Look", symbol: "paintpalette.fill") {
+            CreationFormSection(theme: theme, title: "Schedule", symbol: "calendar.badge.clock") {
               CreationToggleInput(theme: theme, title: "Add expected finish date", symbol: "clock.badge.exclamationmark.fill", isOn: $hasDueDate)
               if hasDueDate {
                 CreationDateInput(theme: theme, title: "Expected finish", symbol: "calendar.badge.clock", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
               }
-            ColorSwatchPicker(title: "Project color", selectedHex: $selectedColorHex)
             }
             BottomTabClearance(height: 118)
           }
@@ -6469,7 +6611,7 @@ struct NewProjectSheet: View {
                 customer: customer,
                 detail: site.isEmpty ? "0 boards" : "0 boards • \(site)",
                 status: "Design",
-                color: Color(hex: selectedColorHex),
+                color: assignedCustomerColor,
                 dueDate: hasDueDate ? dueDate : nil
               )
               onCreate(project)
@@ -7539,13 +7681,19 @@ struct CustomerManagerSheet: View {
   @State private var contactName = ""
   @State private var phone = ""
   @State private var note = ""
+  @State private var selectedColorHex: UInt32 = 0x5E78FF
   @State private var selectedCustomer: CustomerItem?
 
   private var allCustomers: [CustomerItem] {
     let existingNames = Set(customers.map { $0.name.lowercased() })
     let inferred = projectCustomers
       .filter { !existingNames.contains($0.lowercased()) }
-      .map { CustomerItem(id: "project-customer-\($0)", name: $0, kind: "Company", contactName: "", phone: "", note: "From projects") }
+      .map { customerName in
+        let projectColor = projects.first {
+          $0.customer.localizedCaseInsensitiveCompare(customerName) == .orderedSame
+        }?.color.archiveHex ?? 0x5E78FF
+        return CustomerItem(id: "project-customer-\(customerName)", name: customerName, kind: "Company", contactName: "", phone: "", note: "From projects", colorHex: projectColor)
+      }
     return customers + inferred
   }
 
@@ -7567,6 +7715,7 @@ struct CustomerManagerSheet: View {
               TextField("Phone", text: $phone)
                 .keyboardType(.phonePad)
               TextField("Note", text: $note)
+              ColorSwatchPicker(title: "Customer color", selectedHex: $selectedColorHex)
               Button {
                 addCustomer()
               } label: {
@@ -7589,7 +7738,7 @@ struct CustomerManagerSheet: View {
                 summary: customerSummary(customer.name),
                 canDelete: customers.contains(where: { $0.id == customer.id }),
                 open: {
-                  selectedCustomer = customer
+                  openCustomer(customer)
                 },
                 delete: {
                   customers.removeAll { $0.id == customer.id }
@@ -7609,18 +7758,50 @@ struct CustomerManagerSheet: View {
       }
     }
     .sheet(item: $selectedCustomer) { customer in
-      CustomerArchiveDetailSheet(
-        theme: theme,
-        title: customer.name,
-        subtitle: [customer.kind, customer.contactName.isEmpty ? nil : customer.contactName, customer.phone.isEmpty ? nil : customer.phone, customer.note.isEmpty ? nil : customer.note].compactMap { $0 }.joined(separator: " • "),
-        symbol: "person.fill",
-        color: theme.primary,
-        projects: projects.filter { $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame },
-        boardIDs: boards.filter { $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame }.map(\.id),
-        boards: $boards,
-        boardTypes: boardTypes,
-        manufacturers: manufacturers
-      )
+      if let customerBinding = binding(for: customer.id) {
+        CustomerArchiveDetailSheet(
+          theme: theme,
+          title: customer.name,
+          subtitle: customer.profileSummary,
+          symbol: customer.kind == "Person" ? "person.fill" : "building.2.fill",
+          color: customer.color,
+          projects: projects.filter { $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame },
+          boardIDs: boards.filter { $0.customer.localizedCaseInsensitiveCompare(customer.name) == .orderedSame }.map(\.id),
+          boards: $boards,
+          boardTypes: boardTypes,
+          manufacturers: manufacturers,
+          editableCustomer: customerBinding
+        )
+      }
+    }
+  }
+
+  private func openCustomer(_ customer: CustomerItem) {
+    if customers.contains(where: { $0.id == customer.id }) {
+      selectedCustomer = customer
+      return
+    }
+
+    let savedCustomer = CustomerItem(
+      name: customer.name,
+      kind: customer.kind,
+      contactName: customer.contactName,
+      phone: customer.phone,
+      note: customer.note,
+      contacts: customer.contacts,
+      colorHex: customer.colorHex
+    )
+    customers.insert(savedCustomer, at: 0)
+    selectedCustomer = savedCustomer
+  }
+
+  private func binding(for customerID: String) -> Binding<CustomerItem>? {
+    guard customers.contains(where: { $0.id == customerID }) else { return nil }
+    return Binding {
+      customers.first(where: { $0.id == customerID }) ?? CustomerItem(id: customerID, name: "Customer")
+    } set: { updatedCustomer in
+      guard let index = customers.firstIndex(where: { $0.id == customerID }) else { return }
+      customers[index] = updatedCustomer
     }
   }
 
@@ -7628,12 +7809,13 @@ struct CustomerManagerSheet: View {
     let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty else { return }
     customers.removeAll { $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame }
-    customers.insert(CustomerItem(name: trimmedName, kind: customerKind, contactName: contactName.trimmingCharacters(in: .whitespacesAndNewlines), phone: phone.trimmingCharacters(in: .whitespacesAndNewlines), note: note.trimmingCharacters(in: .whitespacesAndNewlines)), at: 0)
+    customers.insert(CustomerItem(name: trimmedName, kind: customerKind, contactName: contactName.trimmingCharacters(in: .whitespacesAndNewlines), phone: phone.trimmingCharacters(in: .whitespacesAndNewlines), note: note.trimmingCharacters(in: .whitespacesAndNewlines), colorHex: selectedColorHex), at: 0)
     name = ""
     customerKind = "Company"
     contactName = ""
     phone = ""
     note = ""
+    selectedColorHex = 0x5E78FF
   }
 
   private func customerSummary(_ customerName: String) -> String {
@@ -7656,7 +7838,7 @@ struct CustomerManagerRow: View {
       HStack(spacing: 12) {
         Button(action: open) {
           HStack(spacing: 12) {
-            CompanyColorLogo(color: theme.primary, symbol: "person.fill")
+            CompanyColorLogo(color: customer.color, symbol: customer.kind == "Person" ? "person.fill" : "building.2.fill")
             VStack(alignment: .leading, spacing: 4) {
               Text(customer.name)
                 .font(.headline)
@@ -7670,9 +7852,14 @@ struct CustomerManagerRow: View {
               if !customer.phone.isEmpty {
                 Label([customer.contactName.isEmpty ? nil : customer.contactName, customer.phone].compactMap { $0 }.joined(separator: " • "), systemImage: "phone.fill")
                   .font(.caption)
-                  .foregroundStyle(theme.primary)
+                  .foregroundStyle(customer.color)
                   .lineLimit(1)
                   .minimumScaleFactor(0.72)
+              }
+              if customer.kind == "Company", !customer.contacts.isEmpty {
+                Label("\(customer.contacts.count) contact\(customer.contacts.count == 1 ? "" : "s")", systemImage: "person.2.fill")
+                  .font(.caption)
+                  .foregroundStyle(customer.color.opacity(0.86))
               }
               if !customer.note.isEmpty {
                 Text(customer.note)
@@ -7724,11 +7911,34 @@ struct CustomerArchiveDetailSheet: View {
   @Binding var boards: [BoardDraft]
   let boardTypes: [BoardType]
   let manufacturers: [ManufacturerItem]
+  var editableCustomer: Binding<CustomerItem>? = nil
   @Environment(\.dismiss) private var dismiss
   @State private var selectedBoardID: String?
+  @State private var editOpen = false
 
   private var visibleBoards: [BoardDraft] {
     boards.filter { boardIDs.contains($0.id) }
+  }
+
+  private var displayCustomer: CustomerItem? {
+    editableCustomer?.wrappedValue
+  }
+
+  private var displayTitle: String {
+    displayCustomer?.name ?? title
+  }
+
+  private var displaySubtitle: String {
+    displayCustomer?.profileSummary ?? subtitle
+  }
+
+  private var displayColor: Color {
+    displayCustomer?.color ?? color
+  }
+
+  private var displaySymbol: String {
+    guard let displayCustomer else { return symbol }
+    return displayCustomer.kind == "Person" ? "person.fill" : "building.2.fill"
   }
 
   var body: some View {
@@ -7736,16 +7946,16 @@ struct CustomerArchiveDetailSheet: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           HStack(spacing: 14) {
-            CompanyColorLogo(color: color, symbol: symbol)
+            CompanyColorLogo(color: displayColor, symbol: displaySymbol)
             VStack(alignment: .leading, spacing: 4) {
-              Text(title)
+              Text(displayTitle)
                 .font(.largeTitle.bold())
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
               Text("\(projects.count) project\(projects.count == 1 ? "" : "s") • \(visibleBoards.count) board\(visibleBoards.count == 1 ? "" : "s")")
                 .foregroundStyle(.secondary)
-              if !subtitle.isEmpty {
-                Text(subtitle)
+              if !displaySubtitle.isEmpty {
+                Text(displaySubtitle)
                   .font(.caption)
                   .foregroundStyle(.secondary)
               }
@@ -7780,10 +7990,23 @@ struct CustomerArchiveDetailSheet: View {
         .padding(18)
       }
       .background(theme.background.ignoresSafeArea())
-      .navigationTitle(title)
+      .navigationTitle(displayTitle)
       .toolbar {
+        if editableCustomer != nil {
+          ToolbarItem(placement: .topBarLeading) {
+            Button("Edit") { editOpen = true }
+              .fontWeight(.bold)
+          }
+        }
         ToolbarItem(placement: .topBarTrailing) {
           Button("Done") { dismiss() }
+        }
+      }
+      .sheet(isPresented: $editOpen) {
+        if let editableCustomer {
+          CustomerEditSheet(theme: theme, customer: editableCustomer)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
       }
       .sheet(item: Binding(
@@ -7797,6 +8020,116 @@ struct CustomerArchiveDetailSheet: View {
         }
       }
     }
+  }
+}
+
+struct CustomerEditSheet: View {
+  let theme: PanelTheme
+  @Binding var customer: CustomerItem
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          CreationFormSection(theme: theme, title: "Customer Profile", symbol: customer.kind == "Person" ? "person.fill" : "building.2.fill") {
+            CreationFieldShell(theme: theme, title: "Customer type", symbol: "person.2.fill") {
+              Picker("Customer type", selection: $customer.kind) {
+                Text("Person").tag("Person")
+                Text("Company").tag("Company")
+              }
+              .pickerStyle(.segmented)
+              .frame(maxWidth: 190)
+            }
+            CreationTextInput(theme: theme, title: "Phone", placeholder: "Phone number", symbol: "phone.fill", text: $customer.phone, keyboardType: .phonePad)
+            if customer.kind == "Company" {
+              CreationTextInput(theme: theme, title: "Primary contact", placeholder: "Contact person", symbol: "person.crop.circle.fill", text: $customer.contactName, capitalization: .words)
+            }
+            CreationTextInput(theme: theme, title: "Note", placeholder: "Optional note", symbol: "note.text", text: $customer.note, capitalization: .sentences)
+            ColorSwatchPicker(title: "Customer color", selectedHex: $customer.colorHex)
+          }
+
+          if customer.kind == "Company" {
+            CreationFormSection(theme: theme, title: "Company People", symbol: "person.2.fill", subtitle: "People you can contact at this company") {
+              if customer.contacts.isEmpty {
+                Text("No contact people yet")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(.vertical, 4)
+              }
+
+              ForEach($customer.contacts) { $contact in
+                CustomerContactEditorRow(theme: theme, contact: $contact) {
+                  customer.contacts.removeAll { $0.id == contact.id }
+                }
+              }
+
+              Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                  customer.contacts.append(CustomerContact())
+                }
+              } label: {
+                Label("Add Contact Person", systemImage: "person.badge.plus")
+                  .font(.system(size: 14, weight: .bold))
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 11)
+              }
+              .buttonStyle(.borderedProminent)
+              .tint(theme.primary)
+            }
+          }
+
+          BottomTabClearance(height: 56)
+        }
+        .padding(18)
+      }
+      .scrollDismissesKeyboard(.interactively)
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Edit \(customer.name)")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }
+            .fontWeight(.bold)
+        }
+      }
+    }
+  }
+}
+
+struct CustomerContactEditorRow: View {
+  let theme: PanelTheme
+  @Binding var contact: CustomerContact
+  let onDelete: () -> Void
+
+  var body: some View {
+    VStack(spacing: 9) {
+      HStack(spacing: 8) {
+        Image(systemName: "person.crop.circle.fill")
+          .font(.system(size: 18, weight: .bold))
+          .foregroundStyle(theme.primary)
+        TextField("Full name", text: $contact.name)
+          .textInputAutocapitalization(.words)
+        Button(role: .destructive, action: onDelete) {
+          Image(systemName: "trash")
+            .font(.system(size: 13, weight: .bold))
+            .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+      }
+      HStack(spacing: 9) {
+        TextField("Role, e.g. site manager", text: $contact.role)
+          .textInputAutocapitalization(.words)
+        TextField("Phone", text: $contact.phone)
+          .keyboardType(.phonePad)
+      }
+      .font(.system(size: 13, weight: .semibold))
+    }
+    .padding(12)
+    .background(theme.background.opacity(0.44))
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(.white.opacity(0.07), lineWidth: 1))
   }
 }
 
@@ -9432,40 +9765,16 @@ struct PanelVaultLogoMark: View {
   let size: CGFloat
 
   var body: some View {
-    ZStack {
-      RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-        .fill(
-          LinearGradient(
-            colors: [theme.primary, theme.secondary.opacity(0.92)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-        )
-      RoundedRectangle(cornerRadius: size * 0.16, style: .continuous)
-        .stroke(.white.opacity(0.26), lineWidth: max(size * 0.045, 1))
-        .padding(size * 0.18)
-      VStack(spacing: size * 0.06) {
-        HStack(spacing: size * 0.06) {
-          logoSlot
-          logoSlot
-        }
-        HStack(spacing: size * 0.06) {
-          logoSlot
-          Image(systemName: "bolt.fill")
-            .font(.system(size: size * 0.18, weight: .black))
-            .foregroundStyle(.white)
-            .frame(width: size * 0.18, height: size * 0.18)
-        }
-      }
-    }
+    Image("PanelVaultLogo")
+      .resizable()
+      .scaledToFill()
     .frame(width: size, height: size)
-    .shadow(color: theme.primary.opacity(0.24), radius: 12, y: 6)
-  }
-
-  private var logoSlot: some View {
-    RoundedRectangle(cornerRadius: size * 0.035, style: .continuous)
-      .fill(.white.opacity(0.82))
-      .frame(width: size * 0.18, height: size * 0.18)
+    .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+        .stroke(.white.opacity(0.10), lineWidth: max(size * 0.025, 0.75))
+    )
+    .shadow(color: theme.primary.opacity(0.30), radius: 12, y: 5)
   }
 }
 
@@ -9794,6 +10103,24 @@ struct ContractorCompany: Identifiable, Equatable {
   static let samples: [ContractorCompany] = []
 }
 
+struct CustomerContact: Identifiable, Equatable {
+  let id: String
+  var name: String
+  var role: String
+  var phone: String
+
+  init(id: String = "customer-contact-\(UUID().uuidString)", name: String = "", role: String = "", phone: String = "") {
+    self.id = id
+    self.name = name
+    self.role = role
+    self.phone = phone
+  }
+
+  var persistenceSignature: String {
+    "\(id)|\(name)|\(role)|\(phone)"
+  }
+}
+
 struct CustomerItem: Identifiable, Equatable {
   let id: String
   var name: String
@@ -9801,18 +10128,31 @@ struct CustomerItem: Identifiable, Equatable {
   var contactName: String
   var phone: String
   var note: String
+  var contacts: [CustomerContact]
+  var colorHex: UInt32
 
-  init(id: String = "customer-\(UUID().uuidString)", name: String, kind: String = "Company", contactName: String = "", phone: String = "", note: String = "") {
+  init(id: String = "customer-\(UUID().uuidString)", name: String, kind: String = "Company", contactName: String = "", phone: String = "", note: String = "", contacts: [CustomerContact] = [], colorHex: UInt32 = 0x5E78FF) {
     self.id = id
     self.name = name
     self.kind = kind
     self.contactName = contactName
     self.phone = phone
     self.note = note
+    self.contacts = contacts
+    self.colorHex = colorHex
+  }
+
+  var color: Color { Color(hex: colorHex) }
+
+  var profileSummary: String {
+    let contactsSummary = contacts.isEmpty ? nil : "\(contacts.count) contact\(contacts.count == 1 ? "" : "s")"
+    return [kind, contactName.isEmpty ? nil : contactName, phone.isEmpty ? nil : phone, contactsSummary, note.isEmpty ? nil : note]
+      .compactMap { $0 }
+      .joined(separator: " • ")
   }
 
   var persistenceSignature: String {
-    "\(id)|\(name)|\(kind)|\(contactName)|\(phone)|\(note)"
+    "\(id)|\(name)|\(kind)|\(contactName)|\(phone)|\(note)|\(contacts.map(\.persistenceSignature).joined(separator: ";"))|\(colorHex)"
   }
 }
 
@@ -10009,7 +10349,7 @@ struct ProjectItem: Identifiable {
   let customer: String
   let detail: String
   let status: String
-  let color: Color
+  var color: Color
   var coverImage: UIImage? = nil
   var photoImages: [UIImage] = []
   var dueDate: Date? = nil
@@ -10573,6 +10913,8 @@ struct CustomerRecord: Codable {
   let contactName: String?
   let phone: String
   let note: String
+  let contacts: [CustomerContactRecord]?
+  let colorHex: UInt32?
 
   init(customer: CustomerItem) {
     id = customer.id
@@ -10581,10 +10923,30 @@ struct CustomerRecord: Codable {
     contactName = customer.contactName
     phone = customer.phone
     note = customer.note
+    contacts = customer.contacts.map(CustomerContactRecord.init(contact:))
+    colorHex = customer.colorHex
   }
 
   var customer: CustomerItem {
-    CustomerItem(id: id, name: name, kind: kind ?? "Company", contactName: contactName ?? "", phone: phone, note: note)
+    CustomerItem(id: id, name: name, kind: kind ?? "Company", contactName: contactName ?? "", phone: phone, note: note, contacts: contacts?.map(\.contact) ?? [], colorHex: colorHex ?? 0x5E78FF)
+  }
+}
+
+struct CustomerContactRecord: Codable {
+  let id: String
+  let name: String
+  let role: String
+  let phone: String
+
+  init(contact: CustomerContact) {
+    id = contact.id
+    name = contact.name
+    role = contact.role
+    phone = contact.phone
+  }
+
+  var contact: CustomerContact {
+    CustomerContact(id: id, name: name, role: role, phone: phone)
   }
 }
 
