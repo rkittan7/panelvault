@@ -17,18 +17,13 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("New Project"),
-      ),
+      appBar: AppBar(title: const Text("New Project")),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
           const Text(
             "Project Information",
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
           ),
 
           const SizedBox(height: 25),
@@ -54,7 +49,7 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
           const SizedBox(height: 20),
 
           DropdownButtonFormField<String>(
-            value: boardType,
+            initialValue: boardType,
             decoration: const InputDecoration(
               labelText: "Board Type",
               border: OutlineInputBorder(),
@@ -68,10 +63,7 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
                 value: "MCC",
                 child: Text("Motor Control Center"),
               ),
-              DropdownMenuItem(
-                value: "ATS",
-                child: Text("ATS Board"),
-              ),
+              DropdownMenuItem(value: "ATS", child: Text("ATS Board")),
               DropdownMenuItem(
                 value: "Lighting",
                 child: Text("Lighting Board"),
@@ -87,7 +79,7 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
           const SizedBox(height: 20),
 
           DropdownButtonFormField<String>(
-            value: manufacturer,
+            initialValue: manufacturer,
             decoration: const InputDecoration(
               labelText: "Manufacturer",
               border: OutlineInputBorder(),
@@ -97,18 +89,9 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
                 value: "Schneider Electric",
                 child: Text("Schneider Electric"),
               ),
-              DropdownMenuItem(
-                value: "ABB",
-                child: Text("ABB"),
-              ),
-              DropdownMenuItem(
-                value: "Siemens",
-                child: Text("Siemens"),
-              ),
-              DropdownMenuItem(
-                value: "Eaton",
-                child: Text("Eaton"),
-              ),
+              DropdownMenuItem(value: "ABB", child: Text("ABB")),
+              DropdownMenuItem(value: "Siemens", child: Text("Siemens")),
+              DropdownMenuItem(value: "Eaton", child: Text("Eaton")),
             ],
             onChanged: (value) {
               setState(() {
