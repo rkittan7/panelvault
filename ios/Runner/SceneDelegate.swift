@@ -2132,11 +2132,9 @@ struct DashboardBoardProgressRow: View {
   var body: some View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 9) {
-        HStack(spacing: 7) {
-          RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
-          RecentStatusBadge(status: board.statusTitle)
-          Spacer(minLength: 10)
-          RecentBoardTypeChip(boardType: boardType, color: board.color, minimumWidth: 108)
+        HStack {
+          Spacer()
+          RecentBoardTypeChip(boardType: boardType, color: board.color)
         }
 
         HStack(spacing: 12) {
@@ -2292,7 +2290,7 @@ struct DashboardBoardRecentRow: View {
           RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
           RecentStatusBadge(status: board.statusTitle)
           Spacer(minLength: 10)
-          RecentBoardTypeChip(boardType: boardType, color: board.color, minimumWidth: 108)
+          RecentBoardTypeChip(boardType: boardType, color: board.color)
         }
 
         HStack(spacing: 12) {
@@ -2329,7 +2327,6 @@ struct DashboardBoardRecentRow: View {
 struct RecentBoardTypeChip: View {
   let boardType: BoardType
   let color: Color
-  var minimumWidth: CGFloat = 0
 
   var body: some View {
     HStack(spacing: 5) {
@@ -2339,7 +2336,6 @@ struct RecentBoardTypeChip: View {
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
     }
-    .frame(minWidth: minimumWidth, alignment: .leading)
     .foregroundStyle(color)
     .padding(.horizontal, 7)
     .padding(.vertical, 5)
