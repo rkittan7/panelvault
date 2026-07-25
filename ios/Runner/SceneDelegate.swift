@@ -45,7 +45,6 @@ struct PanelVaultAppView: View {
   @AppStorage("panelvault.standardSizeMigration") private var standardSizeMigration = false
   @AppStorage("panelvault.contractorMode") private var contractorMode = false
   @AppStorage("panelvault.activeCompany") private var activeCompanyID = ""
-  @AppStorage("panelvault.savedSnapshot") private var savedSnapshot = ""
   @AppStorage("panelvault.profileName") private var profileName = ""
   @AppStorage("panelvault.profileCompany") private var profileCompany = ""
   @AppStorage("panelvault.profilePhone") private var profilePhone = ""
@@ -216,7 +215,8 @@ struct PanelVaultAppView: View {
   private func loadSnapshotIfNeeded() {
     guard !loadedSnapshot else { return }
     loadedSnapshot = true
-    guard let snapshot = PanelVaultSnapshot.decode(savedSnapshot) else { return }
+    guard let raw = ArchiveStore.loadSnapshot(),
+          let snapshot = PanelVaultSnapshot.decode(raw) else { return }
     projects = snapshot.projects.map(\.project)
     createdBoards = snapshot.boards.map(\.board)
     customers = snapshot.customers.map { record in
@@ -237,6 +237,28 @@ struct PanelVaultAppView: View {
       manufacturers = savedManufacturers.map(\.manufacturer)
     }
     applyCustomerColors()
+
+    // Legacy snapshots stored base64; decoding above rewrote those as files, so
+    // save once here to replace the old payload with tokens.
+    persistSnapshot()
+    sweepOrphanImages()
+  }
+
+  /// Deletes image files nothing points at any more.
+  ///
+  /// Deliberately only called straight after a snapshot loaded successfully —
+  /// running it when loading failed would hand it an empty token set and wipe
+  /// every photo in the archive.
+  private func sweepOrphanImages() {
+    var tokens = Set<String>()
+    for project in projects { tokens.formUnion(project.imageTokens) }
+    for board in createdBoards { tokens.formUnion(board.imageTokens) }
+    for manufacturer in manufacturers {
+      if let token = manufacturer.imageToken { tokens.insert(token) }
+    }
+    tokens.formUnion(ComponentImageStore.load().values)
+
+    ImageStore.shared.sweepOrphans(keeping: tokens)
   }
 
   private func applyCustomerColors() {
@@ -263,7 +285,9 @@ struct PanelVaultAppView: View {
   private func persistSnapshot() {
     pendingPersistWorkItem?.cancel()
     pendingPersistWorkItem = nil
-    savedSnapshot = PanelVaultSnapshot(projects: projects, boards: createdBoards, customers: customers, companies: contractorCompanies, manufacturers: manufacturers).encoded()
+    ArchiveStore.saveSnapshot(
+      PanelVaultSnapshot(projects: projects, boards: createdBoards, customers: customers, companies: contractorCompanies, manufacturers: manufacturers).encoded()
+    )
   }
 
   private func schedulePersistSnapshot() {
@@ -761,11 +785,14 @@ struct DashboardView: View {
       boards[index].project = "No Project"
     }
     recentVisits.removeAll { $0.kind == .project && $0.itemID == project.id }
+    ImageStore.shared.delete(project.imageTokens)
   }
 
   private func deleteBoard(id: String) {
+    let tokens = boards.first { $0.id == id }?.imageTokens ?? []
     boards.removeAll { $0.id == id }
     recentVisits.removeAll { $0.kind == .board && $0.itemID == id }
+    ImageStore.shared.delete(tokens)
   }
 
   private var selectedBoardBinding: Binding<RecentBoardSelection?> {
@@ -1507,10 +1534,12 @@ struct ProjectsView: View {
     for index in boards.indices where boards[index].project == project.name {
       boards[index].project = "No Project"
     }
+    ImageStore.shared.delete(project.imageTokens)
   }
 
   private func deleteBoard(_ board: BoardDraft) {
     boards.removeAll { $0.id == board.id }
+    ImageStore.shared.delete(board.imageTokens)
   }
 
   private func remember(_ kind: RecentVisit.Kind, id: String) {
@@ -1857,7 +1886,7 @@ struct BoardGalleryRow: View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 12) {
-          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverThumbnail, completed: board.isCompleted)
 
           VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -1959,7 +1988,7 @@ struct ProjectDashboardRow: View {
         ZStack {
           RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(project.color.gradient)
-          if let image = project.coverImage {
+          if let image = project.coverThumbnail {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
@@ -2038,7 +2067,7 @@ struct DashboardProjectRecentRow: View {
         ZStack {
           RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(project.color.gradient)
-          if let image = project.coverImage {
+          if let image = project.coverThumbnail {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
@@ -2138,7 +2167,7 @@ struct DashboardBoardProgressRow: View {
         }
 
         HStack(spacing: 12) {
-          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverThumbnail, completed: board.isCompleted)
 
           VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 6) {
@@ -2294,7 +2323,7 @@ struct DashboardBoardRecentRow: View {
         }
 
         HStack(spacing: 12) {
-          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+          BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverThumbnail, completed: board.isCompleted)
           VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
               Text(board.name)
@@ -2712,7 +2741,7 @@ struct ProjectDetailSheet: View {
   @State private var detail: String
   @State private var projectColor: Color
   @State private var coverImage: UIImage?
-  @State private var projectPhotos: [UIImage] = []
+  @State private var projectPhotoTokens: [String] = []
   @State private var projectSchemes: [SchemeAttachment]
   @State private var hasDueDate: Bool
   @State private var dueDate: Date
@@ -2743,7 +2772,7 @@ struct ProjectDetailSheet: View {
     _detail = State(initialValue: project.detail)
     _projectColor = State(initialValue: project.color)
     _coverImage = State(initialValue: project.coverImage)
-    _projectPhotos = State(initialValue: project.photoImages)
+    _projectPhotoTokens = State(initialValue: project.photoTokens)
     _projectSchemes = State(initialValue: project.schemeAttachments)
     _hasDueDate = State(initialValue: project.dueDate != nil)
     _dueDate = State(initialValue: project.dueDate ?? Date())
@@ -2861,8 +2890,8 @@ struct ProjectDetailSheet: View {
             .buttonStyle(.plain)
           }
 
-          PhotoPickerSection(theme: theme, title: "Project Photos", selectedImages: $projectPhotos, coverImage: $coverImage)
-            .onChange(of: projectPhotos.map { ImageArchive.signature(for: $0) }) { _ in
+          PhotoPickerSection(theme: theme, title: "Project Photos", photoTokens: $projectPhotoTokens, coverImage: $coverImage)
+            .onChange(of: projectPhotoTokens) { _ in
               saveProjectChanges()
             }
         }
@@ -2941,10 +2970,10 @@ struct ProjectDetailSheet: View {
         detail: detail.trimmingCharacters(in: .whitespacesAndNewlines),
         status: project.status,
         color: projectColor,
-        coverImage: coverImage,
-        photoImages: projectPhotos,
         dueDate: hasDueDate ? dueDate : nil,
-        schemeAttachments: projectSchemes
+        schemeAttachments: projectSchemes,
+        coverToken: ImageStore.shared.store(coverImage),
+        photoTokens: projectPhotoTokens
       ),
       previousName
     )
@@ -5166,7 +5195,7 @@ struct CreatedBoardScreen: View {
             scheduleBoardSync()
           }
         SchemeAttachmentSection(theme: theme, attachments: $board.schemeAttachments)
-        PhotoPickerSection(theme: theme, title: "Board Photos", selectedImages: $board.photoImages, coverImage: $board.coverImage)
+        PhotoPickerSection(theme: theme, title: "Board Photos", photoTokens: $board.photoTokens, coverImage: $board.coverImage)
         componentsSection
 
         if showsCreationFlow {
@@ -5665,7 +5694,7 @@ struct BoardCoverPhotoSection: View {
   private func loadImage(from item: PhotosPickerItem?) {
     Task {
       guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = UIImage(data: data) else { return }
+            let image = (await ImageStore.imported(from: data))?.image else { return }
       await MainActor.run {
         selectedImage = image
         selectedItem = nil
@@ -5774,7 +5803,7 @@ struct ProjectCoverPhotoSection: View {
   private func loadImage(from item: PhotosPickerItem?) {
     Task {
       guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = UIImage(data: data) else { return }
+            let image = (await ImageStore.imported(from: data))?.image else { return }
       await MainActor.run {
         selectedImage = image
         selectedItem = nil
@@ -5940,8 +5969,9 @@ struct ComponentTypeCatalogSheet: View {
   let components: [PanelComponent]
   let manufacturers: [ManufacturerItem]
   @Environment(\.dismiss) private var dismiss
-  @AppStorage("panelvault.componentImages") private var savedComponentImages = ""
-  @State private var componentImages: [String: UIImage] = [:]
+  /// Component id -> image-store token. Tokens, not images, so opening the
+  /// catalog does not decode every component photo at once.
+  @State private var componentImages: [String: String] = [:]
   @State private var selectedComponent: PanelComponent?
 
   var body: some View {
@@ -5953,7 +5983,7 @@ struct ComponentTypeCatalogSheet: View {
           }
 
           ForEach(components) { component in
-            let image = storedImage(for: component)
+            let image = storedThumbnail(for: component)
             ComponentRow(
               theme: theme,
               component: component,
@@ -5964,7 +5994,7 @@ struct ComponentTypeCatalogSheet: View {
             ) {
             } togglePhoto: {
             } savePhoto: { image in
-              componentImages[component.imageStorageID] = image
+              componentImages[component.imageStorageID] = ImageStore.shared.store(image)
               persistComponentImages()
             } showDetails: {
               selectedComponent = component
@@ -5977,7 +6007,7 @@ struct ComponentTypeCatalogSheet: View {
       .navigationTitle(type)
       .onAppear {
         if componentImages.isEmpty {
-          componentImages = ComponentImageArchive.decode(savedComponentImages)
+          componentImages = ComponentImageStore.load()
         }
       }
       .sheet(item: $selectedComponent) { component in
@@ -5987,11 +6017,15 @@ struct ComponentTypeCatalogSheet: View {
           manufacturer: manufacturer(for: component.manufacturer),
           image: storedImage(for: component),
           onSaveImage: { image in
-            componentImages[component.imageStorageID] = image
+            componentImages[component.imageStorageID] = ImageStore.shared.store(image)
             persistComponentImages()
           },
           onRemoveImage: {
-            component.imageLookupIDs.forEach { componentImages.removeValue(forKey: $0) }
+            for id in component.imageLookupIDs {
+              if let token = componentImages.removeValue(forKey: id) {
+                ImageStore.shared.delete(token)
+              }
+            }
             persistComponentImages()
           }
         )
@@ -6011,11 +6045,23 @@ struct ComponentTypeCatalogSheet: View {
   }
 
   private func storedImage(for component: PanelComponent) -> UIImage? {
-    component.imageLookupIDs.lazy.compactMap { componentImages[$0] }.first
+    component.imageLookupIDs
+      .lazy
+      .compactMap { ImageStore.shared.image(for: componentImages[$0]) }
+      .first
+  }
+
+  /// Row-sized variant, so scrolling the catalog does not decode full-size
+  /// component photos.
+  private func storedThumbnail(for component: PanelComponent) -> UIImage? {
+    component.imageLookupIDs
+      .lazy
+      .compactMap { ImageStore.shared.thumbnail(for: componentImages[$0]) }
+      .first
   }
 
   private func persistComponentImages() {
-    savedComponentImages = ComponentImageArchive.encode(componentImages)
+    ComponentImageStore.save(componentImages)
   }
 }
 
@@ -6345,12 +6391,12 @@ struct SchemeAttachmentSection: View {
       var newItems: [SchemeAttachment] = []
       for (index, item) in items.enumerated() {
         if let data = try? await item.loadTransferable(type: Data.self),
-           let image = UIImage(data: data) {
+           let imported = await ImageStore.imported(from: data) {
           newItems.append(
             SchemeAttachment(
               kind: .photo,
               name: "Scheme photo \(attachments.count + index + 1).jpg",
-              image: image,
+              imageToken: imported.token,
               url: nil
             )
           )
@@ -6376,7 +6422,7 @@ struct SchemeAttachmentRow: View {
         ZStack {
           RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(attachment.kind == .pdf ? Color(hex: 0xFF4E5F).opacity(0.18) : theme.primary.opacity(0.18))
-          if let image = attachment.image {
+          if let image = attachment.thumbnail {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
@@ -6425,7 +6471,11 @@ struct SchemeAttachmentRow: View {
 struct PhotoPickerSection: View {
   let theme: PanelTheme
   let title: String
-  @Binding var selectedImages: [UIImage]
+
+  /// Image-store tokens rather than decoded images. The grid draws thumbnails
+  /// and only decodes a full-size photo when one is actually opened, so a board
+  /// or project can hold as many photos as the disk allows.
+  @Binding var photoTokens: [String]
   @Binding var coverImage: UIImage?
   @State private var selectedItems: [PhotosPickerItem] = []
   @State private var previewImage: ImagePreviewItem?
@@ -6444,30 +6494,38 @@ struct PhotoPickerSection: View {
         .tint(theme.primary)
       }
 
-      if selectedImages.isEmpty {
+      if photoTokens.isEmpty {
         EmptyStateCard(theme: theme, title: "No photos yet", subtitle: "Tap Add Photos to choose pictures from your phone.")
       } else {
+        Text(photoTokens.count == 1 ? "1 photo" : "\(photoTokens.count) photos")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-          ForEach(selectedImages.indices, id: \.self) { index in
+          ForEach(photoTokens, id: \.self) { token in
             ZStack(alignment: .topTrailing) {
               GeometryReader { proxy in
                 Button {
-                  if selectedImages.indices.contains(index) {
-                    previewImage = ImagePreviewItem(image: selectedImages[index])
+                  if let full = ImageStore.shared.image(for: token) {
+                    previewImage = ImagePreviewItem(image: full)
                   }
                 } label: {
-                  Image(uiImage: selectedImages[index])
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.width)
-                    .clipped()
+                  if let thumbnail = ImageStore.shared.thumbnail(for: token) {
+                    Image(uiImage: thumbnail)
+                      .resizable()
+                      .scaledToFill()
+                      .frame(width: proxy.size.width, height: proxy.size.width)
+                      .clipped()
+                  } else {
+                    Rectangle()
+                      .fill(theme.card)
+                      .frame(width: proxy.size.width, height: proxy.size.width)
+                  }
                 }
                 .buttonStyle(.plain)
               }
               Button {
-                if selectedImages.indices.contains(index) {
-                  selectedImages.remove(at: index)
-                }
+                photoTokens.removeAll { $0 == token }
               } label: {
                 Image(systemName: "xmark.circle.fill")
                   .font(.system(size: 18, weight: .bold))
@@ -6492,23 +6550,23 @@ struct PhotoPickerSection: View {
 
   private func loadImages(from items: [PhotosPickerItem]) {
     Task {
-      var images: [UIImage] = []
+      var tokens: [String] = []
+      var firstImage: UIImage?
+
       for item in items {
-        if let data = try? await item.loadTransferable(type: Data.self),
-           let image = await Task.detached(priority: .userInitiated, operation: {
-             guard let decodedImage = UIImage(data: data) else { return nil as UIImage? }
-             let preparedImage = ImageArchive.preparedForStorage(decodedImage)
-             ImageArchive.warmCache(for: preparedImage)
-             return preparedImage
-           }).value {
-          images.append(image)
-        }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let imported = await ImageStore.imported(from: data) else { continue }
+        if firstImage == nil { firstImage = imported.image }
+        tokens.append(imported.token)
       }
+
       await MainActor.run {
         if coverImage == nil {
-          coverImage = images.first
+          coverImage = firstImage
         }
-        selectedImages.append(contentsOf: images)
+        // Guard against duplicate ids in the grid if the same file comes back
+        // with a token already in the list.
+        photoTokens.append(contentsOf: tokens.filter { !photoTokens.contains($0) })
         selectedItems = []
       }
     }
@@ -7257,7 +7315,7 @@ struct ProjectSearchRow: View {
         ZStack {
           Circle()
             .fill(project.color.opacity(0.14))
-          if let image = project.coverImage {
+          if let image = project.coverThumbnail {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
@@ -7313,7 +7371,7 @@ struct BoardSearchRow: View {
   var body: some View {
     GlassCard(theme: theme) {
       HStack(spacing: 12) {
-        BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverImage, completed: board.isCompleted)
+        BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverThumbnail, completed: board.isCompleted)
 
         VStack(alignment: .leading, spacing: 4) {
           HStack(spacing: 6) {
@@ -8253,7 +8311,7 @@ struct ManufacturerEditorRow: View {
             }
             .foregroundStyle(.secondary)
           }
-          if manufacturer.image != nil {
+          if manufacturer.imageToken != nil {
             Button(role: .destructive) {
               removeLogo()
             } label: {
@@ -8284,7 +8342,7 @@ struct ManufacturerEditorRow: View {
     Task {
       guard item == selectedItem else { return }
       guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = UIImage(data: data) else { return }
+            let image = (await ImageStore.imported(from: data))?.image else { return }
       await MainActor.run {
         if item == selectedItem {
           manufacturer.image = image
@@ -8295,7 +8353,8 @@ struct ManufacturerEditorRow: View {
 
   private func removeLogo() {
     selectedItem = nil
-    manufacturer.image = nil
+    ImageStore.shared.delete(manufacturer.imageToken)
+    manufacturer.imageToken = nil
   }
 }
 
@@ -8401,22 +8460,87 @@ struct ComponentSummaryCard: View {
 }
 
 enum ComponentIcon {
+  /// Order matters: the most specific match has to win first. "Power Analyzer"
+  /// contains "power" and would otherwise draw the PSU plug, and a soft starter
+  /// would otherwise share the VFD speedometer.
   static func symbol(for type: String) -> String {
     let lowered = type.lowercased()
-    if lowered.contains("mcb") || lowered.contains("mccb") || lowered.contains("breaker") { return "bolt.shield.fill" }
+
+    // Drives and motor control.
+    if lowered.contains("vfd") || lowered.contains("drive") { return "speedometer" }
+    if lowered.contains("soft starter") { return "chart.line.uptrend.xyaxis" }
+    if lowered.contains("motor starter") { return "gearshape.fill" }
+    if lowered.contains("mpcb") || lowered.contains("motor protection") { return "gearshape.2.fill" }
+    if lowered.contains("overload") { return "thermometer.medium" }
+
+    // Control power.
+    if lowered.contains("ups") { return "battery.100percent.bolt" }
+    if lowered.contains("psu") || lowered.contains("power supply") { return "powerplug.fill" }
+    if lowered.contains("current transformer") { return "smallcircle.filled.circle.fill" }
+    if lowered.contains("transformer") { return "square.stack.3d.up.fill" }
+
+    // Protection and switching.
     if lowered.contains("rcbo") || lowered.contains("rccb") || lowered.contains("rcd") { return "waveform.path.ecg" }
+    if lowered.contains("afdd") { return "flame.fill" }
+    if lowered.contains("mcb") || lowered.contains("mccb") || lowered.contains("acb") || lowered.contains("breaker") { return "bolt.shield.fill" }
+    if lowered.contains("spd") || lowered.contains("surge") { return "bolt.trianglebadge.exclamationmark.fill" }
+    if lowered.contains("fuse") { return "bolt.horizontal.fill" }
     if lowered.contains("contactor") { return "switch.2" }
-    if lowered.contains("vfd") || lowered.contains("starter") { return "speedometer" }
-    if lowered.contains("psu") || lowered.contains("power") { return "powerplug.fill" }
-    if lowered.contains("busbar") || lowered.contains("bar") { return "rectangle.grid.1x2.fill" }
+    if lowered.contains("ats controller") { return "arrow.left.arrow.right.circle.fill" }
+    if lowered.contains("changeover") { return "arrow.left.arrow.right" }
+    if lowered.contains("isolator") { return "power" }
+    if lowered.contains("interlock") { return "lock.fill" }
+    if lowered.contains("emergency stop") { return "exclamationmark.octagon.fill" }
+
+    // Measurement, control and I/O.
+    if lowered.contains("analyzer") { return "chart.xyaxis.line" }
+    if lowered.contains("rcm") { return "magnifyingglass.circle.fill" }
+    if lowered.contains("test block") { return "cable.connector" }
     if lowered.contains("meter") { return "gauge.with.dots.needle.67percent" }
-    if lowered.contains("plc") || lowered.contains("relay") { return "cpu.fill" }
-    if lowered.contains("fan") { return "fan.fill" }
+    if lowered.contains("plc") { return "cpu.fill" }
+    if lowered.contains("hmi") { return "display" }
+    if lowered.contains("timer") { return "timer" }
+    if lowered.contains("safety") { return "shield.lefthalf.filled" }
+    if lowered.contains("monitoring") { return "waveform.path.ecg.rectangle.fill" }
+    if lowered.contains("relay") { return "rectangle.connected.to.line.below" }
     if lowered.contains("button") || lowered.contains("selector") { return "button.programmable" }
+    if lowered.contains("indicator") || lowered.contains("light") { return "lightbulb.fill" }
+
+    // Power factor and quality.
+    if lowered.contains("pfc") { return "slider.horizontal.3" }
+    if lowered.contains("capacitor") { return "bolt.circle.fill" }
+    if lowered.contains("reactor") { return "wave.3.right" }
+    if lowered.contains("harmonic") || lowered.contains("filter") { return "waveform.path" }
+
+    // Terminals, wiring and bars.
+    if lowered.contains("distribution block") { return "arrow.triangle.branch" }
+    if lowered.contains("terminal") { return "point.3.connected.trianglepath.dotted" }
+    if lowered.contains("ferrule") { return "capsule.fill" }
+    if lowered.contains("lug") { return "link" }
+    if lowered.contains("marker") { return "tag.fill" }
+    if lowered.contains("bonding") { return "point.bottomleft.forward.to.point.topright.scurvepath" }
+    if lowered.contains("busbar") || lowered.contains("bar") { return "rectangle.grid.1x2.fill" }
+    if lowered.contains("din rail") || lowered.contains("trunking") { return "rectangle.split.3x1.fill" }
+    if lowered.contains("gland") { return "circle.circle.fill" }
+
+    // Enclosure and climate.
+    if lowered.contains("enclosure") { return "cabinet.fill" }
+    if lowered.contains("cooling") { return "snowflake" }
+    if lowered.contains("fan") { return "fan.fill" }
+    if lowered.contains("heater") { return "thermometer.sun.fill" }
+    if lowered.contains("hygrostat") { return "humidity.fill" }
+    if lowered.contains("thermostat") { return "thermometer.medium" }
+    if lowered.contains("socket") { return "poweroutlet.type.b.fill" }
+
     return "shippingbox.fill"
   }
 
   static func description(for component: PanelComponent) -> String {
+    // Catalog parts carry their own text; fall back to the per-type blurb for
+    // components the user created.
+    let specific = component.about.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !specific.isEmpty { return specific }
+
     let type = component.type.lowercased()
     if type.contains("mcb") && !type.contains("mccb") {
       return "Miniature circuit breaker used for final circuit protection. Choose poles, curve and ampere rating to match the connected circuit."
@@ -8432,6 +8556,18 @@ enum ComponentIcon {
     }
     if type.contains("vfd") {
       return "Variable frequency drive for speed control of motors. Check kW rating, supply voltage, ventilation and EMC requirements."
+    }
+    if type.contains("soft starter") {
+      return "Ramps a motor up and down to limit inrush current and mechanical shock. Check motor kW, start duty cycle, whether a bypass is built in, and whether an isolator and overload are still needed upstream."
+    }
+    if type.contains("mpcb") {
+      return "Manual motor starter combining short-circuit and adjustable overload protection in one device. Set the current dial to the motor full-load amps and check the breaking capacity for the fault level."
+    }
+    if type.contains("overload") {
+      return "Protects a motor from sustained overcurrent. Match the setting range to motor full-load amps, confirm the trip class against start-up time, and check it pairs with the chosen contactor."
+    }
+    if type.contains("dc-ups") || (type.contains("ups") && !type.contains("psu")) {
+      return "Keeps 24VDC control power alive through dips and outages. Check hold-up time at the actual load, battery or capacitor type, and where the alarm contact is wired."
     }
     if type.contains("psu") {
       return "Power supply for control circuits, sensors, PLCs and relays. Check output voltage, current and spare capacity."
@@ -8634,7 +8770,7 @@ struct ComponentDetailSheet: View {
   private func loadImage(from item: PhotosPickerItem?) {
     Task {
       guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = UIImage(data: data) else { return }
+            let image = (await ImageStore.imported(from: data))?.image else { return }
       await MainActor.run {
         selectedImage = image
         selectedItem = nil
@@ -8649,7 +8785,7 @@ struct ManufacturerLogoView: View {
 
   var body: some View {
     Group {
-      if let image = manufacturer.image {
+      if let image = manufacturer.thumbnail {
         TransparentImageBubble(
           image: image,
           width: 54,
@@ -8690,7 +8826,7 @@ struct ManufacturerMarkView: View {
 
   var body: some View {
     Group {
-      if let image = manufacturer?.image {
+      if let image = manufacturer?.thumbnail {
         TransparentImageBubble(
           image: image,
           width: size,
@@ -9049,10 +9185,11 @@ struct ComponentCatalogView: View {
   var manufacturers: [ManufacturerItem] = ManufacturerItem.defaults
   var boardStore: Binding<[BoardDraft]>? = nil
   var onAddComponent: ((PanelComponent) -> Void)? = nil
-  @AppStorage("panelvault.componentImages") private var savedComponentImages = ""
   @State private var addedComponentIDs: Set<String> = []
   @State private var photoComponentIDs: Set<String> = []
-  @State private var componentImages: [String: UIImage] = [:]
+
+  /// Component id -> image-store token.
+  @State private var componentImages: [String: String] = [:]
   @State private var customComponents: [PanelComponent] = []
   @State private var addComponentOpen = false
   @State private var componentToConfigure: PanelComponent?
@@ -9091,7 +9228,7 @@ struct ComponentCatalogView: View {
           Text(group.name)
             .font(.headline)
           ForEach(group.items) { item in
-            let image = storedImage(for: item)
+            let image = storedThumbnail(for: item)
             ComponentRow(
               theme: theme,
               component: item,
@@ -9114,7 +9251,7 @@ struct ComponentCatalogView: View {
                 }
               },
               savePhoto: { image in
-                componentImages[item.imageStorageID] = image
+                componentImages[item.imageStorageID] = ImageStore.shared.store(image)
                 photoComponentIDs.insert(item.id)
                 persistComponentImages()
               },
@@ -9166,12 +9303,16 @@ struct ComponentCatalogView: View {
         manufacturer: manufacturer(for: component.manufacturer),
         image: storedImage(for: component),
         onSaveImage: { image in
-          componentImages[component.imageStorageID] = image
+          componentImages[component.imageStorageID] = ImageStore.shared.store(image)
           photoComponentIDs.insert(component.id)
           persistComponentImages()
         },
         onRemoveImage: {
-          component.imageLookupIDs.forEach { componentImages.removeValue(forKey: $0) }
+          for id in component.imageLookupIDs {
+            if let token = componentImages.removeValue(forKey: id) {
+              ImageStore.shared.delete(token)
+            }
+          }
           photoComponentIDs.remove(component.id)
           persistComponentImages()
         }
@@ -9205,21 +9346,33 @@ struct ComponentCatalogView: View {
   }
 
   private func manufacturerImage(for name: String) -> UIImage? {
-    manufacturer(for: name)?.image
+    manufacturer(for: name)?.thumbnail
   }
 
   private func storedImage(for component: PanelComponent) -> UIImage? {
-    component.imageLookupIDs.lazy.compactMap { componentImages[$0] }.first
+    component.imageLookupIDs
+      .lazy
+      .compactMap { ImageStore.shared.image(for: componentImages[$0]) }
+      .first
+  }
+
+  /// Row-sized variant, so scrolling the catalog does not decode full-size
+  /// component photos.
+  private func storedThumbnail(for component: PanelComponent) -> UIImage? {
+    component.imageLookupIDs
+      .lazy
+      .compactMap { ImageStore.shared.thumbnail(for: componentImages[$0]) }
+      .first
   }
 
   private func loadComponentImagesIfNeeded() {
     guard componentImages.isEmpty else { return }
-    componentImages = ComponentImageArchive.decode(savedComponentImages)
+    componentImages = ComponentImageStore.load()
     photoComponentIDs = photoComponentIDs.union(componentImages.keys)
   }
 
   private func persistComponentImages() {
-    savedComponentImages = ComponentImageArchive.encode(componentImages)
+    ComponentImageStore.save(componentImages)
   }
 }
 
@@ -9338,7 +9491,7 @@ struct ComponentRow: View {
   var body: some View {
     GlassCard(theme: theme) {
       HStack(spacing: 12) {
-        EquipmentBrandBadge(name: component.manufacturer, image: manufacturer?.image)
+        EquipmentBrandBadge(name: component.manufacturer, image: manufacturer?.thumbnail)
         PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
           Group {
             if let displayImage {
@@ -9422,7 +9575,7 @@ struct ComponentRow: View {
   private func loadComponentImage(from item: PhotosPickerItem?) {
     Task {
       guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = UIImage(data: data) else { return }
+            let image = (await ImageStore.imported(from: data))?.image else { return }
       await MainActor.run {
         selectedPhotoItem = nil
         savePhoto(image)
@@ -9493,7 +9646,8 @@ struct ComponentRatingSheet: View {
                 rating: cleanedRating,
                 poles: poles,
                 curve: component.curve,
-                sourceID: component.imageStorageID
+                sourceID: component.imageStorageID,
+                about: component.about
               )
             )
             dismiss()
@@ -10188,23 +10342,43 @@ struct SchemeAttachment: Identifiable, Equatable {
   let id: String
   let kind: Kind
   var name: String
-  var image: UIImage?
   var url: URL?
+
+  /// Filename in the image store rather than the image itself, so a scheme can
+  /// be listed without decoding its drawing.
+  var imageToken: String?
+
+  var image: UIImage? {
+    get { ImageStore.shared.image(for: imageToken) }
+    set { imageToken = ImageStore.shared.store(newValue) }
+  }
+
+  var thumbnail: UIImage? {
+    ImageStore.shared.thumbnail(for: imageToken)
+  }
 
   static func == (lhs: SchemeAttachment, rhs: SchemeAttachment) -> Bool {
     lhs.id == rhs.id &&
       lhs.kind == rhs.kind &&
       lhs.name == rhs.name &&
       lhs.url == rhs.url &&
-      (lhs.image != nil) == (rhs.image != nil)
+      lhs.imageToken == rhs.imageToken
   }
 
   init(id: String = "scheme-\(UUID().uuidString)", kind: Kind, name: String, image: UIImage?, url: URL? = nil) {
     self.id = id
     self.kind = kind
     self.name = name
-    self.image = image
     self.url = url
+    self.imageToken = ImageStore.shared.store(image)
+  }
+
+  init(id: String = "scheme-\(UUID().uuidString)", kind: Kind, name: String, imageToken: String?, url: URL? = nil) {
+    self.id = id
+    self.kind = kind
+    self.name = name
+    self.url = url
+    self.imageToken = imageToken
   }
 
   var persistenceSignature: String {
@@ -10213,7 +10387,7 @@ struct SchemeAttachment: Identifiable, Equatable {
       kind == .pdf ? "pdf" : "photo",
       name,
       url?.absoluteString ?? "",
-      ImageArchive.signature(for: image)
+      ImageStore.shared.signature(for: imageToken)
     ].joined(separator: "|")
   }
 }
@@ -10222,13 +10396,31 @@ struct ManufacturerItem: Identifiable {
   let id: String
   var name: String
   var colorHex: UInt32
-  var image: UIImage? = nil
+
+  /// Brand logo, stored on disk like every other image in the archive.
+  var imageToken: String? = nil
+
+  var image: UIImage? {
+    get { ImageStore.shared.image(for: imageToken) }
+    set { imageToken = ImageStore.shared.store(newValue) }
+  }
+
+  var thumbnail: UIImage? {
+    ImageStore.shared.thumbnail(for: imageToken)
+  }
 
   init(id: String = "manufacturer-\(UUID().uuidString)", name: String, colorHex: UInt32 = 0x5E78FF, image: UIImage? = nil) {
     self.id = id
     self.name = name
     self.colorHex = colorHex
-    self.image = image
+    self.imageToken = ImageStore.shared.store(image)
+  }
+
+  init(id: String = "manufacturer-\(UUID().uuidString)", name: String, colorHex: UInt32 = 0x5E78FF, imageToken: String?) {
+    self.id = id
+    self.name = name
+    self.colorHex = colorHex
+    self.imageToken = imageToken
   }
 
   var color: Color {
@@ -10242,7 +10434,7 @@ struct ManufacturerItem: Identifiable {
   }
 
   var persistenceSignature: String {
-    let imageSignature = ImageArchive.signature(for: image)
+    let imageSignature = ImageStore.shared.signature(for: imageToken)
     return "\(id)|\(name)|\(colorHex)|\(imageSignature)"
   }
 
@@ -10259,6 +10451,8 @@ struct ManufacturerItem: Identifiable {
     ManufacturerItem(id: "legrand", name: "Legrand", colorHex: 0xD85CFF),
     ManufacturerItem(id: "mean-well", name: "Mean Well", colorHex: 0xFFD60A),
     ManufacturerItem(id: "phoenix", name: "Phoenix", colorHex: 0xFF9F0A),
+    ManufacturerItem(id: "danfoss", name: "Danfoss", colorHex: 0xE2231A),
+    ManufacturerItem(id: "socomec", name: "Socomec", colorHex: 0x00A0DF),
     ManufacturerItem(id: "generic", name: "Generic", colorHex: 0xAEB4BC)
   ]
 }
@@ -10346,18 +10540,40 @@ struct ProjectItem: Identifiable {
   let detail: String
   let status: String
   var color: Color
-  var coverImage: UIImage? = nil
-  var photoImages: [UIImage] = []
   var dueDate: Date? = nil
   var schemeAttachments: [SchemeAttachment] = []
+
+  /// Photos are held as image-store tokens, not as decoded UIImages, so a
+  /// project with a thousand photos costs the same to keep in memory as one
+  /// with none. The accessors below resolve them on demand.
+  var coverToken: String? = nil
+  var photoTokens: [String] = []
+
+  var coverImage: UIImage? {
+    get { ImageStore.shared.image(for: coverToken) }
+    set { coverToken = ImageStore.shared.store(newValue) }
+  }
+
+  /// Cheap enough for list rows — prefer this over [coverImage] in scrolling
+  /// views, which would decode the full-size original per row.
+  var coverThumbnail: UIImage? {
+    ImageStore.shared.thumbnail(for: coverToken)
+  }
+
+  var photoCount: Int { photoTokens.count }
+
+  /// Every token this project owns, for orphan cleanup.
+  var imageTokens: [String] {
+    ([coverToken] + photoTokens + schemeAttachments.map(\.imageToken)).compactMap { $0 }
+  }
 
   var searchText: String {
     "\(name) \(customer) \(detail) \(status) \(dueDate.map { DateDisplay.due.string(from: $0) } ?? "") \(schemeAttachments.map(\.name).joined(separator: " "))"
   }
 
   var persistenceSignature: String {
-    let coverSignature = ImageArchive.signature(for: coverImage)
-    let photoSignature = photoImages.map { ImageArchive.signature(for: $0) }.joined(separator: "|")
+    let coverSignature = ImageStore.shared.signature(for: coverToken)
+    let photoSignature = photoTokens.joined(separator: "|")
     let schemeSignature = schemeAttachments.map(\.persistenceSignature).joined(separator: "|")
     return [
       id, name, customer, detail, status, "\(color.archiveHex)",
@@ -10377,90 +10593,233 @@ struct ComponentGroup: Identifiable {
 
   static let samples = [
     ComponentGroup(id: "mcbs", name: "MCBs", items: [
-      PanelComponent(id: "abb-s201-1p", manufacturer: "ABB", type: "MCB", model: "S201", rating: "Set A", poles: "1P", curve: "B/C/D Curve"),
-      PanelComponent(id: "abb-s202-2p", manufacturer: "ABB", type: "MCB", model: "S202", rating: "Set A", poles: "2P", curve: "B/C/D Curve"),
-      PanelComponent(id: "abb-s203-3p", manufacturer: "ABB", type: "MCB", model: "S203", rating: "Set A", poles: "3P", curve: "B/C/D Curve"),
-      PanelComponent(id: "abb-s204-4p", manufacturer: "ABB", type: "MCB", model: "S204", rating: "Set A", poles: "4P", curve: "B/C/D Curve"),
-      PanelComponent(id: "abb-sn201-1pn", manufacturer: "ABB", type: "MCB", model: "SN201", rating: "Set A", poles: "1P+N", curve: "B/C Curve"),
-      PanelComponent(id: "abb-s300-p", manufacturer: "ABB", type: "MCB", model: "S300 P", rating: "Set A", poles: "1P-4P", curve: "Industrial"),
-      PanelComponent(id: "abb-su200", manufacturer: "ABB", type: "MCB", model: "SU200", rating: "Set A", poles: "1P-4P", curve: "UL/CSA"),
-      PanelComponent(id: "schneider-ic60n", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60N", rating: "Set A", poles: "1P-4P", curve: "B/C/D"),
-      PanelComponent(id: "schneider-ic60h", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60H", rating: "Set A", poles: "1P-4P", curve: "B/C/D"),
-      PanelComponent(id: "siemens-5sy", manufacturer: "Siemens", type: "MCB", model: "SENTRON 5SY", rating: "Set A", poles: "1P-4P", curve: "B/C/D"),
-      PanelComponent(id: "siemens-5sl", manufacturer: "Siemens", type: "MCB", model: "SENTRON 5SL", rating: "Set A", poles: "1P-4P", curve: "B/C/D"),
-      PanelComponent(id: "eaton-faz", manufacturer: "Eaton", type: "MCB", model: "FAZ", rating: "Set A", poles: "1P-4P", curve: "B/C/D")
+      PanelComponent(id: "abb-s201-1p", manufacturer: "ABB", type: "MCB", model: "S201", rating: "Set A", poles: "1P", curve: "B/C/D Curve", about: "Single-pole miniature circuit breaker for one final circuit, protecting against overload and short circuit. Pick the curve for the load: B for resistive and lighting, C for general mixed loads, D for high-inrush motors and transformers."),
+      PanelComponent(id: "abb-s202-2p", manufacturer: "ABB", type: "MCB", model: "S202", rating: "Set A", poles: "2P", curve: "B/C/D Curve", about: "Two-pole MCB that breaks line and neutral together, common on single-phase circuits where full isolation is required for maintenance."),
+      PanelComponent(id: "abb-s203-3p", manufacturer: "ABB", type: "MCB", model: "S203", rating: "Set A", poles: "3P", curve: "B/C/D Curve", about: "Three-pole MCB for three-phase loads. All three poles trip together so a fault on one phase cannot leave a motor running single-phased."),
+      PanelComponent(id: "abb-s204-4p", manufacturer: "ABB", type: "MCB", model: "S204", rating: "Set A", poles: "4P", curve: "B/C/D Curve", about: "Four-pole MCB breaking three phases plus neutral, used where the neutral must be isolated, such as on generator or changeover circuits."),
+      PanelComponent(id: "abb-sn201-1pn", manufacturer: "ABB", type: "MCB", model: "SN201", rating: "Set A", poles: "1P+N", curve: "B/C Curve", about: "One pole plus switched neutral in a single module width, the usual choice for apartment and lighting boards where DIN space is tight."),
+      PanelComponent(id: "abb-s300-p", manufacturer: "ABB", type: "MCB", model: "S300 P", rating: "Set A", poles: "1P-4P", curve: "Industrial", about: "Industrial-grade MCB with a higher breaking capacity than domestic ranges. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA device can clear."),
+      PanelComponent(id: "abb-su200", manufacturer: "ABB", type: "MCB", model: "SU200", rating: "Set A", poles: "1P-4P", curve: "UL/CSA", about: "MCB built to UL and CSA ratings for panels destined for North American markets or for machinery exported there."),
+      PanelComponent(id: "schneider-ic60n", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60N", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Standard Acti9 MCB at 6kA breaking capacity, suitable for most commercial final circuits. Pairs with Vigi add-on blocks if earth-leakage protection is needed later."),
+      PanelComponent(id: "schneider-ic60h", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60H", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Higher breaking capacity version of the iC60 for boards closer to the transformer where fault levels are greater."),
+      PanelComponent(id: "siemens-5sy", manufacturer: "Siemens", type: "MCB", model: "SENTRON 5SY", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "General purpose SENTRON MCB for final circuit protection across lighting, socket and small power circuits."),
+      PanelComponent(id: "siemens-5sl", manufacturer: "Siemens", type: "MCB", model: "SENTRON 5SL", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Compact economy MCB for high-volume repeat circuits in residential and light commercial boards."),
+      PanelComponent(id: "eaton-faz", manufacturer: "Eaton", type: "MCB", model: "FAZ", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Eaton MCB range with a wide curve and rating selection, frequently specified in machine-building and OEM panels.")
     ]),
-    ComponentGroup(id: "rcbo", name: "RCBOs", items: [
-      PanelComponent(id: "abb-ds201-1pn", manufacturer: "ABB", type: "RCBO", model: "DS201", rating: "Set A", poles: "1P+N", curve: "B/C Curve + RCD"),
-      PanelComponent(id: "abb-ds202-2p", manufacturer: "ABB", type: "RCBO", model: "DS202", rating: "Set A", poles: "2P", curve: "B/C Curve + RCD"),
-      PanelComponent(id: "abb-ds203-3p", manufacturer: "ABB", type: "RCBO", model: "DS203", rating: "Set A", poles: "3P", curve: "B/C Curve + RCD"),
-      PanelComponent(id: "abb-ds204-4p", manufacturer: "ABB", type: "RCBO", model: "DS204", rating: "Set A", poles: "4P", curve: "B/C Curve + RCD"),
-      PanelComponent(id: "schneider-acti9-rcbo", manufacturer: "Schneider", type: "RCBO", model: "Acti9 iDPN Vigi", rating: "Set A", poles: "1P+N", curve: "B/C + RCD")
+    ComponentGroup(id: "rcbo", name: "RCBOs & RCDs", items: [
+      PanelComponent(id: "abb-ds201-1pn", manufacturer: "ABB", type: "RCBO", model: "DS201", rating: "Set A", poles: "1P+N", curve: "B/C Curve + RCD", about: "Combined MCB and residual current device in one module: overload, short-circuit and earth-leakage protection for a single circuit. Common at 30mA for socket outlets requiring additional protection."),
+      PanelComponent(id: "abb-ds202-2p", manufacturer: "ABB", type: "RCBO", model: "DS202", rating: "Set A", poles: "2P", curve: "B/C Curve + RCD", about: "Two-pole RCBO providing overcurrent and earth-leakage protection while isolating both line and neutral."),
+      PanelComponent(id: "abb-ds203-3p", manufacturer: "ABB", type: "RCBO", model: "DS203", rating: "Set A", poles: "3P", curve: "B/C Curve + RCD", about: "Three-pole RCBO for three-phase circuits needing residual current protection without a separate upstream RCCB."),
+      PanelComponent(id: "abb-ds204-4p", manufacturer: "ABB", type: "RCBO", model: "DS204", rating: "Set A", poles: "4P", curve: "B/C Curve + RCD", about: "Four-pole RCBO covering three phases and neutral. Used where individual circuit discrimination matters more than a single shared RCCB."),
+      PanelComponent(id: "abb-ds200", manufacturer: "ABB", type: "RCBO", model: "DS200", rating: "up to 63A", poles: "1P+N/3P+N", curve: "30-300mA, 10kA", about: "Higher breaking capacity RCBO range for boards with elevated fault levels where a standard 6kA device would be inadequate."),
+      PanelComponent(id: "schneider-acti9-rcbo", manufacturer: "Schneider", type: "RCBO", model: "Acti9 iDPN Vigi", rating: "Set A", poles: "1P+N", curve: "B/C + RCD", about: "Acti9 RCBO in one module width, giving each circuit its own earth-leakage protection so a single fault does not trip an entire board section."),
+      PanelComponent(id: "generic-rccb", manufacturer: "Generic", type: "RCD/RCCB", model: "Residual Current Device", rating: "Set A", poles: "2P/4P", curve: "30-300mA", about: "Residual current circuit breaker detecting earth leakage but offering no overload protection, so it always sits behind or above separate overcurrent devices. Choose the type by load: AC for simple resistive, A where electronics are present, B where drives or DC components can produce smooth residual currents."),
+      PanelComponent(id: "abb-f200", manufacturer: "ABB", type: "RCD/RCCB", model: "F200", rating: "25-125A", poles: "2P/4P", curve: "30-500mA, Type AC/A", about: "Residual current circuit breaker protecting a group of circuits against earth leakage. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section."),
+      PanelComponent(id: "schneider-iid", manufacturer: "Schneider", type: "RCD/RCCB", model: "Acti9 iID", rating: "25-100A", poles: "2P/4P", curve: "30-300mA, Type AC/A/B", about: "Acti9 residual current device available in Type A and Type B. Type B is required where variable speed drives can produce smooth DC residual current that would blind a Type AC device."),
+      PanelComponent(id: "siemens-5sv", manufacturer: "Siemens", type: "RCD/RCCB", model: "SENTRON 5SV", rating: "25-125A", poles: "2P/4P", curve: "30-300mA", about: "SENTRON RCCB for group earth-leakage protection. Consider splitting circuits across several RCCBs so one nuisance trip does not take out an entire board.")
     ]),
-    ComponentGroup(id: "mccbs", name: "MCCBs", items: [
-      PanelComponent(id: "abb-tmax-xt1", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT1", rating: "Set A - max 160A", poles: "3P/4P", curve: "Basic - thermal-magnetic"),
-      PanelComponent(id: "abb-tmax-xt2", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT2", rating: "Set A - max 160A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch"),
-      PanelComponent(id: "abb-tmax-xt3", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT3", rating: "Set A - max 250A", poles: "3P/4P", curve: "Basic - thermal-magnetic"),
-      PanelComponent(id: "abb-tmax-xt4", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT4", rating: "Set A - max 250A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch"),
-      PanelComponent(id: "abb-tmax-xt5", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT5", rating: "Set A - max 630A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch"),
-      PanelComponent(id: "abb-tmax-xt6", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT6", rating: "Set A - max 1000A", poles: "3P/4P", curve: "Basic - thermal-magnetic/Ekip Dip"),
-      PanelComponent(id: "abb-tmax-xt7", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT7", rating: "Set A - max 1600A", poles: "3P/4P", curve: "Heavy duty - Ekip Dip/Touch"),
-      PanelComponent(id: "abb-tmax-xt7m", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT7 M", rating: "Set A - max 1600A", poles: "3P/4P", curve: "Motorized - Ekip Dip/Touch"),
-      PanelComponent(id: "schneider-nsx", manufacturer: "Schneider", type: "MCCB", model: "Compact NSX", rating: "16-630A", poles: "3P/4P", curve: "TM/Micrologic"),
-      PanelComponent(id: "schneider-nsj", manufacturer: "Schneider", type: "MCCB", model: "EasyPact CVS/NSX", rating: "16-630A", poles: "3P/4P", curve: "Thermal Magnetic"),
-      PanelComponent(id: "siemens-3va1", manufacturer: "Siemens", type: "MCCB", model: "SENTRON 3VA1", rating: "16-160A", poles: "3P/4P", curve: "Thermal Magnetic"),
-      PanelComponent(id: "siemens-3va2", manufacturer: "Siemens", type: "MCCB", model: "SENTRON 3VA2", rating: "25-630A", poles: "3P/4P", curve: "ETU"),
-      PanelComponent(id: "eaton-nzm", manufacturer: "Eaton", type: "MCCB", model: "NZM", rating: "20-1600A", poles: "3P/4P", curve: "Electronic/TM"),
-      PanelComponent(id: "eaton-bzmx", manufacturer: "Eaton", type: "MCCB", model: "BZMX", rating: "15-250A", poles: "3P/4P", curve: "Thermal Magnetic")
+    ComponentGroup(id: "mccbs", name: "MCCBs & ACBs", items: [
+      PanelComponent(id: "abb-tmax-xt1", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT1", rating: "Set A - max 160A", poles: "3P/4P", curve: "Basic - thermal-magnetic", about: "Compact moulded case breaker for feeders up to 160A with a fixed thermal-magnetic trip. Suits outgoing ways on small distribution boards."),
+      PanelComponent(id: "abb-tmax-xt2", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT2", rating: "Set A - max 160A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch", about: "160A frame with a choice of thermal-magnetic or Ekip electronic trip units, giving adjustable settings for selectivity against downstream devices."),
+      PanelComponent(id: "abb-tmax-xt3", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT3", rating: "Set A - max 250A", poles: "3P/4P", curve: "Basic - thermal-magnetic", about: "250A frame thermal-magnetic breaker for mid-size feeders and sub-board supplies."),
+      PanelComponent(id: "abb-tmax-xt4", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT4", rating: "Set A - max 250A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch", about: "250A frame with electronic trip options, used where adjustable overload and instantaneous settings are needed to coordinate with upstream protection."),
+      PanelComponent(id: "abb-tmax-xt5", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT5", rating: "Set A - max 630A", poles: "3P/4P", curve: "Heavy duty - TM/Ekip Dip/Touch", about: "400 to 630A frame for major feeders, transformer outgoings and sub-main distribution."),
+      PanelComponent(id: "abb-tmax-xt6", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT6", rating: "Set A - max 1000A", poles: "3P/4P", curve: "Basic - thermal-magnetic/Ekip Dip", about: "630 to 800A frame typically used as a main incomer on medium boards or feeding large mechanical plant."),
+      PanelComponent(id: "abb-tmax-xt7", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT7", rating: "Set A - max 1600A", poles: "3P/4P", curve: "Heavy duty - Ekip Dip/Touch", about: "1000 to 1600A frame for main incoming protection on large distribution boards where an air circuit breaker is not required."),
+      PanelComponent(id: "abb-tmax-xt7m", manufacturer: "ABB", type: "MCCB", model: "SACE Tmax XT7 M", rating: "Set A - max 1600A", poles: "3P/4P", curve: "Motorized - Ekip Dip/Touch", about: "Motorised version of the XT7 for remote or automatic operation, used in transfer schemes and where remote tripping is part of the control philosophy."),
+      PanelComponent(id: "schneider-nsx", manufacturer: "Schneider", type: "MCCB", model: "Compact NSX", rating: "16-630A", poles: "3P/4P", curve: "TM/Micrologic", about: "Compact NSX moulded case breaker with interchangeable TM or Micrologic trip units. The electronic units add metering and adjustable protection curves."),
+      PanelComponent(id: "schneider-nsj", manufacturer: "Schneider", type: "MCCB", model: "EasyPact CVS/NSX", rating: "16-630A", poles: "3P/4P", curve: "Thermal Magnetic", about: "Cost-focused moulded case breaker for standard distribution feeders where adjustable electronic protection is not required."),
+      PanelComponent(id: "siemens-3va1", manufacturer: "Siemens", type: "MCCB", model: "SENTRON 3VA1", rating: "16-160A", poles: "3P/4P", curve: "Thermal Magnetic", about: "SENTRON moulded case breaker with thermal-magnetic trip for general distribution feeders."),
+      PanelComponent(id: "siemens-3va2", manufacturer: "Siemens", type: "MCCB", model: "SENTRON 3VA2", rating: "25-630A", poles: "3P/4P", curve: "ETU", about: "SENTRON breaker with electronic trip units and optional communications, suited to boards where energy data and selectivity are both required."),
+      PanelComponent(id: "eaton-nzm", manufacturer: "Eaton", type: "MCCB", model: "NZM", rating: "20-1600A", poles: "3P/4P", curve: "Electronic/TM", about: "Eaton moulded case breaker range covering a wide band of frame sizes, common as both incomer and outgoing protection in industrial boards."),
+      PanelComponent(id: "eaton-bzmx", manufacturer: "Eaton", type: "MCCB", model: "BZMX", rating: "15-250A", poles: "3P/4P", curve: "Thermal Magnetic", about: "Compact moulded case breaker for smaller feeders where space in the board is limited."),
+      PanelComponent(id: "generic-acb", manufacturer: "Generic", type: "ACB", model: "Air Circuit Breaker", rating: "Set A", poles: "3P/4P", curve: "Withdrawable/fixed", about: "Air circuit breaker for main incoming protection at high current, typically above 800A. Decide early whether it is fixed or withdrawable, since withdrawable versions need far more depth and a defined racking area in front of the board."),
+      PanelComponent(id: "abb-emax2", manufacturer: "ABB", type: "ACB", model: "SACE Emax 2", rating: "630-6300A", poles: "3P/4P", curve: "Fixed or withdrawable", about: "Air circuit breaker for main incoming protection with Ekip trip units offering full protection, metering and communications. Withdrawable versions allow maintenance without a full shutdown but need defined racking space in front of the board."),
+      PanelComponent(id: "schneider-mtz", manufacturer: "Schneider", type: "ACB", model: "MasterPact MTZ", rating: "630-6300A", poles: "3P/4P", curve: "Micrologic X", about: "Main air circuit breaker with Micrologic X control units providing measurement, diagnostics and remote connectivity. Common as the incomer on large main LV boards."),
+      PanelComponent(id: "siemens-3wa", manufacturer: "Siemens", type: "ACB", model: "SENTRON 3WA", rating: "630-6300A", poles: "3P/4P", curve: "ETU trip unit", about: "SENTRON air circuit breaker for main and coupler positions. Confirm the trip unit family early since it drives the metering and communications you can offer later."),
+      PanelComponent(id: "eaton-izmx", manufacturer: "Eaton", type: "ACB", model: "IZMX", rating: "630-1600A", poles: "3P/4P", curve: "Fixed or withdrawable", about: "Compact air circuit breaker for main protection where panel depth is constrained but ACB features are still required.")
     ]),
-    ComponentGroup(id: "contactors", name: "Contactors", items: [
-      PanelComponent(id: "abb-af16-30-10", manufacturer: "ABB", type: "Contactor", model: "AF16-30-10", rating: "16A", poles: "3P", curve: "1NO Aux"),
-      PanelComponent(id: "abb-af26-30-00", manufacturer: "ABB", type: "Contactor", model: "AF26-30-00", rating: "26A", poles: "3P", curve: "No Aux"),
-      PanelComponent(id: "abb-af38-30-00", manufacturer: "ABB", type: "Contactor", model: "AF38-30-00", rating: "38A", poles: "3P", curve: "No Aux"),
-      PanelComponent(id: "schneider-lc1d", manufacturer: "Schneider", type: "Contactor", model: "TeSys D", rating: "9-150A", poles: "3P", curve: "AC-3"),
-      PanelComponent(id: "siemens-3rt", manufacturer: "Siemens", type: "Contactor", model: "SIRIUS 3RT", rating: "9-250A", poles: "3P", curve: "AC-3"),
-      PanelComponent(id: "eaton-dilm", manufacturer: "Eaton", type: "Contactor", model: "DILM", rating: "7-170A", poles: "3P", curve: "AC-3")
+    ComponentGroup(id: "surge-arc", name: "Surge & Arc Protection", items: [
+      PanelComponent(id: "generic-spd", manufacturer: "Generic", type: "SPD", model: "Surge Protection Device", rating: "Type 2", poles: "3P+N", curve: "40kA", about: "Surge protection device diverting transient overvoltage from lightning and switching to earth. Type 1 goes at the origin where there is a lightning protection system, Type 2 at distribution boards. It needs a correctly rated backup fuse or breaker and the shortest possible connecting leads."),
+      PanelComponent(id: "abb-ovr", manufacturer: "ABB", type: "SPD", model: "OVR T2", rating: "Type 2", poles: "1P-4P", curve: "40kA Imax", about: "Type 2 surge arrester for distribution boards, diverting switching and induced lightning transients. Keep the connecting leads under half a metre or the let-through voltage rises sharply."),
+      PanelComponent(id: "schneider-iprd", manufacturer: "Schneider", type: "SPD", model: "Acti9 iPRD", rating: "Type 2", poles: "1P-4P", curve: "20-65kA", about: "Acti9 surge protection with a status window showing when the cartridge is spent, and a remote signalling contact so a failed arrester does not sit unnoticed."),
+      PanelComponent(id: "phoenix-valms", manufacturer: "Phoenix", type: "SPD", model: "VAL-MS", rating: "Type 2", poles: "1P-4P", curve: "Pluggable", about: "Pluggable surge protection where the protection module can be replaced without disturbing the wiring, useful on boards in high-exposure locations."),
+      PanelComponent(id: "abb-afdd", manufacturer: "ABB", type: "AFDD", model: "S-ARC1", rating: "6-40A", poles: "1P+N", curve: "B/C Curve", about: "Arc fault detection device recognising the signature of a series or parallel arcing fault that a normal MCB or RCD will not see. Specified for fire risk areas such as sleeping accommodation and timber structures."),
+      PanelComponent(id: "siemens-5sm6", manufacturer: "Siemens", type: "AFDD", model: "5SM6", rating: "6-40A", poles: "1P+N", curve: "Combined MCB", about: "Arc fault detection combined with overcurrent protection in one device, reducing the DIN width needed compared with separate units."),
+      PanelComponent(id: "abb-cm-iwx", manufacturer: "ABB", type: "RCM", model: "CM-IWx", rating: "30mA-30A", poles: "DIN", curve: "Residual current monitor", about: "Residual current monitor that measures and reports leakage continuously instead of tripping, letting you catch a deteriorating circuit before it causes an outage.")
     ]),
-    ComponentGroup(id: "drives-power", name: "Drives & Power", items: [
-      PanelComponent(id: "abb-acs580", manufacturer: "ABB", type: "VFD", model: "ACS580", rating: "0.75-250kW", poles: "3PH", curve: "400V"),
-      PanelComponent(id: "schneider-atv320", manufacturer: "Schneider", type: "VFD", model: "Altivar ATV320", rating: "0.18-15kW", poles: "3PH", curve: "400V"),
-      PanelComponent(id: "siemens-g120", manufacturer: "Siemens", type: "VFD", model: "SINAMICS G120", rating: "0.55-250kW", poles: "3PH", curve: "400V"),
-      PanelComponent(id: "meanwell-psu", manufacturer: "Mean Well", type: "PSU", model: "HDR DIN rail", rating: "24VDC", poles: "1PH", curve: "60-150W"),
-      PanelComponent(id: "siemens-sitop", manufacturer: "Siemens", type: "PSU", model: "SITOP PSU", rating: "24VDC", poles: "1PH", curve: "5-20A")
+    ComponentGroup(id: "switching", name: "Switching & Isolation", items: [
+      PanelComponent(id: "generic-isolator", manufacturer: "Generic", type: "Isolator", model: "Load break switch", rating: "Set A", poles: "3P/4P", curve: "Door-coupled", about: "Load break switch providing a visible, lockable point of isolation so a board or section can be worked on safely. Rated for making and breaking load current, unlike a plain disconnector."),
+      PanelComponent(id: "abb-ot", manufacturer: "ABB", type: "Isolator", model: "OT switch disconnector", rating: "16-3150A", poles: "3P/4P", curve: "Door or base mount", about: "Switch disconnector for main isolation or outgoing feeders, available with door-coupled rotary handles that can be padlocked off for safe working."),
+      PanelComponent(id: "schneider-ins", manufacturer: "Schneider", type: "Isolator", model: "Interpact INS", rating: "40-2500A", poles: "3P/4P", curve: "Load break", about: "Load break switch for isolation duty on incomers and outgoing feeders where switching capability without protection is required."),
+      PanelComponent(id: "generic-changeover", manufacturer: "Generic", type: "Changeover Switch", model: "Manual changeover", rating: "Set A", poles: "4P", curve: "I-0-II", about: "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once."),
+      PanelComponent(id: "socomec-sirco", manufacturer: "Socomec", type: "Changeover Switch", model: "Sirco MOT", rating: "125-3200A", poles: "3P/4P", curve: "Motorised I-0-II", about: "Motorised changeover switch for automatic transfer between utility and generator, mechanically interlocked so both sources can never be paralleled."),
+      PanelComponent(id: "abb-ats021", manufacturer: "ABB", type: "ATS Controller", model: "ATS021", rating: "24VDC", poles: "DIN", curve: "Auto transfer control", about: "Automatic transfer controller monitoring the normal supply and commanding changeover to the standby source. Set the transfer and return delays deliberately so brief dips do not start the generator unnecessarily."),
+      PanelComponent(id: "deepsea-dse", manufacturer: "Generic", type: "ATS Controller", model: "Generator controller", rating: "12/24VDC", poles: "Door mount", curve: "Auto mains failure", about: "Auto mains failure controller starting the generator on supply loss, transferring load and returning it once the mains is stable. It needs clear wiring to the generator start contacts and both source sensing points."),
+      PanelComponent(id: "generic-fuse", manufacturer: "Generic", type: "Fuse", model: "NH fuse link", rating: "Set A", poles: "1P", curve: "gG/gL", about: "NH fuse link giving very high breaking capacity in a compact body, often used ahead of large feeders or where the fault level exceeds what a breaker can handle economically. gG is for general cable protection, aM for motor circuits."),
+      PanelComponent(id: "generic-fuse-holder", manufacturer: "Generic", type: "Fuse Holder", model: "DIN fuse holder", rating: "Set A", poles: "1P/3P", curve: "10x38/NH", about: "DIN rail fuse carrier holding cartridge or NH fuse links, giving isolation when the carrier is withdrawn. Confirm the fuse size it accepts and whether a blown-fuse indicator is required."),
+      PanelComponent(id: "abb-af16-30-10", manufacturer: "ABB", type: "Contactor", model: "AF16-30-10", rating: "16A", poles: "3P", curve: "1NO Aux", about: "Three-pole contactor around 16A AC-3 with one normally-open auxiliary, sized for small motors and controlled loads. The AF electronic coil accepts a wide voltage band, which reduces the number of coil variants to stock."),
+      PanelComponent(id: "abb-af26-30-00", manufacturer: "ABB", type: "Contactor", model: "AF26-30-00", rating: "26A", poles: "3P", curve: "No Aux", about: "Mid-size three-pole contactor for motor and load switching where no built-in auxiliary contact is required."),
+      PanelComponent(id: "abb-af38-30-00", manufacturer: "ABB", type: "Contactor", model: "AF38-30-00", rating: "38A", poles: "3P", curve: "No Aux", about: "Larger three-pole contactor for motors up to roughly 18.5kW at 400V. Check AC-3 rating against motor full-load amps rather than the AC-1 figure."),
+      PanelComponent(id: "schneider-lc1d", manufacturer: "Schneider", type: "Contactor", model: "TeSys D", rating: "9-150A", poles: "3P", curve: "AC-3", about: "TeSys D contactor, the workhorse for motor starters and load switching. Add-on auxiliary blocks and mechanical interlocks let it build reversing and star-delta arrangements."),
+      PanelComponent(id: "siemens-3rt", manufacturer: "Siemens", type: "Contactor", model: "SIRIUS 3RT", rating: "9-250A", poles: "3P", curve: "AC-3", about: "SIRIUS contactor sized by frame across a wide kW range, designed to clip together with matching 3RU or 3RB overload relays into a compact starter."),
+      PanelComponent(id: "eaton-dilm", manufacturer: "Eaton", type: "Contactor", model: "DILM", rating: "7-170A", poles: "3P", curve: "AC-3", about: "Eaton DILM contactor range with matching overloads and accessory blocks, common in machine control panels.")
     ]),
-    ComponentGroup(id: "general-equipment", name: "General Equipment", items: [
-      PanelComponent(id: "generic-acb", manufacturer: "Generic", type: "ACB", model: "Air Circuit Breaker", rating: "Set A", poles: "3P/4P", curve: "Withdrawable/fixed"),
-      PanelComponent(id: "generic-rccb", manufacturer: "Generic", type: "RCD/RCCB", model: "Residual Current Device", rating: "Set A", poles: "2P/4P", curve: "30-300mA"),
-      PanelComponent(id: "generic-overload", manufacturer: "Generic", type: "Overload Relay", model: "Thermal overload relay", rating: "Set A", poles: "3P", curve: "Motor protection"),
-      PanelComponent(id: "generic-soft-starter", manufacturer: "Generic", type: "Soft Starter", model: "Motor soft starter", rating: "Set kW", poles: "3PH", curve: "Ramp start/stop"),
-      PanelComponent(id: "generic-transformer", manufacturer: "Generic", type: "Transformer", model: "Control transformer", rating: "Set VA", poles: "1PH", curve: "400/230V"),
-      PanelComponent(id: "generic-spd", manufacturer: "Generic", type: "SPD", model: "Surge Protection Device", rating: "Type 2", poles: "3P+N", curve: "40kA"),
-      PanelComponent(id: "generic-fuse", manufacturer: "Generic", type: "Fuse", model: "NH fuse link", rating: "Set A", poles: "1P", curve: "gG/gL"),
-      PanelComponent(id: "generic-fuse-holder", manufacturer: "Generic", type: "Fuse Holder", model: "DIN fuse holder", rating: "Set A", poles: "1P/3P", curve: "10x38/NH"),
-      PanelComponent(id: "generic-isolator", manufacturer: "Generic", type: "Isolator", model: "Load break switch", rating: "Set A", poles: "3P/4P", curve: "Door-coupled"),
-      PanelComponent(id: "generic-changeover", manufacturer: "Generic", type: "Changeover Switch", model: "Manual changeover", rating: "Set A", poles: "4P", curve: "I-0-II"),
-      PanelComponent(id: "generic-meter", manufacturer: "Generic", type: "Meter", model: "Digital meter", rating: "230/400V", poles: "3PH", curve: "Panel mount"),
-      PanelComponent(id: "generic-power-analyzer", manufacturer: "Generic", type: "Power Analyzer", model: "Power quality analyzer", rating: "230/400V", poles: "3PH", curve: "Modbus"),
-      PanelComponent(id: "generic-plc", manufacturer: "Generic", type: "PLC", model: "Compact PLC", rating: "24VDC", poles: "DIN", curve: "Digital I/O"),
-      PanelComponent(id: "generic-relay", manufacturer: "Generic", type: "Relay", model: "Interface relay", rating: "24VDC", poles: "DIN", curve: "1CO/2CO"),
-      PanelComponent(id: "generic-timer", manufacturer: "Generic", type: "Timer", model: "Time relay", rating: "24-230V", poles: "DIN", curve: "On/off delay"),
-      PanelComponent(id: "generic-selector", manufacturer: "Generic", type: "Selector Switch", model: "Selector switch", rating: "22mm", poles: "2/3 position", curve: "Panel door"),
-      PanelComponent(id: "generic-push-button", manufacturer: "Generic", type: "Push Button", model: "Push button", rating: "22mm", poles: "NO/NC", curve: "Panel door"),
-      PanelComponent(id: "generic-indicator", manufacturer: "Generic", type: "Indicator Light", model: "Pilot light", rating: "24/230V", poles: "22mm", curve: "LED"),
-      PanelComponent(id: "generic-fan", manufacturer: "Generic", type: "Fan", model: "Panel fan", rating: "230V", poles: "Filter fan", curve: "Airflow"),
-      PanelComponent(id: "generic-thermostat", manufacturer: "Generic", type: "Thermostat", model: "Panel thermostat", rating: "230V", poles: "DIN", curve: "NO/NC"),
-      PanelComponent(id: "generic-door-interlock", manufacturer: "Generic", type: "Door Interlock", model: "Door interlock", rating: "Set A", poles: "Handle", curve: "Mechanical"),
-      PanelComponent(id: "generic-cable-gland", manufacturer: "Generic", type: "Cable Gland", model: "Cable gland", rating: "Set size", poles: "M thread", curve: "IP rated"),
-      PanelComponent(id: "generic-trunking", manufacturer: "Generic", type: "Trunking", model: "Wiring duct", rating: "Set cm", poles: "PVC", curve: "Slotted"),
-      PanelComponent(id: "generic-copper-bar", manufacturer: "Generic", type: "Copper Bar", model: "Copper bar", rating: "Set cm", poles: "Flat bar", curve: "Busbar"),
-      PanelComponent(id: "generic-earth-bar", manufacturer: "Generic", type: "Earth Bar", model: "PE bar", rating: "Set length", poles: "PE", curve: "Copper/brass"),
-      PanelComponent(id: "generic-neutral-bar", manufacturer: "Generic", type: "Neutral Bar", model: "N bar", rating: "Set length", poles: "N", curve: "Copper/brass")
+    ComponentGroup(id: "drives", name: "Drives & Soft Starters", items: [
+      PanelComponent(id: "abb-acs355", manufacturer: "ABB", type: "VFD", model: "ACS355", rating: "0.37-22kW", poles: "3PH", curve: "Machinery drive", about: "Machinery drive for conveyors, mixers and small pumps, built for panel mounting with straightforward parameter setup."),
+      PanelComponent(id: "abb-acs580", manufacturer: "ABB", type: "VFD", model: "ACS580", rating: "0.75-250kW", poles: "3PH", curve: "General purpose", about: "General purpose drive covering most building services and industrial motor loads, with a built-in choke that reduces harmonic current without an external reactor."),
+      PanelComponent(id: "abb-ach580", manufacturer: "ABB", type: "VFD", model: "ACH580", rating: "0.75-500kW", poles: "3PH", curve: "HVAC drive", about: "HVAC variant tuned for fans and pumps, including firefighter override and PID control for pressure and flow."),
+      PanelComponent(id: "abb-acs880", manufacturer: "ABB", type: "VFD", model: "ACS880", rating: "0.55-3200kW", poles: "3PH", curve: "Industrial drive", about: "Industrial drive for demanding applications including regenerative and common DC bus configurations. Confirm cooling and cabinet depth early, since larger frames are substantial."),
+      PanelComponent(id: "schneider-atv12", manufacturer: "Schneider", type: "VFD", model: "Altivar ATV12", rating: "0.18-4kW", poles: "1PH/3PH", curve: "Basic machines", about: "Entry-level drive for small machines and single-phase supplies, typically fitted straight onto the machine panel."),
+      PanelComponent(id: "schneider-atv320", manufacturer: "Schneider", type: "VFD", model: "Altivar ATV320", rating: "0.18-15kW", poles: "3PH", curve: "Machine drive", about: "Compact machine drive available in book and compact formats, with integrated safety functions such as Safe Torque Off."),
+      PanelComponent(id: "schneider-atv340", manufacturer: "Schneider", type: "VFD", model: "Altivar ATV340", rating: "0.75-75kW", poles: "3PH", curve: "High performance", about: "High performance drive for dynamic machine control where fast response and precise speed regulation matter."),
+      PanelComponent(id: "schneider-atv630", manufacturer: "Schneider", type: "VFD", model: "Altivar ATV630", rating: "0.75-315kW", poles: "3PH", curve: "Process drive", about: "Process drive for pumps, fans and compressors with energy-saving control and built-in EMC filtering."),
+      PanelComponent(id: "siemens-v20", manufacturer: "Siemens", type: "VFD", model: "SINAMICS V20", rating: "0.12-30kW", poles: "1PH/3PH", curve: "Basic drive", about: "Basic drive for simple fan, pump and conveyor duties where a full parameter set would be overkill."),
+      PanelComponent(id: "siemens-g120c", manufacturer: "Siemens", type: "VFD", model: "SINAMICS G120C", rating: "0.55-132kW", poles: "3PH", curve: "Compact drive", about: "Compact single-unit drive combining control and power in one housing, saving panel width against the modular G120."),
+      PanelComponent(id: "siemens-g120", manufacturer: "Siemens", type: "VFD", model: "SINAMICS G120", rating: "0.55-250kW", poles: "3PH", curve: "Modular drive", about: "Modular drive where control unit and power module are selected separately, so the same power module can serve different control and communication needs."),
+      PanelComponent(id: "danfoss-fc51", manufacturer: "Danfoss", type: "VFD", model: "VLT Micro FC 51", rating: "0.18-22kW", poles: "1PH/3PH", curve: "Micro drive", about: "Micro drive for basic speed control on small motors, common in HVAC and simple machinery."),
+      PanelComponent(id: "danfoss-fc202", manufacturer: "Danfoss", type: "VFD", model: "VLT AQUA FC 202", rating: "0.25-1400kW", poles: "3PH", curve: "Pump drive", about: "Drive tuned for water and wastewater duty, with pump-specific features such as dry-run detection, pipe fill and cascade control."),
+      PanelComponent(id: "danfoss-fc302", manufacturer: "Danfoss", type: "VFD", model: "VLT Automation FC 302", rating: "0.25-800kW", poles: "3PH", curve: "Automation drive", about: "Automation drive for demanding motor control including closed loop and servo-like applications."),
+      PanelComponent(id: "delta-ms300", manufacturer: "Delta", type: "VFD", model: "MS300", rating: "0.4-22kW", poles: "3PH", curve: "Compact vector", about: "Compact vector drive giving good torque control in a small footprint, widely used in OEM machine panels."),
+      PanelComponent(id: "delta-c2000", manufacturer: "Delta", type: "VFD", model: "C2000+", rating: "0.75-400kW", poles: "3PH", curve: "Heavy duty vector", about: "Heavy duty vector drive for cranes, hoists and high-torque applications where overload capability matters."),
+      PanelComponent(id: "eaton-dc1", manufacturer: "Eaton", type: "VFD", model: "PowerXL DC1", rating: "0.37-11kW", poles: "1PH/3PH", curve: "Compact drive", about: "Compact drive for basic speed control, sized for small panels and simple commissioning."),
+      PanelComponent(id: "eaton-dg1", manufacturer: "Eaton", type: "VFD", model: "PowerXL DG1", rating: "0.75-250kW", poles: "3PH", curve: "General purpose", about: "General purpose drive with active energy control, used across pump, fan and conveyor duties."),
+      PanelComponent(id: "generic-soft-starter", manufacturer: "Generic", type: "Soft Starter", model: "Motor soft starter", rating: "Set kW", poles: "3PH", curve: "Ramp start/stop", about: "Ramps motor voltage up and down to limit inrush current and mechanical shock on belts, couplings and pumps. Confirm whether a bypass is built in, and remember it still needs upstream isolation and overload protection."),
+      PanelComponent(id: "abb-psr", manufacturer: "ABB", type: "Soft Starter", model: "PSR", rating: "3-105A", poles: "3PH", curve: "Compact ramp", about: "Compact soft starter for small motors where the aim is simply to take the shock out of starting. No internal bypass, so allow for the heat it dissipates while ramping."),
+      PanelComponent(id: "abb-pse", manufacturer: "ABB", type: "Soft Starter", model: "PSE", rating: "18-370A", poles: "3PH", curve: "Bypass + current limit", about: "Soft starter with internal bypass and current limiting, so it stops dissipating heat once the motor is up to speed."),
+      PanelComponent(id: "abb-pstx", manufacturer: "ABB", type: "Soft Starter", model: "PSTX", rating: "30-1250A", poles: "3PH", curve: "Advanced, built-in bypass", about: "Advanced soft starter with built-in bypass, torque control and motor protection, suitable for large pumps and compressors where starting stress is a real problem."),
+      PanelComponent(id: "schneider-ats01", manufacturer: "Schneider", type: "Soft Starter", model: "Altistart ATS01", rating: "3-32A", poles: "3PH", curve: "Basic ramp", about: "Basic soft starter for small motors, providing a simple voltage ramp without configurable protection."),
+      PanelComponent(id: "schneider-ats22", manufacturer: "Schneider", type: "Soft Starter", model: "Altistart ATS22", rating: "17-590A", poles: "3PH", curve: "Torque control", about: "Soft starter with torque control giving smoother starts and stops on pumps, which reduces water hammer in pipework."),
+      PanelComponent(id: "schneider-ats480", manufacturer: "Schneider", type: "Soft Starter", model: "Altistart ATS480", rating: "17-1200A", poles: "3PH", curve: "Advanced, bypass", about: "Advanced soft starter with integrated bypass, protection and diagnostics for larger motors and critical duties."),
+      PanelComponent(id: "siemens-3rw30", manufacturer: "Siemens", type: "Soft Starter", model: "SIRIUS 3RW30", rating: "3-106A", poles: "3PH", curve: "Standard ramp", about: "Standard soft starter for straightforward ramp starting on general purpose motors."),
+      PanelComponent(id: "siemens-3rw52", manufacturer: "Siemens", type: "Soft Starter", model: "SIRIUS 3RW52", rating: "13-370A", poles: "3PH", curve: "Bypass + protection", about: "Soft starter combining bypass and motor protection in one device, reducing the component count in the starter section."),
+      PanelComponent(id: "siemens-3rw44", manufacturer: "Siemens", type: "Soft Starter", model: "SIRIUS 3RW44", rating: "29-1214A", poles: "3PH", curve: "High feature", about: "High-feature soft starter for large motors with adjustable torque control and comprehensive protection and diagnostics."),
+      PanelComponent(id: "eaton-ds7", manufacturer: "Eaton", type: "Soft Starter", model: "DS7", rating: "9-135A", poles: "3PH", curve: "Integrated bypass", about: "Soft starter with integrated bypass controlling two phases, compact enough to fit where a full three-phase controlled unit would not.")
     ]),
-    ComponentGroup(id: "panel-hardware", name: "Panel Hardware", items: [
-      PanelComponent(id: "generic-busbar-250", manufacturer: "Generic", type: "Busbar", model: "Copper busbar", rating: "250A", poles: "3P+N", curve: "cm/m sizing"),
-      PanelComponent(id: "generic-busbar-630", manufacturer: "Generic", type: "Busbar", model: "Copper busbar", rating: "630A", poles: "3P+N", curve: "cm/m sizing"),
-      PanelComponent(id: "phoenix-terminal", manufacturer: "Phoenix", type: "Terminal Block", model: "UK series", rating: "2.5-35mm²", poles: "DIN", curve: "cm rail"),
-      PanelComponent(id: "generic-din", manufacturer: "Generic", type: "DIN Rail", model: "35mm rail", rating: "1m", poles: "DIN", curve: "Cut to cm")
+    ComponentGroup(id: "motor-protection", name: "Motor Protection & Starters", items: [
+      PanelComponent(id: "abb-ms132", manufacturer: "ABB", type: "MPCB", model: "MS132", rating: "0.1-32A", poles: "3P", curve: "Manual motor starter", about: "Manual motor starter combining short-circuit, overload and manual switching in one device. Dial the current setting to motor full-load amps and check the breaking capacity against the board fault level."),
+      PanelComponent(id: "abb-ms165", manufacturer: "ABB", type: "MPCB", model: "MS165", rating: "10-65A", poles: "3P", curve: "Manual motor starter", about: "Larger frame manual motor starter for motors up to roughly 30kW, with the same combined protection and switching function."),
+      PanelComponent(id: "schneider-gv2me", manufacturer: "Schneider", type: "MPCB", model: "TeSys GV2ME", rating: "0.1-32A", poles: "3P", curve: "Thermal-magnetic", about: "TeSys manual motor starter with thermal-magnetic protection and a rotary handle, commonly the first device in a compact motor feeder."),
+      PanelComponent(id: "schneider-gv3", manufacturer: "Schneider", type: "MPCB", model: "TeSys GV3", rating: "9-65A", poles: "3P", curve: "Thermal-magnetic", about: "Larger TeSys motor circuit breaker for mid-size motors, often paired with a matching contactor to form a compact starter."),
+      PanelComponent(id: "siemens-3rv2", manufacturer: "Siemens", type: "MPCB", model: "SIRIUS 3RV2", rating: "0.11-100A", poles: "3P", curve: "Motor protection", about: "SIRIUS motor starter protector that clips directly to matching 3RT contactors, forming a tested combination without extra wiring."),
+      PanelComponent(id: "eaton-pkzm0", manufacturer: "Eaton", type: "MPCB", model: "PKZM0", rating: "0.1-32A", poles: "3P", curve: "Motor protective", about: "Motor protective circuit breaker with adjustable overload, used as a compact combined isolator and protection device."),
+      PanelComponent(id: "generic-overload", manufacturer: "Generic", type: "Overload Relay", model: "Thermal overload relay", rating: "Set A", poles: "3P", curve: "Motor protection", about: "Thermal overload relay protecting a motor from sustained overcurrent such as a jammed load or lost phase. Set the dial to motor full-load amps and check the trip class suits the starting time."),
+      PanelComponent(id: "abb-ta25du", manufacturer: "ABB", type: "Overload Relay", model: "TA25DU", rating: "0.1-32A", poles: "3P", curve: "Thermal, Class 10", about: "Thermal overload relay mounting directly onto matching contactors. Set the dial to motor full-load amps, and reset behaviour should be chosen deliberately since automatic reset on a motor can restart machinery."),
+      PanelComponent(id: "abb-ef19", manufacturer: "ABB", type: "Overload Relay", model: "EF19", rating: "0.1-18.9A", poles: "3P", curve: "Electronic, Class 10-30", about: "Electronic overload relay with a wider setting range and selectable trip class, holding accuracy better than a bimetallic relay across ambient changes."),
+      PanelComponent(id: "schneider-lrd", manufacturer: "Schneider", type: "Overload Relay", model: "TeSys LRD", rating: "0.1-140A", poles: "3P", curve: "Thermal, Class 10/20", about: "TeSys thermal overload relay clipping onto LC1D contactors, the standard partner in a Schneider motor starter."),
+      PanelComponent(id: "schneider-lr9", manufacturer: "Schneider", type: "Overload Relay", model: "TeSys LR9", rating: "0.3-630A", poles: "3P", curve: "Electronic", about: "Electronic overload relay for larger motors, with a wide adjustment range and better protection against phase loss."),
+      PanelComponent(id: "siemens-3ru21", manufacturer: "Siemens", type: "Overload Relay", model: "SIRIUS 3RU21", rating: "0.11-100A", poles: "3P", curve: "Thermal, Class 10", about: "Thermal overload relay designed to mount directly on 3RT contactors, forming a compact tested starter combination."),
+      PanelComponent(id: "siemens-3rb30", manufacturer: "Siemens", type: "Overload Relay", model: "SIRIUS 3RB30", rating: "0.1-100A", poles: "3P", curve: "Electronic, Class 5-30", about: "Electronic overload relay with selectable trip class from 5 to 30, useful for motors with long run-up times such as large fans."),
+      PanelComponent(id: "generic-dol-starter", manufacturer: "Generic", type: "Motor Starter", model: "Direct-on-line starter", rating: "Set kW", poles: "3PH", curve: "Contactor + overload", about: "Direct-on-line starter combining contactor and overload for the simplest motor start. Draws six to eight times full-load current at start, so confirm the supply and any generator can accept that step."),
+      PanelComponent(id: "generic-star-delta", manufacturer: "Generic", type: "Motor Starter", model: "Star-delta starter", rating: "Set kW", poles: "3PH", curve: "3 contactors + timer", about: "Star-delta starter reducing starting current by first running the motor in star, then switching to delta. The motor must have all six leads available and the transition timer needs setting to the actual run-up time."),
+      PanelComponent(id: "generic-reversing", manufacturer: "Generic", type: "Motor Starter", model: "Reversing starter", rating: "Set kW", poles: "3PH", curve: "Interlocked pair", about: "Reversing starter using two mechanically and electrically interlocked contactors to swap two phases. The interlock is a safety requirement, not an option, since both closing together is a direct phase-to-phase fault.")
+    ]),
+    ComponentGroup(id: "control-power", name: "Control Power & UPS", items: [
+      PanelComponent(id: "generic-transformer", manufacturer: "Generic", type: "Transformer", model: "Control transformer", rating: "Set VA", poles: "1PH", curve: "400/230V", about: "Control transformer stepping the panel supply down to a separate control voltage, typically 230V or 110V, and isolating the control circuit from the power circuit. Size the VA for the inrush of all contactor coils picking up together, not just their holding current."),
+      PanelComponent(id: "phoenix-step", manufacturer: "Phoenix", type: "PSU", model: "STEP POWER", rating: "24VDC", poles: "1PH", curve: "0.5-10A basic", about: "Basic 24VDC supply for small control loads such as a handful of relays and sensors, where power reserve features are unnecessary."),
+      PanelComponent(id: "phoenix-trio", manufacturer: "Phoenix", type: "PSU", model: "TRIO POWER", rating: "24VDC", poles: "1PH/3PH", curve: "2.5-20A", about: "Mid-range 24VDC supply for typical control panels, with a stable output and compact DIN footprint."),
+      PanelComponent(id: "phoenix-quint", manufacturer: "Phoenix", type: "PSU", model: "QUINT POWER", rating: "24VDC", poles: "1PH/3PH", curve: "5-40A, SFB tech", about: "Premium 24VDC supply whose selective fuse breaking technology delivers extra current briefly, so a downstream fault clears its protective device instead of dragging the whole 24V rail down."),
+      PanelComponent(id: "abb-cpd", manufacturer: "ABB", type: "PSU", model: "CP-D", rating: "24VDC", poles: "1PH", curve: "0.42-2.5A compact", about: "Compact 24VDC supply for small control tasks where DIN width is at a premium."),
+      PanelComponent(id: "abb-cpe", manufacturer: "ABB", type: "PSU", model: "CP-E", rating: "24VDC", poles: "1PH", curve: "0.75-20A", about: "General purpose 24VDC supply covering most panel control loads, with adjustable output voltage to compensate for line drop."),
+      PanelComponent(id: "siemens-psu100s", manufacturer: "Siemens", type: "PSU", model: "SITOP PSU100S", rating: "24VDC", poles: "1PH", curve: "2.5-40A", about: "Single-phase SITOP supply for control circuits and SIMATIC controllers, with reserve capacity for short overloads."),
+      PanelComponent(id: "siemens-psu8200", manufacturer: "Siemens", type: "PSU", model: "SITOP PSU8200", rating: "24VDC", poles: "3PH", curve: "10-40A", about: "Three-phase SITOP supply for larger 24VDC loads, balancing the draw across all three phases rather than loading one."),
+      PanelComponent(id: "meanwell-dr", manufacturer: "Mean Well", type: "PSU", model: "DR series", rating: "24VDC", poles: "1PH", curve: "15-120W", about: "Economical DIN rail supply for light control duties, widely used in OEM panels."),
+      PanelComponent(id: "meanwell-hdr", manufacturer: "Mean Well", type: "PSU", model: "HDR series", rating: "24VDC", poles: "1PH", curve: "15-150W ultra slim", about: "Ultra-slim DIN supply for tight enclosures where every millimetre of rail counts."),
+      PanelComponent(id: "meanwell-ndr", manufacturer: "Mean Well", type: "PSU", model: "NDR series", rating: "24VDC", poles: "1PH", curve: "75-480W", about: "Higher power DIN supply for panels with substantial 24VDC load such as banks of valves or extensive I/O."),
+      PanelComponent(id: "meanwell-tdr", manufacturer: "Mean Well", type: "PSU", model: "TDR series", rating: "24VDC", poles: "3PH", curve: "240-960W", about: "Three-phase DIN supply for heavy 24VDC loads, keeping phase loading balanced on larger installations."),
+      PanelComponent(id: "delta-drp", manufacturer: "Delta", type: "PSU", model: "CliQ DRP", rating: "24VDC", poles: "1PH/3PH", curve: "60-960W", about: "CliQ series supply available in single and three-phase versions with good efficiency and a compact footprint."),
+      PanelComponent(id: "eaton-psg", manufacturer: "Eaton", type: "PSU", model: "PSG", rating: "24VDC", poles: "1PH", curve: "1.3-20A", about: "General purpose 24VDC supply for control circuits, with models sized from small interface duty upward."),
+      PanelComponent(id: "phoenix-quint-ups", manufacturer: "Phoenix", type: "DC-UPS", model: "QUINT UPS-IQ", rating: "24VDC", poles: "DIN", curve: "5-40A + battery", about: "DC uninterruptible supply with intelligent battery management that reports remaining backup time, so control power outlives a brief mains loss."),
+      PanelComponent(id: "siemens-ups1600", manufacturer: "Siemens", type: "DC-UPS", model: "SITOP UPS1600", rating: "24VDC", poles: "DIN", curve: "10-40A managed", about: "Managed DC-UPS with configurable buffer time and diagnostics over the controller network, letting a PLC shut down cleanly rather than dying mid-operation."),
+      PanelComponent(id: "abb-cpa-ru", manufacturer: "ABB", type: "DC-UPS", model: "CP-A RU", rating: "24VDC", poles: "DIN", curve: "Redundancy + buffer", about: "Redundancy and buffer module decoupling two power supplies so a single failed unit cannot pull down the shared 24V rail."),
+      PanelComponent(id: "meanwell-drc", manufacturer: "Mean Well", type: "DC-UPS", model: "DRC series", rating: "24VDC", poles: "DIN", curve: "Charger + backup", about: "DIN rail supply with an integrated battery charger and changeover, a cost-effective route to backed-up control power on smaller panels.")
+    ]),
+    ComponentGroup(id: "control-automation", name: "Control & Automation", items: [
+      PanelComponent(id: "generic-plc", manufacturer: "Generic", type: "PLC", model: "Compact PLC", rating: "24VDC", poles: "DIN", curve: "Digital I/O", about: "Programmable logic controller running the panel control sequence. Count the digital and analogue I/O needed with spare capacity, and confirm the communication protocol before fixing the enclosure layout."),
+      PanelComponent(id: "siemens-s71200", manufacturer: "Siemens", type: "PLC", model: "SIMATIC S7-1200", rating: "24VDC", poles: "DIN", curve: "Compact controller", about: "Compact controller for panel automation with expandable digital and analogue I/O. Confirm the I/O count with spare capacity and whether PROFINET or Modbus is required before finalising the layout."),
+      PanelComponent(id: "schneider-m221", manufacturer: "Schneider", type: "PLC", model: "Modicon M221", rating: "24VDC", poles: "DIN", curve: "Machine controller", about: "Machine controller for pump, HVAC and small process panels, with built-in Ethernet on most references."),
+      PanelComponent(id: "abb-ac500", manufacturer: "ABB", type: "PLC", model: "AC500-eCo", rating: "24VDC", poles: "DIN", curve: "Modular controller", about: "Modular controller that scales from small to large I/O counts, useful where the same panel design must cover several plant sizes."),
+      PanelComponent(id: "delta-dvp", manufacturer: "Delta", type: "PLC", model: "DVP series", rating: "24VDC", poles: "DIN", curve: "Compact controller", about: "Cost-effective compact PLC widely used in OEM machine panels with straightforward digital and analogue expansion."),
+      PanelComponent(id: "siemens-ktp", manufacturer: "Siemens", type: "HMI", model: "SIMATIC KTP", rating: "24VDC", poles: "Door mount", curve: "4-15 inch touch", about: "Door-mounted touch panel giving the operator status, alarms and setpoints. Cutting the door aperture accurately matters, and the IP rating only holds if the supplied gasket is fitted correctly."),
+      PanelComponent(id: "schneider-hmigxu", manufacturer: "Schneider", type: "HMI", model: "Harmony HMIGXU", rating: "24VDC", poles: "Door mount", curve: "3.5-7 inch touch", about: "Compact operator terminal for smaller panels where a full PC-based interface is unnecessary."),
+      PanelComponent(id: "pilz-pnoz", manufacturer: "Generic", type: "Safety Relay", model: "PNOZ safety relay", rating: "24VDC", poles: "DIN", curve: "Emergency stop / guard", about: "Safety relay monitoring emergency stops, guard switches and light curtains, providing a redundant and monitored trip path. It must be wired to the documented category and cannot be bypassed by ordinary control logic."),
+      PanelComponent(id: "siemens-3sk1", manufacturer: "Siemens", type: "Safety Relay", model: "SIRIUS 3SK1", rating: "24VDC", poles: "DIN", curve: "Safety monitoring", about: "Safety relay for emergency stop and guard monitoring with expandable output modules for larger safety circuits."),
+      PanelComponent(id: "generic-relay", manufacturer: "Generic", type: "Relay", model: "Interface relay", rating: "24VDC", poles: "DIN", curve: "1CO/2CO", about: "Interface relay isolating low-power controller outputs from the coils and loads they switch, and converting between control voltages. The slim DIN format keeps a dense I/O interface tidy."),
+      PanelComponent(id: "phoenix-plcrsc", manufacturer: "Phoenix", type: "Relay", model: "PLC-RSC interface", rating: "24VDC", poles: "DIN", curve: "6.2mm slim", about: "Slim plug-in interface relay isolating controller outputs from field loads. The pluggable design lets a failed relay be swapped without disturbing terminal wiring."),
+      PanelComponent(id: "finder-55", manufacturer: "Generic", type: "Relay", model: "Finder 55 series", rating: "24-230V", poles: "DIN", curve: "2CO/3CO", about: "General purpose plug-in relay with a socket base, used for interposing and simple control logic in panels of every size."),
+      PanelComponent(id: "generic-timer", manufacturer: "Generic", type: "Timer", model: "Time relay", rating: "24-230V", poles: "DIN", curve: "On/off delay", about: "Time relay providing on-delay, off-delay or cyclic switching for sequencing, pump alternation and star-delta transitions."),
+      PanelComponent(id: "finder-80", manufacturer: "Generic", type: "Timer", model: "Finder 80 multifunction", rating: "12-240V", poles: "DIN", curve: "Multifunction", about: "Multifunction timer covering on-delay, off-delay, interval and cyclic modes in one part, which cuts down on stocked variants."),
+      PanelComponent(id: "abb-cm-mps", manufacturer: "ABB", type: "Monitoring Relay", model: "CM-MPS", rating: "3x400V", poles: "DIN", curve: "Phase failure / sequence", about: "Three-phase monitoring relay detecting phase loss, wrong phase sequence, under and overvoltage. It is what stops a motor running single-phased after an upstream fuse clears one leg."),
+      PanelComponent(id: "siemens-3ug4", manufacturer: "Siemens", type: "Monitoring Relay", model: "SIRIUS 3UG4", rating: "3x400V", poles: "DIN", curve: "Voltage / phase monitor", about: "Line monitoring relay for phase sequence, asymmetry and voltage window, commonly interlocked into the start circuit of motor panels.")
+    ]),
+    ComponentGroup(id: "metering", name: "Metering & Monitoring", items: [
+      PanelComponent(id: "generic-meter", manufacturer: "Generic", type: "Meter", model: "Digital meter", rating: "230/400V", poles: "3PH", curve: "Panel mount", about: "Panel-mounted digital meter showing voltage, current and basic energy values on the board door. Confirm whether it measures directly or needs current transformers."),
+      PanelComponent(id: "schneider-iem3000", manufacturer: "Schneider", type: "Meter", model: "Acti9 iEM3000", rating: "230/400V", poles: "3PH", curve: "DIN, Modbus", about: "DIN rail energy meter for sub-billing and consumption monitoring, available in direct-connect and CT versions with Modbus output."),
+      PanelComponent(id: "siemens-pac3200", manufacturer: "Siemens", type: "Meter", model: "SENTRON PAC3200", rating: "230/400V", poles: "3PH", curve: "Door mount", about: "Door-mounted multifunction meter showing the full set of electrical values with Modbus or PROFINET reporting."),
+      PanelComponent(id: "carlogavazzi-em21", manufacturer: "Generic", type: "Meter", model: "Carlo Gavazzi EM21", rating: "230/400V", poles: "3PH", curve: "DIN, Modbus", about: "Compact DIN rail energy meter widely used for sub-metering individual feeders in tenant and process installations."),
+      PanelComponent(id: "generic-power-analyzer", manufacturer: "Generic", type: "Power Analyzer", model: "Power quality analyzer", rating: "230/400V", poles: "3PH", curve: "Modbus", about: "Power quality analyser recording harmonics, power factor, demand and event data, usually reporting over Modbus to a monitoring system. Specify where energy billing or harmonic problems need evidence."),
+      PanelComponent(id: "schneider-pm2000", manufacturer: "Schneider", type: "Power Analyzer", model: "PowerLogic PM2000", rating: "230/400V", poles: "3PH", curve: "Panel mount", about: "Panel-mounted power meter measuring energy, demand and basic power quality, suited to tenant metering and energy management."),
+      PanelComponent(id: "siemens-pac4200", manufacturer: "Siemens", type: "Power Analyzer", model: "SENTRON PAC4200", rating: "230/400V", poles: "3PH", curve: "Harmonics + logging", about: "Advanced meter adding harmonic analysis and data logging, used where power quality has to be proven rather than assumed."),
+      PanelComponent(id: "abb-m2m", manufacturer: "ABB", type: "Power Analyzer", model: "M2M network analyzer", rating: "230/400V", poles: "3PH", curve: "Modbus", about: "Network analyser recording power quality and harmonic content, typically fitted where drives and non-linear loads dominate."),
+      PanelComponent(id: "generic-ct", manufacturer: "Generic", type: "Current Transformer", model: "Split or solid core CT", rating: "50-5000A", poles: "1PH each", curve: "Class 0.5-1", about: "Current transformer scaling feeder current down to a meter input, usually 5A or 1A. Match the ratio and accuracy class to the meter, and never leave the secondary open circuit while primary current flows."),
+      PanelComponent(id: "generic-test-block", manufacturer: "Generic", type: "Test Block", model: "CT test block", rating: "5A", poles: "Panel mount", curve: "Shorting type", about: "Test block allowing meters and protection relays to be tested or replaced without breaking the CT secondary, which it shorts automatically as the plug is withdrawn.")
+    ]),
+    ComponentGroup(id: "power-quality", name: "Power Factor & Quality", items: [
+      PanelComponent(id: "abb-rvt", manufacturer: "ABB", type: "PFC Controller", model: "RVT controller", rating: "230/400V", poles: "Door mount", curve: "6-12 stages", about: "Power factor controller switching capacitor stages to hold the target power factor and avoid reactive energy charges. Set the target and the C/k ratio to suit the CT and the smallest stage."),
+      PanelComponent(id: "schneider-varlogic", manufacturer: "Schneider", type: "PFC Controller", model: "Varlogic NR", rating: "230/400V", poles: "Door mount", curve: "6-12 stages", about: "Power factor controller with stage health monitoring, which matters because a failed capacitor stage otherwise goes unnoticed until the bill rises."),
+      PanelComponent(id: "abb-clmd", manufacturer: "ABB", type: "Capacitor", model: "CLMD capacitor", rating: "Set kVAr", poles: "3PH", curve: "Dry type", about: "Dry-type power capacitor forming the stages of a correction bank. Capacitors need discharge resistors and adequate ventilation, and they age faster in hot or harmonic-rich environments."),
+      PanelComponent(id: "generic-detuned-reactor", manufacturer: "Generic", type: "Reactor", model: "Detuned reactor", rating: "Set kVAr", poles: "3PH", curve: "7% or 14%", about: "Detuned reactor placed in series with capacitor stages to shift the resonant frequency away from prevailing harmonics. Required wherever significant drive or UPS load shares the installation."),
+      PanelComponent(id: "generic-line-reactor", manufacturer: "Generic", type: "Reactor", model: "Line/load reactor", rating: "Set A", poles: "3PH", curve: "2-5% impedance", about: "Line or load reactor fitted with a drive to reduce current distortion, protect the drive input and limit voltage stress on long motor cables."),
+      PanelComponent(id: "generic-active-filter", manufacturer: "Generic", type: "Harmonic Filter", model: "Active harmonic filter", rating: "30-300A", poles: "3PH", curve: "Real time correction", about: "Active filter injecting counter-current to cancel harmonics in real time. Specify from a measured harmonic survey rather than assumption, since sizing depends on the actual spectrum.")
+    ]),
+    ComponentGroup(id: "terminals", name: "Terminals & Wiring", items: [
+      PanelComponent(id: "phoenix-terminal", manufacturer: "Phoenix", type: "Terminal Block", model: "UK series", rating: "2.5-35mm²", poles: "DIN", curve: "cm rail", about: "Screw-clamp terminal block for field wiring connections. Grouping terminals by function and numbering them consistently is what makes later fault finding fast."),
+      PanelComponent(id: "phoenix-ut", manufacturer: "Phoenix", type: "Terminal Block", model: "CLIPLINE UT", rating: "0.14-95mm2", poles: "DIN", curve: "Screw clamp", about: "Screw clamp terminal range covering signal through power cross-sections in a consistent form, with matching bridges, markers and test accessories."),
+      PanelComponent(id: "phoenix-pt", manufacturer: "Phoenix", type: "Terminal Block", model: "CLIPLINE PT", rating: "0.14-16mm2", poles: "DIN", curve: "Push-in spring", about: "Push-in spring terminal that accepts a ferruled conductor without a tool, cutting wiring time and removing the retorquing that screw terminals need."),
+      PanelComponent(id: "wago-2002", manufacturer: "Generic", type: "Terminal Block", model: "WAGO TOPJOB S", rating: "0.25-16mm2", poles: "DIN", curve: "Push-in CAGE CLAMP", about: "Spring clamp terminal that holds tension regardless of vibration or thermal cycling, which is why it is common on machinery and transport panels."),
+      PanelComponent(id: "weidmuller-a", manufacturer: "Generic", type: "Terminal Block", model: "Weidmuller A-series", rating: "0.14-95mm2", poles: "DIN", curve: "Push-in", about: "Push-in terminal system with a uniform accessory set across cross-sections, keeping cross-bridging and marking consistent through the panel."),
+      PanelComponent(id: "phoenix-ptfix", manufacturer: "Phoenix", type: "Distribution Block", model: "PTFIX", rating: "1.5-6mm2", poles: "DIN or adhesive", curve: "Potential distributor", about: "Potential distribution block splitting one supply into many outgoing points, tidying up the 24VDC and earth distribution that otherwise turns into daisy-chained terminals."),
+      PanelComponent(id: "generic-power-distribution-block", manufacturer: "Generic", type: "Distribution Block", model: "Power distribution block", rating: "125-800A", poles: "1P/3P/4P", curve: "Insulated body", about: "Insulated distribution block taking one large incoming cable and splitting it to several outgoing ways without a full busbar system."),
+      PanelComponent(id: "generic-ferrule", manufacturer: "Generic", type: "Ferrule", model: "Bootlace ferrule", rating: "0.5-35mm2", poles: "Per conductor", curve: "Crimped", about: "Bootlace ferrule terminating a stranded conductor so no strand escapes the terminal. Use the correct crimp tool and die, since an under-crimped ferrule becomes a hot joint."),
+      PanelComponent(id: "generic-lug", manufacturer: "Generic", type: "Cable Lug", model: "Compression lug", rating: "10-630mm2", poles: "Per conductor", curve: "Crimped", about: "Compression lug terminating large cables onto busbars and breaker pads. Match lug, die and tool from the same system, and confirm bolt torque against the manufacturer figure."),
+      PanelComponent(id: "generic-marker", manufacturer: "Generic", type: "Wire Marker", model: "Wire and terminal markers", rating: "All sizes", poles: "Per conductor", curve: "Printed", about: "Printed markers identifying conductors and terminals to the drawing. Consistent numbering is the single thing that most reduces fault-finding time years later."),
+      PanelComponent(id: "generic-trunking", manufacturer: "Generic", type: "Trunking", model: "Wiring duct", rating: "Set cm", poles: "PVC", curve: "Slotted", about: "Slotted wiring duct routing and containing panel wiring. Leave real spare capacity, since ducts filled to the brim make later modifications painful and trap heat."),
+      PanelComponent(id: "generic-cable-gland", manufacturer: "Generic", type: "Cable Gland", model: "Cable gland", rating: "Set size", poles: "M thread", curve: "IP rated", about: "Cable gland sealing a cable where it enters the enclosure, maintaining the IP rating and providing strain relief. Metal glands additionally terminate cable armour or screen."),
+      PanelComponent(id: "generic-din", manufacturer: "Generic", type: "DIN Rail", model: "35mm rail", rating: "1m", poles: "DIN", curve: "Cut to cm", about: "Standard 35mm DIN rail carrying modular devices. Plan rail heights and spacing around wiring duct so devices remain accessible after wiring.")
+    ]),
+    ComponentGroup(id: "busbars", name: "Busbars & Earthing", items: [
+      PanelComponent(id: "generic-busbar-250", manufacturer: "Generic", type: "Busbar", model: "Copper busbar", rating: "250A", poles: "3P+N", curve: "cm/m sizing", about: "Copper busbar system rated around 250A for distributing current across a board section, keeping outgoing connections short and consistent."),
+      PanelComponent(id: "generic-busbar-630", manufacturer: "Generic", type: "Busbar", model: "Copper busbar", rating: "630A", poles: "3P+N", curve: "cm/m sizing", about: "Higher rated busbar for main distribution sections, where cable connections to every outgoing device would be impractical."),
+      PanelComponent(id: "rittal-riline", manufacturer: "Rittal", type: "Busbar System", model: "RiLine busbar system", rating: "100-1600A", poles: "3P/4P", curve: "Component adaptor", about: "Busbar system with component adaptors that clip devices directly onto the bars, cutting internal cabling and giving a repeatable, tested arrangement."),
+      PanelComponent(id: "generic-copper-bar", manufacturer: "Generic", type: "Copper Bar", model: "Copper bar", rating: "Set cm", poles: "Flat bar", curve: "Busbar", about: "Copper bar carrying current between sections and devices inside the board. Size it for continuous current and short-circuit withstand, and check the support spacing for the fault level."),
+      PanelComponent(id: "generic-flexible-busbar", manufacturer: "Generic", type: "Busbar", model: "Flexible braided busbar", rating: "Set A", poles: "Per phase", curve: "Laminated", about: "Flexible laminated connector between busbar and device, absorbing vibration and thermal movement and easing awkward connection geometry."),
+      PanelComponent(id: "generic-busbar-support", manufacturer: "Generic", type: "Busbar Support", model: "Busbar support block", rating: "Set A", poles: "3P/4P", curve: "Insulated", about: "Insulated busbar support holding bars at a fixed spacing. Support spacing is a short-circuit withstand question, not a tidiness one: bars must not deflect together under fault forces."),
+      PanelComponent(id: "generic-earth-bar", manufacturer: "Generic", type: "Earth Bar", model: "PE bar", rating: "Set length", poles: "PE", curve: "Copper/brass", about: "Protective earth bar giving every circuit a common bonding point. It must be sized for the largest fault current and clearly labelled and accessible."),
+      PanelComponent(id: "generic-neutral-bar", manufacturer: "Generic", type: "Neutral Bar", model: "N bar", rating: "Set length", poles: "N", curve: "Copper/brass", about: "Neutral bar collecting circuit neutrals. Keep neutrals grouped with their own circuits so that RCD protection and later fault finding both work predictably."),
+      PanelComponent(id: "generic-earth-braid", manufacturer: "Generic", type: "Earth Bonding", model: "Earth bonding braid", rating: "6-25mm2", poles: "Per door", curve: "Flexible", about: "Flexible bonding braid earthing doors and hinged plates. Doors carrying any electrical device must be bonded, and paint has to be removed at the fixing point for the bond to be real.")
+    ]),
+    ComponentGroup(id: "enclosure", name: "Enclosure & Climate", items: [
+      PanelComponent(id: "rittal-ae", manufacturer: "Rittal", type: "Enclosure", model: "AE compact enclosure", rating: "IP66", poles: "Wall mount", curve: "Sheet steel", about: "Compact wall-mounting enclosure for smaller boards and control panels. Confirm the IP rating survives every cut-out and gland you add to it."),
+      PanelComponent(id: "rittal-vx25", manufacturer: "Rittal", type: "Enclosure", model: "VX25 bayed enclosure", rating: "IP55", poles: "Floor standing", curve: "Frame system", about: "Bayable floor-standing frame system for large boards, allowing sections to be joined into a lineup with continuous busbar and shared cable zones."),
+      PanelComponent(id: "generic-fan", manufacturer: "Generic", type: "Fan", model: "Panel fan", rating: "230V", poles: "Filter fan", curve: "Airflow", about: "Filter fan drawing cooler outside air through the enclosure to remove heat from drives, transformers and breakers. It needs a matching exit filter, and the filter mats need a cleaning interval in the maintenance plan."),
+      PanelComponent(id: "rittal-sk-fan", manufacturer: "Rittal", type: "Fan", model: "SK filter fan", rating: "230V", poles: "Door or side", curve: "Filtered airflow", about: "Filter fan with matched exit filter for forced ventilation. Size airflow from the calculated heat load and remember it can only cool to ambient, never below it."),
+      PanelComponent(id: "rittal-bluee", manufacturer: "Rittal", type: "Cooling Unit", model: "Blue e cooling unit", rating: "230/400V", poles: "Wall or roof", curve: "Active cooling", about: "Active cooling unit refrigerating the enclosure below ambient, needed where drives and transformers exceed what filtered ventilation can remove. It needs condensate management and a sealed enclosure to work correctly."),
+      PanelComponent(id: "generic-heater", manufacturer: "Generic", type: "Heater", model: "Panel heater", rating: "230V", poles: "DIN", curve: "PTC element", about: "Panel heater preventing condensation in cold or outdoor enclosures. Condensation, not cold, is what damages electronics, so pair it with a hygrostat or thermostat."),
+      PanelComponent(id: "generic-thermostat", manufacturer: "Generic", type: "Thermostat", model: "Panel thermostat", rating: "230V", poles: "DIN", curve: "NO/NC", about: "Panel thermostat switching a fan or heater at a set temperature. Use a normally-closed unit for heating and a normally-open unit for cooling."),
+      PanelComponent(id: "generic-hygrostat", manufacturer: "Generic", type: "Hygrostat", model: "Panel hygrostat", rating: "230V", poles: "DIN", curve: "Humidity control", about: "Hygrostat switching a heater on humidity rather than temperature, which is the more reliable way to keep an outdoor enclosure dry."),
+      PanelComponent(id: "generic-panel-light", manufacturer: "Generic", type: "Panel Light", model: "LED enclosure light", rating: "230V", poles: "Interior", curve: "Door switch", about: "Interior LED light, usually with a door switch, so maintenance inside a deep board does not depend on a hand torch."),
+      PanelComponent(id: "generic-panel-socket", manufacturer: "Generic", type: "Socket", model: "Service socket outlet", rating: "230V", poles: "DIN or panel", curve: "16A", about: "Service socket inside the enclosure for test equipment and tools. It should be fed from its own protected circuit with RCD protection."),
+      PanelComponent(id: "generic-door-interlock", manufacturer: "Generic", type: "Door Interlock", model: "Door interlock", rating: "Set A", poles: "Handle", curve: "Mechanical", about: "Mechanical door interlock preventing the enclosure being opened while the main switch is closed, with a defeat facility for authorised testing.")
+    ]),
+    ComponentGroup(id: "door-devices", name: "Door & Operator Devices", items: [
+      PanelComponent(id: "generic-estop", manufacturer: "Generic", type: "Emergency Stop", model: "Emergency stop mushroom", rating: "22/40mm", poles: "NC contacts", curve: "Twist release", about: "Latching emergency stop with positively-driven normally-closed contacts. It must break the control path directly, not merely request a stop from a controller."),
+      PanelComponent(id: "generic-push-button", manufacturer: "Generic", type: "Push Button", model: "Push button", rating: "22mm", poles: "NO/NC", curve: "Panel door", about: "22mm door-mounted push button for start, stop and reset commands. Contact blocks are ordered separately, so confirm how many NO and NC contacts each function needs."),
+      PanelComponent(id: "schneider-xb4", manufacturer: "Schneider", type: "Push Button", model: "Harmony XB4", rating: "22mm", poles: "NO/NC blocks", curve: "Metal bezel", about: "Metal-bezel control station range for doors, with a wide selection of heads and contact blocks that share one mounting cut-out."),
+      PanelComponent(id: "siemens-3su1", manufacturer: "Siemens", type: "Push Button", model: "SIRIUS ACT 3SU1", rating: "22mm", poles: "NO/NC blocks", curve: "Plastic or metal", about: "Modular door control range with plastic and metal versions, and connection options from screw terminals to an integrated bus module."),
+      PanelComponent(id: "generic-selector", manufacturer: "Generic", type: "Selector Switch", model: "Selector switch", rating: "22mm", poles: "2/3 position", curve: "Panel door", about: "Panel door selector switch giving a positive two or three position choice such as hand-off-auto. Confirm the contact arrangement matches the control logic before drilling the door."),
+      PanelComponent(id: "generic-indicator", manufacturer: "Generic", type: "Indicator Light", model: "Pilot light", rating: "24/230V", poles: "22mm", curve: "LED", about: "Pilot light showing run, trip or supply-healthy status on the door. LED versions draw far less current and last longer than filament equivalents."),
+      PanelComponent(id: "generic-ammeter", manufacturer: "Generic", type: "Ammeter", model: "Analogue ammeter", rating: "Via CT", poles: "1PH each", curve: "Moving iron", about: "Analogue ammeter giving an at-a-glance load indication on the door. Still favoured on motor panels because a swinging needle shows a struggling load better than a digital readout."),
+      PanelComponent(id: "generic-selector-ammeter", manufacturer: "Generic", type: "Selector Switch", model: "Ammeter selector switch", rating: "Via CT", poles: "3PH+off", curve: "Shorting type", about: "Ammeter selector letting one meter read each phase in turn. It must be the CT-shorting type so the transformer secondary is never opened while switching.")
     ])
   ]
 }
@@ -10474,6 +10833,11 @@ struct PanelComponent: Identifiable {
   let poles: String
   let curve: String
   var sourceID: String = ""
+
+  /// What this specific part does and what to check when specifying it.
+  /// Empty for user-created components, which fall back to the generic
+  /// per-type text in `ComponentIcon.description(for:)`.
+  var about: String = ""
 
   var imageStorageID: String {
     sourceID.isEmpty ? id : sourceID
@@ -10529,11 +10893,30 @@ struct BoardDraft: Identifiable {
   var mainBreakerAmpere: String
   var componentTypes: [String]
   var color: Color = Color(hex: 0x5E78FF)
-  var coverImage: UIImage? = nil
-  var photoImages: [UIImage] = []
+
+  /// Image-store tokens rather than decoded images — see [ProjectItem].
+  var coverToken: String? = nil
+  var photoTokens: [String] = []
   var schemeAttachments: [SchemeAttachment] = []
   var completedChecklistItems: Set<String> = []
   var personalChecklistItems: [PersonalChecklistItem] = []
+
+  var coverImage: UIImage? {
+    get { ImageStore.shared.image(for: coverToken) }
+    set { coverToken = ImageStore.shared.store(newValue) }
+  }
+
+  /// Use in scrolling views instead of [coverImage].
+  var coverThumbnail: UIImage? {
+    ImageStore.shared.thumbnail(for: coverToken)
+  }
+
+  var photoCount: Int { photoTokens.count }
+
+  /// Every token this board owns, for orphan cleanup.
+  var imageTokens: [String] {
+    ([coverToken] + photoTokens + schemeAttachments.map(\.imageToken)).compactMap { $0 }
+  }
 
   var searchText: String {
     "\(number) \(group) \(name) \(customer) \(company) \(project) \(type) \(subtype) \(manufacturer) \(ampere) \(cabinetCount) \(buildFormat) \(DateDisplay.short.string(from: dateOut)) \(dueDate.map { DateDisplay.due.string(from: $0) } ?? "") \(finishDate.map { DateDisplay.short.string(from: $0) } ?? "") \(mainBreakerType) \(mainBreakerModel) \(mainBreakerAmpere) \(componentTypes.joined(separator: " "))"
@@ -10546,8 +10929,8 @@ struct BoardDraft: Identifiable {
   }
 
   var persistenceSignature: String {
-    let coverSignature = ImageArchive.signature(for: coverImage)
-    let photoSignature = photoImages.map { ImageArchive.signature(for: $0) }.joined(separator: "|")
+    let coverSignature = ImageStore.shared.signature(for: coverToken)
+    let photoSignature = photoTokens.joined(separator: "|")
     let schemeSignature = schemeAttachments.map(\.persistenceSignature).joined(separator: "|")
     return [
       id, number, group, name, customer, project, type, subtype, manufacturer,
@@ -10681,51 +11064,237 @@ struct PanelVaultSnapshot: Codable {
   }
 }
 
-enum ImageArchive {
-  private static let encodedImageCache = NSCache<UIImage, NSString>()
+/// Disk-backed image storage, addressed by short filename tokens.
+///
+/// PanelVault used to base64-encode every photo into the snapshot JSON that
+/// lived in UserDefaults. Because UserDefaults is read wholly into memory at
+/// launch and rewritten as one plist, that capped the archive at a handful of
+/// photos and made saving one text edit rewrite every image in the vault.
+///
+/// Images now live as individual files in Application Support and records hold
+/// only a `<uuid>.jpg` token, so the archive is bounded by disk space rather
+/// than by UserDefaults, and memory is bounded by the caches below no matter
+/// how many photos exist.
+final class ImageStore {
+  static let shared = ImageStore()
 
-  static func encode(_ image: UIImage?) -> String? {
+  /// Long-side cap for the stored original, so the vault never keeps 48MP
+  /// camera originals. Applied once, on import.
+  static let maximumDimension: CGFloat = 2200
+
+  /// Long side of the list thumbnail. Rows decode this instead of the original.
+  static let thumbnailDimension: CGFloat = 400
+
+  private let fullCache = NSCache<NSString, UIImage>()
+  private let thumbnailCache = NSCache<NSString, UIImage>()
+
+  /// Reverse map from a live UIImage back to its token, so a view re-assigning
+  /// the same image through a binding does not write a duplicate file.
+  ///
+  /// Weak keys matter: an NSCache retains its keys, which would pin every image
+  /// ever stored in memory and defeat the point of moving them to disk. Here the
+  /// entry disappears as soon as the caller stops holding the image.
+  private let tokenForImage = NSMapTable<UIImage, NSString>.weakToStrongObjects()
+
+  /// NSCache is thread-safe; NSMapTable is not, and `store` runs both on the
+  /// main actor and on import tasks.
+  private let tokenLock = NSLock()
+
+  private let fileManager = FileManager.default
+
+  private init() {
+    // Bounded by bytes, not just count: 400 thumbnails held as decoded bitmaps
+    // would be hundreds of megabytes.
+    fullCache.countLimit = 24
+    fullCache.totalCostLimit = 64 * 1024 * 1024
+    thumbnailCache.countLimit = 400
+    thumbnailCache.totalCostLimit = 32 * 1024 * 1024
+  }
+
+  private(set) lazy var directory: URL = {
+    let base = fileManager
+      .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? fileManager.temporaryDirectory
+    let folder = base.appendingPathComponent("PanelVault/Images", isDirectory: true)
+    try? fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder
+  }()
+
+  // MARK: - Writing
+
+  /// Writes `image` to disk and returns its token.
+  ///
+  /// Synchronous on purpose: a photo the user just imported has to survive the
+  /// app being killed a moment later.
+  func store(_ image: UIImage?) -> String? {
     guard let image else { return nil }
-    if let cached = encodedImageCache.object(forKey: image) {
-      return cached as String
+    if let known = knownToken(for: image) { return known }
+
+    let prepared = ImageStore.prepared(image)
+    let usePNG = prepared.hasTransparency
+    guard let data = usePNG
+      ? prepared.pngData()
+      : prepared.jpegData(compressionQuality: 0.72) else { return nil }
+
+    let token = "\(UUID().uuidString).\(usePNG ? "png" : "jpg")"
+    do {
+      try data.write(to: url(for: token), options: .atomic)
+    } catch {
+      return nil
     }
-    let encoded: String?
-    if image.hasTransparency, let data = image.pngData() {
-      encoded = data.base64EncodedString()
-    } else {
-      encoded = image.jpegData(compressionQuality: 0.72)?.base64EncodedString()
+
+    remember(prepared, as: token)
+    if prepared !== image {
+      associate(image, with: token)
     }
-    if let encoded {
-      encodedImageCache.setObject(encoded as NSString, forKey: image)
-    }
-    return encoded
+    writeThumbnail(for: prepared, token: token)
+    return token
   }
 
-  static func encode(_ images: [UIImage]) -> [String] {
-    images.compactMap { encode($0) }
+  func store(_ images: [UIImage]) -> [String] {
+    images.compactMap { store($0) }
   }
 
-  static func decode(_ rawValue: String?) -> UIImage? {
-    guard let rawValue, let data = Data(base64Encoded: rawValue) else { return nil }
-    guard let image = UIImage(data: data) else { return nil }
-    encodedImageCache.setObject(rawValue as NSString, forKey: image)
+  /// A freshly imported photo: the prepared image for immediate display, and
+  /// the token it was stored under.
+  ///
+  /// The token is returned rather than looked up later because the reverse cache
+  /// is an NSCache and may evict — a lookup miss would silently drop the photo
+  /// even though its file was written.
+  struct Imported {
+    let image: UIImage
+    let token: String
+  }
+
+  /// Decodes, downscales and writes a freshly picked photo off the main actor.
+  ///
+  /// Every photo import goes through here, so JPEG encoding never runs on the
+  /// main thread and the file is on disk before the UI ever shows it.
+  static func imported(from data: Data) async -> Imported? {
+    await Task.detached(priority: .userInitiated) {
+      guard let decoded = UIImage(data: data) else { return nil as Imported? }
+      let prepared = ImageStore.prepared(decoded)
+      guard let token = ImageStore.shared.store(prepared) else {
+        return nil as Imported?
+      }
+      return Imported(image: prepared, token: token)
+    }.value
+  }
+
+  /// Accepts either a current token or a legacy base64 blob from an older
+  /// snapshot, so existing archives migrate on first load without data loss.
+  func adopt(_ raw: String?) -> String? {
+    guard let raw, !raw.isEmpty else { return nil }
+    if ImageStore.isToken(raw) { return raw }
+    guard let data = Data(base64Encoded: raw),
+          let image = UIImage(data: data) else { return nil }
+    return store(image)
+  }
+
+  func adopt(_ raws: [String]?) -> [String] {
+    raws?.compactMap { adopt($0) } ?? []
+  }
+
+  // MARK: - Reading
+
+  func image(for token: String?) -> UIImage? {
+    // Validating the token also keeps a corrupted index from turning into a
+    // path traversal out of the images directory.
+    guard let token, ImageStore.isToken(token) else { return nil }
+    if let cached = fullCache.object(forKey: token as NSString) { return cached }
+
+    guard let data = try? Data(contentsOf: url(for: token)),
+          let image = UIImage(data: data) else { return nil }
+
+    remember(image, as: token)
     return image
   }
 
-  static func decode(_ rawValues: [String]?) -> [UIImage] {
-    rawValues?.compactMap { decode($0) } ?? []
+  /// Small representation for list rows and grids. Falls back to generating the
+  /// thumbnail from the original when it is missing.
+  func thumbnail(for token: String?) -> UIImage? {
+    guard let token, ImageStore.isToken(token) else { return nil }
+    if let cached = thumbnailCache.object(forKey: token as NSString) { return cached }
+
+    if let data = try? Data(contentsOf: thumbnailURL(for: token)),
+       let image = UIImage(data: data) {
+      cache(image, as: token, in: thumbnailCache)
+      return image
+    }
+
+    guard let full = image(for: token) else { return nil }
+    let thumbnail = ImageStore.prepared(
+      full,
+      maximumDimension: ImageStore.thumbnailDimension
+    )
+    if let data = thumbnail.jpegData(compressionQuality: 0.7) {
+      try? data.write(to: thumbnailURL(for: token), options: .atomic)
+    }
+    cache(thumbnail, as: token, in: thumbnailCache)
+    return thumbnail
   }
 
-  static func signature(for image: UIImage?) -> String {
-    guard let image else { return "no-image" }
-    return "\(Int(image.size.width))x\(Int(image.size.height)):\(image.scale):\(image.imageOrientation.rawValue):\(ObjectIdentifier(image).hashValue)"
+  // MARK: - Deleting
+
+  func delete(_ token: String?) {
+    guard let token, ImageStore.isToken(token) else { return }
+    fullCache.removeObject(forKey: token as NSString)
+    thumbnailCache.removeObject(forKey: token as NSString)
+    try? fileManager.removeItem(at: url(for: token))
+    try? fileManager.removeItem(at: thumbnailURL(for: token))
   }
 
-  static func warmCache(for image: UIImage) {
-    _ = encode(image)
+  func delete(_ tokens: [String]) {
+    tokens.forEach { delete($0) }
   }
 
-  static func preparedForStorage(_ image: UIImage, maximumDimension: CGFloat = 2200) -> UIImage {
+  /// Removes image files nothing references any more — photos whose project or
+  /// board was deleted, replaced covers, and so on.
+  ///
+  /// Only ever call this with the token set of a snapshot that actually loaded:
+  /// passing an empty set because loading failed would erase the archive.
+  func sweepOrphans(keeping tokens: Set<String>) {
+    let keptBases = Set(
+      tokens
+        .filter { ImageStore.isToken($0) }
+        .map { ($0 as NSString).deletingPathExtension }
+    )
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      guard let self else { return }
+      guard let names = try? self.fileManager
+        .contentsOfDirectory(atPath: self.directory.path) else { return }
+
+      for name in names {
+        let base = name.hasSuffix(".thumb.jpg")
+          ? String(name.dropLast(".thumb.jpg".count))
+          : (name as NSString).deletingPathExtension
+        guard !keptBases.contains(base) else { continue }
+        try? self.fileManager
+          .removeItem(at: self.directory.appendingPathComponent(name))
+      }
+    }
+  }
+
+  // MARK: - Helpers
+
+  /// Change-detection key. Tokens are stable across launches, unlike the object
+  /// identity the old implementation hashed — which made saves fire constantly.
+  func signature(for token: String?) -> String {
+    token ?? "no-image"
+  }
+
+  static func isToken(_ value: String) -> Bool {
+    // "<uuid>.jpg": 36 UUID characters plus a four-character extension.
+    guard value.count == 40,
+          value.hasSuffix(".jpg") || value.hasSuffix(".png") else { return false }
+    return UUID(uuidString: String(value.dropLast(4))) != nil
+  }
+
+  static func prepared(
+    _ image: UIImage,
+    maximumDimension: CGFloat = ImageStore.maximumDimension
+  ) -> UIImage {
     let longestSide = max(image.size.width, image.size.height)
     guard longestSide > maximumDimension else { return image }
 
@@ -10741,6 +11310,156 @@ enum ImageArchive {
       image.draw(in: CGRect(origin: .zero, size: targetSize))
     }
   }
+
+  private func remember(_ image: UIImage, as token: String) {
+    cache(image, as: token, in: fullCache)
+    associate(image, with: token)
+  }
+
+  private func knownToken(for image: UIImage) -> String? {
+    tokenLock.lock()
+    defer { tokenLock.unlock() }
+    return tokenForImage.object(forKey: image) as String?
+  }
+
+  private func associate(_ image: UIImage, with token: String) {
+    tokenLock.lock()
+    defer { tokenLock.unlock() }
+    tokenForImage.setObject(token as NSString, forKey: image)
+  }
+
+  /// Caches with a byte cost so `totalCostLimit` can actually bound memory.
+  private func cache(
+    _ image: UIImage,
+    as token: String,
+    in cache: NSCache<NSString, UIImage>
+  ) {
+    cache.setObject(image, forKey: token as NSString, cost: ImageStore.cost(of: image))
+  }
+
+  /// Approximate decoded size in bytes.
+  private static func cost(of image: UIImage) -> Int {
+    guard let cgImage = image.cgImage else {
+      return Int(image.size.width * image.size.height * 4)
+    }
+    return cgImage.bytesPerRow * cgImage.height
+  }
+
+  private func writeThumbnail(for image: UIImage, token: String) {
+    let thumbnail = ImageStore.prepared(
+      image,
+      maximumDimension: ImageStore.thumbnailDimension
+    )
+    guard let data = thumbnail.jpegData(compressionQuality: 0.7) else { return }
+    try? data.write(to: thumbnailURL(for: token), options: .atomic)
+    cache(thumbnail, as: token, in: thumbnailCache)
+  }
+
+  private func url(for token: String) -> URL {
+    directory.appendingPathComponent(token)
+  }
+
+  private func thumbnailURL(for token: String) -> URL {
+    let base = (token as NSString).deletingPathExtension
+    return directory.appendingPathComponent("\(base).thumb.jpg")
+  }
+}
+
+/// The archive index (projects, boards, customers, companies, manufacturers) as
+/// a JSON file in Application Support.
+///
+/// It used to live in UserDefaults, which has no room for a growing archive and
+/// silently stops saving once it gets large. A plain file has no such ceiling.
+enum ArchiveStore {
+  private static let legacySnapshotKey = "panelvault.savedSnapshot"
+
+  static var directory: URL {
+    let manager = FileManager.default
+    let base = manager
+      .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? manager.temporaryDirectory
+    let folder = base.appendingPathComponent("PanelVault", isDirectory: true)
+    try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder
+  }
+
+  static var snapshotURL: URL {
+    directory.appendingPathComponent("snapshot.json")
+  }
+
+  /// Returns the stored JSON, migrating a legacy UserDefaults snapshot the
+  /// first time it runs. A nil result means "nothing stored yet" — callers must
+  /// not treat it as "the archive is empty" and start deleting files.
+  static func loadSnapshot() -> String? {
+    if let migrated = migrateLegacySnapshot() { return migrated }
+    guard let data = try? Data(contentsOf: snapshotURL), !data.isEmpty else {
+      return nil
+    }
+    return String(data: data, encoding: .utf8)
+  }
+
+  static func saveSnapshot(_ json: String) {
+    write(json, to: snapshotURL)
+  }
+
+  private static func migrateLegacySnapshot() -> String? {
+    let defaults = UserDefaults.standard
+    guard let legacy = defaults.string(forKey: legacySnapshotKey),
+          !legacy.isEmpty else { return nil }
+
+    // Write the old payload across before dropping it, so an interrupted
+    // migration cannot lose the archive.
+    try? Data(legacy.utf8).write(to: snapshotURL, options: .atomic)
+    defaults.removeObject(forKey: legacySnapshotKey)
+    return legacy
+  }
+
+  /// Atomic and off the main thread — the snapshot is now small (tokens, not
+  /// images), but it is still written on every edit.
+  static func write(_ json: String, to url: URL) {
+    let data = Data(json.utf8)
+    DispatchQueue.global(qos: .utility).async {
+      try? data.write(to: url, options: .atomic)
+    }
+  }
+}
+
+/// Component photos, keyed by component id. Same story as the snapshot: this
+/// was a second base64 blob in UserDefaults.
+enum ComponentImageStore {
+  private static let legacyKey = "panelvault.componentImages"
+
+  static var fileURL: URL {
+    ArchiveStore.directory.appendingPathComponent("componentImages.json")
+  }
+
+  /// Component id -> image token.
+  static func load() -> [String: String] {
+    if let migrated = migrateLegacyImages() { return migrated }
+    guard let data = try? Data(contentsOf: fileURL),
+          let tokens = try? JSONDecoder().decode([String: String].self, from: data)
+    else { return [:] }
+    return tokens.filter { ImageStore.isToken($0.value) }
+  }
+
+  static func save(_ tokens: [String: String]) {
+    guard let data = try? JSONEncoder().encode(tokens),
+          let json = String(data: data, encoding: .utf8) else { return }
+    ArchiveStore.write(json, to: fileURL)
+  }
+
+  private static func migrateLegacyImages() -> [String: String]? {
+    let defaults = UserDefaults.standard
+    guard let legacy = defaults.string(forKey: legacyKey), !legacy.isEmpty,
+          let data = legacy.data(using: .utf8),
+          let encoded = try? JSONDecoder().decode([String: String].self, from: data)
+    else { return nil }
+
+    let tokens = encoded.compactMapValues { ImageStore.shared.adopt($0) }
+    save(tokens)
+    defaults.removeObject(forKey: legacyKey)
+    return tokens
+  }
 }
 
 extension UIImage {
@@ -10752,20 +11471,6 @@ extension UIImage {
     default:
       return false
     }
-  }
-}
-
-enum ComponentImageArchive {
-  static func encode(_ images: [String: UIImage]) -> String {
-    let encoded = images.compactMapValues { ImageArchive.encode($0) }
-    guard let data = try? JSONEncoder().encode(encoded) else { return "" }
-    return String(data: data, encoding: .utf8) ?? ""
-  }
-
-  static func decode(_ rawValue: String) -> [String: UIImage] {
-    guard let data = rawValue.data(using: .utf8),
-          let encoded = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
-    return encoded.compactMapValues { ImageArchive.decode($0) }
   }
 }
 
@@ -10788,13 +11493,15 @@ struct ProjectRecord: Codable {
     detail = project.detail
     status = project.status
     colorHex = project.color.archiveHex
-    coverImageData = ImageArchive.encode(project.coverImage)
-    photoImageData = ImageArchive.encode(project.photoImages)
+    coverImageData = project.coverToken
+    photoImageData = project.photoTokens
     dueDate = project.dueDate
     schemes = project.schemeAttachments.map(SchemeRecord.init(attachment:))
   }
 
   var project: ProjectItem {
+    // `adopt` passes tokens straight through and converts base64 left over from
+    // an older snapshot into files, so existing archives migrate on first load.
     ProjectItem(
       id: id,
       name: name,
@@ -10802,10 +11509,10 @@ struct ProjectRecord: Codable {
       detail: detail,
       status: status,
       color: Color(hex: colorHex),
-      coverImage: ImageArchive.decode(coverImageData),
-      photoImages: ImageArchive.decode(photoImageData),
       dueDate: dueDate,
-      schemeAttachments: schemes.map(\.attachment)
+      schemeAttachments: schemes.map(\.attachment),
+      coverToken: ImageStore.shared.adopt(coverImageData),
+      photoTokens: ImageStore.shared.adopt(photoImageData)
     )
   }
 }
@@ -10862,8 +11569,8 @@ struct BoardRecord: Codable {
     mainBreakerAmpere = board.mainBreakerAmpere
     componentTypes = board.componentTypes
     colorHex = board.color.archiveHex
-    coverImageData = ImageArchive.encode(board.coverImage)
-    photoImageData = ImageArchive.encode(board.photoImages)
+    coverImageData = board.coverToken
+    photoImageData = board.photoTokens
     schemes = board.schemeAttachments.map(SchemeRecord.init(attachment:))
     completedChecklistItems = Array(board.completedChecklistItems)
     personalChecklistItems = board.personalChecklistItems.map(PersonalChecklistRecord.init(item:))
@@ -10893,8 +11600,8 @@ struct BoardRecord: Codable {
       mainBreakerAmpere: mainBreakerAmpere,
       componentTypes: componentTypes,
       color: Color(hex: colorHex),
-      coverImage: ImageArchive.decode(coverImageData),
-      photoImages: ImageArchive.decode(photoImageData),
+      coverToken: ImageStore.shared.adopt(coverImageData),
+      photoTokens: ImageStore.shared.adopt(photoImageData),
       schemeAttachments: schemes.map(\.attachment),
       completedChecklistItems: Set(completedChecklistItems),
       personalChecklistItems: personalChecklistItems.map(\.item)
@@ -10976,11 +11683,16 @@ struct ManufacturerRecord: Codable {
     id = manufacturer.id
     name = manufacturer.name
     colorHex = manufacturer.colorHex
-    imageData = ImageArchive.encode(manufacturer.image)
+    imageData = manufacturer.imageToken
   }
 
   var manufacturer: ManufacturerItem {
-    ManufacturerItem(id: id, name: name, colorHex: colorHex, image: ImageArchive.decode(imageData))
+    ManufacturerItem(
+      id: id,
+      name: name,
+      colorHex: colorHex,
+      imageToken: ImageStore.shared.adopt(imageData)
+    )
   }
 }
 
@@ -10996,7 +11708,7 @@ struct SchemeRecord: Codable {
     kind = attachment.kind == .pdf ? "pdf" : "photo"
     name = attachment.name
     url = attachment.url?.absoluteString
-    imageData = ImageArchive.encode(attachment.image)
+    imageData = attachment.imageToken
   }
 
   var attachment: SchemeAttachment {
@@ -11004,7 +11716,7 @@ struct SchemeRecord: Codable {
       id: id,
       kind: kind == "pdf" ? .pdf : .photo,
       name: name,
-      image: ImageArchive.decode(imageData),
+      imageToken: ImageStore.shared.adopt(imageData),
       url: url.flatMap(URL.init(string:))
     )
   }
