@@ -10,10 +10,57 @@ final class WarehouseStore: ObservableObject {
   @Published private(set) var movements: [StockMovement] = []
   @Published private(set) var settings: [String: PartSettings] = [:]
 
+  /// Parts the user created because the catalog does not carry them —
+  /// special relays, brackets, whatever the workshop actually stocks.
+  /// Same shape as catalog parts so the rest of the app cannot tell them apart.
+  @Published private(set) var customParts: [CatalogPart] = []
+
   private let queue = DispatchQueue(label: "warehouse.persistence", qos: .utility)
 
   init() {
     load()
+  }
+
+  // MARK: - Part lookup (catalog + custom)
+
+  /// Single lookup the whole app uses, so custom parts appear everywhere the
+  /// catalog ones do.
+  func part(for id: String) -> CatalogPart? {
+    Catalog.part(for: id) ?? customParts.first { $0.id == id }
+  }
+
+  var allParts: [CatalogPart] {
+    Catalog.allParts + customParts
+  }
+
+  /// Every distinct part type, for suggestions when creating a custom part.
+  var knownTypes: [String] {
+    Array(Set(allParts.map(\.type))).sorted()
+  }
+
+  /// Creates and persists a custom part, returning it ready to use.
+  @discardableResult
+  func addCustomPart(
+    manufacturer: String,
+    type: String,
+    model: String,
+    rating: String,
+    poles: String,
+    notes: String
+  ) -> CatalogPart {
+    let part = CatalogPart(
+      id: "custom-\(UUID().uuidString)",
+      manufacturer: manufacturer.isEmpty ? "Generic" : manufacturer,
+      type: type,
+      model: model,
+      rating: rating,
+      poles: poles,
+      curve: "",
+      about: notes
+    )
+    customParts.append(part)
+    persist(customParts, to: WarehouseStore.customPartsURL)
+    return part
   }
 
   // MARK: - Derived state
@@ -35,7 +82,7 @@ final class WarehouseStore: ObservableObject {
 
     return activeIDs
       .compactMap { id -> StockEntry? in
-        guard let part = Catalog.part(for: id) else { return nil }
+        guard let part = part(for: id) else { return nil }
         return StockEntry(
           part: part,
           onHand: counts[id] ?? 0,
@@ -102,6 +149,7 @@ final class WarehouseStore: ObservableObject {
 
   private static var movementsURL: URL { directory.appendingPathComponent("movements.json") }
   private static var settingsURL: URL { directory.appendingPathComponent("partSettings.json") }
+  private static var customPartsURL: URL { directory.appendingPathComponent("customParts.json") }
 
   private func load() {
     if let data = try? Data(contentsOf: WarehouseStore.movementsURL),
@@ -111,6 +159,10 @@ final class WarehouseStore: ObservableObject {
     if let data = try? Data(contentsOf: WarehouseStore.settingsURL),
        let decoded = try? JSONDecoder.warehouse.decode([String: PartSettings].self, from: data) {
       settings = decoded
+    }
+    if let data = try? Data(contentsOf: WarehouseStore.customPartsURL),
+       let decoded = try? JSONDecoder.warehouse.decode([CatalogPart].self, from: data) {
+      customParts = decoded
     }
   }
 

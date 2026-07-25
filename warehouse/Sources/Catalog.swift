@@ -5,7 +5,8 @@
 
 import Foundation
 
-struct CatalogPart: Identifiable, Hashable {
+// Codable so user-created custom parts can persist alongside catalog ones.
+struct CatalogPart: Identifiable, Hashable, Codable {
   let id: String
   let manufacturer: String
   let type: String

@@ -79,9 +79,10 @@ struct LowStockRow: View {
 struct MovementRow: View {
   let theme: WarehouseTheme
   let movement: StockMovement
+  @EnvironmentObject private var store: WarehouseStore
 
   private var partName: String {
-    Catalog.part(for: movement.partID)?.displayName ?? movement.partID
+    store.part(for: movement.partID)?.displayName ?? movement.partID
   }
 
   private var symbol: (name: String, color: Color) {

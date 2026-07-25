@@ -6,7 +6,7 @@ struct ItemDetailView: View {
   @EnvironmentObject private var store: WarehouseStore
   @State private var adjusting = false
 
-  private var part: CatalogPart? { Catalog.part(for: partID) }
+  private var part: CatalogPart? { store.part(for: partID) }
   private var entry: StockEntry? { store.entry(for: partID) }
 
   var body: some View {

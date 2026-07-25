@@ -105,14 +105,14 @@ enum DeliveryNoteParser {
     #"\b(\d{1,4})\s*$"#,
   ]
 
-  static func parse(lines: [String]) -> [ParsedDeliveryLine] {
+  static func parse(lines: [String], extraParts: [CatalogPart] = []) -> [ParsedDeliveryLine] {
     lines.compactMap { line in
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
       // Too short to be a goods line, or a pure number (page counts, totals).
       guard trimmed.count >= 4, Int(trimmed) == nil else { return nil }
 
       let quantity = extractQuantity(from: trimmed)
-      let match = bestMatch(for: trimmed)
+      let match = bestMatch(for: trimmed, extraParts: extraParts)
 
       // Keep only lines that look like goods: either we matched a part or we
       // found an explicit quantity to review.
@@ -143,11 +143,11 @@ enum DeliveryNoteParser {
   ///
   /// Model number is the strongest signal on real paperwork ("ACS580",
   /// "S203"), so a model hit scores far above type or manufacturer words.
-  static func bestMatch(for text: String) -> CatalogPart? {
+  static func bestMatch(for text: String, extraParts: [CatalogPart] = []) -> CatalogPart? {
     let lowered = text.lowercased()
     var best: (part: CatalogPart, score: Int)?
 
-    for part in Catalog.allParts {
+    for part in Catalog.allParts + extraParts {
       var score = 0
       let model = part.model.lowercased()
       if lowered.contains(model) {

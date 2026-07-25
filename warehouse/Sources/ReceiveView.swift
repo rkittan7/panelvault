@@ -63,9 +63,9 @@ struct ReceiveView: View {
       .fullScreenCover(isPresented: $scanning) {
         DocumentScanner { pages in
           processing = true
-          Task {
+          Task { [customParts = store.customParts] in
             let lines = await DeliveryNoteOCR.recognizeLines(in: pages)
-            let parsed = DeliveryNoteParser.parse(lines: lines)
+            let parsed = DeliveryNoteParser.parse(lines: lines, extraParts: customParts)
             await MainActor.run {
               processing = false
               reviewLines = parsed

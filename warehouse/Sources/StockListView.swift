@@ -98,45 +98,165 @@ struct StockRow: View {
   }
 }
 
-/// Searchable catalog picker used by both "track a part" and the scan review
-/// screen's manual match correction.
+/// Searchable part picker used by "track a part", manual receive, and the scan
+/// review screen's match correction. Covers the generated catalog plus the
+/// user's own custom parts, and offers creating a new part when the search
+/// comes up empty.
 struct PartPickerSheet: View {
   let theme: WarehouseTheme
   let title: String
   let onPick: (CatalogPart) -> Void
+  @EnvironmentObject private var store: WarehouseStore
   @Environment(\.dismiss) private var dismiss
   @State private var query = ""
+  @State private var creating = false
 
   private var results: [CatalogPart] {
     let trimmed = query.trimmingCharacters(in: .whitespaces).lowercased()
-    guard !trimmed.isEmpty else { return Catalog.allParts }
-    return Catalog.allParts.filter { $0.searchText.contains(trimmed) }
+    guard !trimmed.isEmpty else { return store.allParts }
+    return store.allParts.filter { $0.searchText.contains(trimmed) }
   }
 
   var body: some View {
     NavigationStack {
-      List(results) { part in
-        Button {
-          onPick(part)
-          dismiss()
-        } label: {
-          VStack(alignment: .leading, spacing: 3) {
-            Text(part.displayName)
-              .font(.subheadline.weight(.heavy))
-            Text("\(part.type) • \(part.rating)")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(theme.mutedText)
+      List {
+        if results.isEmpty {
+          Section {
+            Button {
+              creating = true
+            } label: {
+              Label("Create \"\(query)\" as a new part", systemImage: "plus.circle.fill")
+                .font(.subheadline.weight(.heavy))
+                .foregroundStyle(theme.primary)
+            }
+            .listRowBackground(theme.surface)
+          } footer: {
+            Text("Not in the catalog? Add your own part — it works everywhere catalog parts do.")
           }
         }
-        .listRowBackground(theme.surface)
+        ForEach(results) { part in
+          Button {
+            onPick(part)
+            dismiss()
+          } label: {
+            HStack {
+              VStack(alignment: .leading, spacing: 3) {
+                Text(part.displayName)
+                  .font(.subheadline.weight(.heavy))
+                Text("\(part.type) • \(part.rating)")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(theme.mutedText)
+              }
+              if part.id.hasPrefix("custom-") {
+                Spacer()
+                Text("CUSTOM")
+                  .font(.caption2.weight(.black))
+                  .foregroundStyle(theme.secondary)
+              }
+            }
+          }
+          .listRowBackground(theme.surface)
+        }
       }
       .scrollContentBackground(.hidden)
       .background(theme.background.ignoresSafeArea())
       .navigationTitle(title)
-      .searchable(text: $query, prompt: "Search 199 catalog parts")
+      .searchable(text: $query, prompt: "Search parts")
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button("Cancel") { dismiss() }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            creating = true
+          } label: {
+            Image(systemName: "plus")
+          }
+        }
+      }
+      .sheet(isPresented: $creating) {
+        NewPartSheet(theme: theme, suggestedModel: query) { part in
+          onPick(part)
+          dismiss()
+        }
+      }
+    }
+    .preferredColorScheme(.dark)
+  }
+}
+
+/// Form for a part the catalog does not carry — any type, including ones the
+/// catalog has never heard of.
+struct NewPartSheet: View {
+  let theme: WarehouseTheme
+  var suggestedModel = ""
+  let onCreate: (CatalogPart) -> Void
+  @EnvironmentObject private var store: WarehouseStore
+  @Environment(\.dismiss) private var dismiss
+
+  @State private var model = ""
+  @State private var manufacturer = ""
+  @State private var type = ""
+  @State private var rating = ""
+  @State private var poles = ""
+  @State private var notes = ""
+
+  private var canSave: Bool {
+    !model.trimmingCharacters(in: .whitespaces).isEmpty &&
+    !type.trimmingCharacters(in: .whitespaces).isEmpty
+  }
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Part") {
+          TextField("Model (e.g. XT2-160)", text: $model)
+          TextField("Manufacturer", text: $manufacturer)
+          HStack {
+            TextField("Type (e.g. Cable Tray)", text: $type)
+            Menu {
+              ForEach(store.knownTypes, id: \.self) { known in
+                Button(known) { type = known }
+              }
+            } label: {
+              Image(systemName: "chevron.up.chevron.down")
+                .foregroundStyle(theme.primary)
+            }
+          }
+        }
+        Section("Details (optional)") {
+          TextField("Rating (e.g. 160A)", text: $rating)
+          TextField("Poles / phase", text: $poles)
+          TextField("Notes — what is it for?", text: $notes, axis: .vertical)
+            .lineLimit(3...6)
+        }
+      }
+      .scrollContentBackground(.hidden)
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("New Part")
+      .navigationBarTitleDisplayMode(.inline)
+      .onAppear {
+        if model.isEmpty { model = suggestedModel }
+      }
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Cancel") { dismiss() }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Add") {
+            let part = store.addCustomPart(
+              manufacturer: manufacturer.trimmingCharacters(in: .whitespaces),
+              type: type.trimmingCharacters(in: .whitespaces),
+              model: model.trimmingCharacters(in: .whitespaces),
+              rating: rating.trimmingCharacters(in: .whitespaces),
+              poles: poles.trimmingCharacters(in: .whitespaces),
+              notes: notes.trimmingCharacters(in: .whitespaces)
+            )
+            onCreate(part)
+            dismiss()
+          }
+          .fontWeight(.black)
+          .disabled(!canSave)
         }
       }
     }
