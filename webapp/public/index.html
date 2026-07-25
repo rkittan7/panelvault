@@ -3,81 +3,118 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050607">
   <title>PanelVault Cloud</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div id="app">
-    <!-- Auth screens -->
-    <section id="auth" class="auth hidden">
-      <div class="auth-brand">
-        <div class="logo">PV</div>
-        <h1>PanelVault <span>Cloud</span></h1>
-        <p class="muted">The company warehouse, from anywhere.</p>
-      </div>
 
-      <div class="auth-card card">
-        <div class="auth-tabs">
-          <button data-tab="login" class="active">Sign in</button>
-          <button data-tab="create">New company</button>
-          <button data-tab="join">I have an invite</button>
+    <!-- ============================ Auth ============================ -->
+    <section id="auth" class="auth hidden">
+      <div class="auth-inner">
+        <div class="auth-brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18"/><path d="M9 4v6"/><path d="M12 14h6"/><path d="M12 17h4"/><circle cx="7.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+          </div>
+          <h1>PanelVault <span>Cloud</span></h1>
+          <p>The company warehouse, from anywhere.</p>
         </div>
 
-        <form id="form-login" class="auth-form">
-          <label>Company code <input name="companyCode" autocapitalize="characters" autocomplete="off" placeholder="e.g. K7M2XQ" required></label>
-          <label>Your name <input name="name" autocomplete="username" required></label>
-          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-          <button class="primary" type="submit">Sign in</button>
-        </form>
+        <div class="auth-card">
+          <div class="seg" role="tablist">
+            <button data-tab="login" class="active">Sign in</button>
+            <button data-tab="create">New company</button>
+            <button data-tab="join">Invite</button>
+          </div>
 
-        <form id="form-create" class="auth-form hidden">
-          <label>Company name <input name="companyName" placeholder="e.g. Kittan Electric" required></label>
-          <label>Your name <input name="name" required></label>
-          <label>Password <input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
-          <p class="muted small">You become the owner. You'll get a company code and invite links to send your team.</p>
-          <button class="primary" type="submit">Create company</button>
-        </form>
+          <form id="form-login" class="auth-form">
+            <label>Company code
+              <input name="companyCode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="K7M2XQ" required>
+            </label>
+            <label>Your name
+              <input name="name" autocomplete="username" required>
+            </label>
+            <label>Password
+              <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <button class="btn-primary" type="submit">Sign in</button>
+          </form>
 
-        <form id="form-join" class="auth-form hidden">
-          <label>Company code <input name="companyCode" autocapitalize="characters" autocomplete="off" required></label>
-          <label>Invite code <input name="inviteCode" autocapitalize="characters" autocomplete="off" required></label>
-          <label>Your name <input name="name" required></label>
-          <label>Choose a password <input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
-          <button class="primary" type="submit">Join company</button>
-        </form>
+          <form id="form-create" class="auth-form hidden">
+            <label>Company name
+              <input name="companyName" placeholder="Kittan Electric" required>
+            </label>
+            <label>Your name
+              <input name="name" required>
+            </label>
+            <label>Password
+              <input name="password" type="password" minlength="6" autocomplete="new-password" required>
+            </label>
+            <p class="hint">You become the owner. You'll get a company code and invite links for your team.</p>
+            <button class="btn-primary" type="submit">Create company</button>
+          </form>
 
-        <p id="auth-error" class="error hidden"></p>
+          <form id="form-join" class="auth-form hidden">
+            <label>Company code
+              <input name="companyCode" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+            </label>
+            <label>Invite code
+              <input name="inviteCode" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+            </label>
+            <label>Your name
+              <input name="name" required>
+            </label>
+            <label>Choose a password
+              <input name="password" type="password" minlength="6" autocomplete="new-password" required>
+            </label>
+            <button class="btn-primary" type="submit">Join company</button>
+          </form>
+
+          <p id="auth-error" class="form-error hidden" role="alert"></p>
+        </div>
       </div>
     </section>
 
-    <!-- Main app -->
-    <section id="main" class="hidden">
-      <header class="topbar">
-        <div class="logo small">PV</div>
-        <div class="topbar-title">
-          <strong id="company-name"></strong>
-          <span class="muted" id="me-line"></span>
+    <!-- ============================ Shell ============================ -->
+    <section id="main" class="shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark sm" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18"/><path d="M9 4v6"/><path d="M12 14h6"/><path d="M12 17h4"/><circle cx="7.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+          </div>
+          <div class="sidebar-brand-text">
+            <strong id="company-name"></strong>
+            <span id="company-code" class="mono"></span>
+          </div>
         </div>
-        <button id="logout" class="ghost">Sign out</button>
-      </header>
 
-      <nav class="tabs">
-        <button data-view="dashboard" class="active">Dashboard</button>
-        <button data-view="stock">Stock</button>
-        <button data-view="boards">Boards</button>
-        <button data-view="team" id="tab-team" class="hidden">Team</button>
-      </nav>
+        <nav class="nav" id="nav"></nav>
 
-      <main>
+        <div class="sidebar-foot">
+          <div class="user-chip">
+            <div class="avatar" id="me-avatar"></div>
+            <div class="user-chip-text">
+              <strong id="me-name"></strong>
+              <span id="me-role"></span>
+            </div>
+            <button id="logout" class="icon-btn" title="Sign out" aria-label="Sign out">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="content">
         <div id="view-dashboard" class="view"></div>
         <div id="view-stock" class="view hidden"></div>
         <div id="view-boards" class="view hidden"></div>
         <div id="view-team" class="view hidden"></div>
-      </main>
+      </div>
     </section>
   </div>
 
   <div id="modal-root"></div>
-  <script src="/app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

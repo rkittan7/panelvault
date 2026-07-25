@@ -1,15 +1,71 @@
+import { renderMovementChart } from "/chart.js";
+
 // PanelVault Cloud frontend — vanilla JS, no build step.
 
 let state = null; // last /api/state payload
 let catalog = null; // lazy-loaded parts list
+let currentView = "dashboard";
 
 const $ = (sel) => document.querySelector(sel);
+
 const el = (tag, cls, text) => {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
   if (text !== undefined) node.textContent = text;
   return node;
 };
+
+// ---------------------------------------------------------------- icons
+
+const ICON_PATHS = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  box: '<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
+  board: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16"/><path d="M9 3v6"/><path d="M9 14h6"/><path d="M9 17h4"/>',
+  team: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16 15.2c2.6.3 4.5 2 4.5 4.8"/>',
+  alert: '<path d="M12 3l10 17H2z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/>',
+  pulse: '<path d="M3 12h4l2.5-6 4 12L16 12h5"/>',
+  hash: '<path d="M5 9h14"/><path d="M5 15h14"/><path d="M10 4L8 20"/><path d="M16 4l-2 16"/>',
+  plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  arrowIn: '<path d="M12 4v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
+  arrowOut: '<path d="M12 20V8"/><path d="M7 13l5-5 5 5"/><path d="M5 4h14"/>',
+  sliders: '<path d="M4 7h10"/><circle cx="17" cy="7" r="2.5"/><path d="M20 16H10"/><circle cx="7" cy="16" r="2.5"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+  x: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+  chevron: '<path d="M9 6l6 6-6 6"/>',
+  link: '<path d="M10 14a4 4 0 0 0 6 .5l3-3a4 4 0 0 0-5.5-5.5l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-6-.5l-3 3a4 4 0 0 0 5.5 5.5l1.5-1.5"/>',
+};
+
+function icon(name, size = 18) {
+  const span = el("span");
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`;
+  return span.firstChild;
+}
+
+function chipIcon(name, color) {
+  const chip = el("div", "chip-icon");
+  chip.style.background = `color-mix(in srgb, ${color} 14%, transparent)`;
+  chip.style.color = color;
+  chip.append(icon(name));
+  return chip;
+}
+
+const TYPE_COLORS = [
+  ["mcb mccb acb breaker fuse", "var(--warning)"],
+  ["rcbo rcd", "var(--secondary)"],
+  ["vfd drive starter motor", "var(--positive)"],
+  ["psu ups power transformer", "var(--primary)"],
+];
+
+function colorForType(type) {
+  const lowered = (type || "").toLowerCase();
+  for (const [keys, color] of TYPE_COLORS) {
+    if (keys.split(" ").some((k) => lowered.includes(k))) return color;
+  }
+  return "var(--secondary)";
+}
+
+// ---------------------------------------------------------------- api
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -41,22 +97,22 @@ function showAuth() {
 }
 
 function switchAuthTab(tab) {
-  document.querySelectorAll(".auth-tabs button").forEach((b) =>
+  document.querySelectorAll(".seg button").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab));
   ["login", "create", "join"].forEach((name) =>
     $(`#form-${name}`).classList.toggle("hidden", name !== tab));
   $("#auth-error").classList.add("hidden");
 }
 
-document.querySelectorAll(".auth-tabs button").forEach((b) =>
+document.querySelectorAll(".seg button").forEach((b) =>
   b.addEventListener("click", () => switchAuthTab(b.dataset.tab)));
 
-function wireAuthForm(id, endpoint, transform) {
+function wireAuthForm(id, endpoint) {
   $(id).addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     try {
-      await api(endpoint, transform ? transform(data) : data);
+      await api(endpoint, data);
       location.hash = "";
       await boot();
     } catch (error) {
@@ -79,21 +135,48 @@ $("#logout").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- shell
 
-document.querySelectorAll(".tabs button").forEach((b) =>
-  b.addEventListener("click", () => switchView(b.dataset.view)));
+const NAV_ITEMS = [
+  { view: "dashboard", label: "Dashboard", icon: "grid" },
+  { view: "stock", label: "Stock", icon: "box", count: () => state.stock.length },
+  { view: "boards", label: "Boards", icon: "board", count: () => state.boards.length },
+  { view: "team", label: "Team", icon: "team", adminOnly: true, count: () => (state.members || []).length },
+];
+
+function renderNav() {
+  const nav = $("#nav");
+  nav.replaceChildren();
+  NAV_ITEMS.forEach((item) => {
+    if (item.adminOnly && !isAdmin()) return;
+    const btn = el("button");
+    // Explicit label: the text span is hidden on mobile, so without this the
+    // button would be an unnamed icon to a screen reader.
+    btn.setAttribute("aria-label", item.label);
+    btn.append(icon(item.icon));
+    const label = el("span", "nav-label", item.label);
+    btn.append(label);
+    if (item.count) btn.append(el("span", "count", String(item.count())));
+    btn.classList.toggle("active", currentView === item.view);
+    btn.addEventListener("click", () => switchView(item.view));
+    nav.append(btn);
+  });
+}
 
 function switchView(view) {
-  document.querySelectorAll(".tabs button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === view));
+  currentView = view;
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("hidden", v.id !== `view-${view}`));
+  renderNav();
 }
 
 async function refresh() {
   state = await api("/api/state");
   $("#company-name").textContent = state.company.name;
-  $("#me-line").textContent = `${state.me.name} • ${state.me.role} • code ${state.company.code}`;
-  $("#tab-team").classList.toggle("hidden", !isAdmin());
+  $("#company-code").textContent = state.company.code;
+  $("#me-name").textContent = state.me.name;
+  $("#me-role").textContent = state.me.role;
+  $("#me-avatar").textContent = state.me.name
+    .split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  renderNav();
   renderDashboard();
   renderStock();
   renderBoards();
@@ -110,61 +193,190 @@ async function boot() {
   }
 }
 
-// ---------------------------------------------------------------- dashboard
+// ---------------------------------------------------------------- shared pieces
 
-function statTile(icon, label, value, colorVar) {
-  const card = el("div", "card stat");
-  card.append(el("div", "icon", icon));
-  const v = el("div", "value", String(value));
-  v.style.color = `var(--${colorVar})`;
-  card.append(v, el("div", "label", label));
-  return card;
+function viewHead(title, ...actions) {
+  const head = el("div", "view-head");
+  head.append(el("h2", null, title));
+  actions.forEach((a) => head.append(a));
+  return head;
+}
+
+function emptyState(iconName, text) {
+  const box = el("div", "empty");
+  const chip = el("div", "chip-icon");
+  chip.append(icon(iconName, 20));
+  box.append(chip, el("p", null, text));
+  return box;
+}
+
+function smallBtn(label, cls, iconName, onClick) {
+  const btn = el("button", `btn-small ${cls || ""}`);
+  if (iconName) btn.append(icon(iconName, 14));
+  btn.append(document.createTextNode(label));
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+const STATUS_META = {
+  "Design": { cls: "s-design" },
+  "In Progress": { cls: "s-progress" },
+  "Completed": { cls: "s-done" },
+};
+
+function statusBadge(status) {
+  const meta = STATUS_META[status] || { cls: "" };
+  const badge = el("span", `badge ${meta.cls}`);
+  badge.append(el("span", "dot"), document.createTextNode(status));
+  return badge;
 }
 
 function movementRow(m) {
-  const card = el("div", "card row");
-  const grow = el("div", "grow");
-  grow.append(el("div", "title", m.partName));
-  const when = new Date(m.date).toLocaleString();
-  grow.append(el("div", "sub", [m.reference, m.userName, when].filter(Boolean).join(" • ")));
+  const row = el("div", "row");
+  const inbound = m.kind !== "consume";
+  row.append(chipIcon(inbound ? "arrowIn" : "arrowOut", inbound ? "var(--positive)" : "var(--secondary)"));
+  const main = el("div", "row-main");
+  main.append(el("div", "row-title", m.partName));
+  const when = new Date(m.date).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  main.append(el("div", "row-sub", [m.reference, m.userName, when].filter(Boolean).join(" · ")));
   const delta = m.kind === "consume" ? -m.quantity : m.quantity;
-  card.append(grow, el("div", `delta ${delta >= 0 ? "pos" : "neg"}`, delta >= 0 ? `+${delta}` : `${delta}`));
-  return card;
+  row.append(main, el("div", `delta ${delta >= 0 ? "pos" : "neg"}`, delta >= 0 ? `+${delta}` : `${delta}`));
+  return row;
+}
+
+// ---------------------------------------------------------------- dashboard
+
+function statTile(color, label, value, sub) {
+  const tile = el("div", "stat");
+  const top = el("div", "stat-top");
+  const dot = el("div", "dot-i");
+  dot.style.background = color;
+  top.append(dot, el("div", "label", label));
+  tile.append(top, el("div", "value", String(value)));
+  tile.append(el("div", "sub", sub || "\u00a0"));
+  return tile;
+}
+
+function panel(title, meta, ...actions) {
+  const box = el("div", "panel");
+  const head = el("div", "panel-head");
+  head.append(el("h3", null, title));
+  if (meta) head.append(el("span", "meta", meta));
+  actions.forEach((a) => head.append(a));
+  box.append(head);
+  const body = el("div", "panel-body");
+  box.append(body);
+  box.body = body;
+  return box;
 }
 
 function renderDashboard() {
   const view = $("#view-dashboard");
   view.replaceChildren();
+  view.append(viewHead("Dashboard"));
 
   const low = state.stock.filter((s) => s.minimumLevel != null && s.onHand <= s.minimumLevel);
   const units = state.stock.reduce((sum, s) => sum + s.onHand, 0);
+  const open = state.boards.filter((b) => b.status !== "Completed").length;
+  const movedIn = state.movements.filter((m) => m.kind !== "consume").length;
 
   const stats = el("div", "stats");
   stats.append(
-    statTile("📦", "Parts stocked", state.stock.length, "primary"),
-    statTile("#", "Units on hand", units, "secondary"),
-    statTile("⚠️", "Low stock", low.length, low.length ? "warning" : "positive"),
-    statTile("🛠", "Boards", state.boards.length, "positive"),
+    statTile("var(--primary)", "Parts", state.stock.length, "tracked in stock"),
+    statTile("var(--secondary)", "Units", units.toLocaleString(), "total on hand"),
+    statTile(low.length ? "var(--warning)" : "var(--positive)", "Low stock", low.length,
+      low.length ? "need ordering" : "all levels ok"),
+    statTile("var(--positive)", "Open boards", open, `${state.boards.length} total`),
   );
   view.append(stats);
 
-  if (low.length) {
-    view.append(el("div", "section-title", "Low stock"));
-    low.forEach((s) => {
-      const card = el("div", "card row");
-      const grow = el("div", "grow");
-      grow.append(el("div", "title", `${s.part.manufacturer} ${s.part.model}`));
-      grow.append(el("div", "sub", `${s.onHand} left • minimum ${s.minimumLevel}`));
-      card.append(grow, el("div", "qty low", s.onHand));
-      view.append(card);
-    });
+  const grid = el("div", "dash-grid");
+  const left = el("div", "dash-col");
+  const right = el("div", "dash-col");
+  grid.append(left, right);
+  view.append(grid);
+
+  // --- movement chart
+  const chartPanel = panel("Stock movement", "last 14 days");
+  const legend = el("div", "chart-legend");
+  legend.innerHTML =
+    '<span><i style="background:var(--positive)"></i>In</span>' +
+    '<span><i style="background:var(--secondary)"></i>Out</span>';
+  chartPanel.querySelector(".panel-head").append(legend);
+  const chartHost = el("div", "chart-wrap");
+  chartPanel.body.append(chartHost);
+  left.append(chartPanel);
+  if (state.movements.length) {
+    renderMovementChart(chartHost, state.movements);
+  } else {
+    chartHost.append(emptyState("pulse", "No movement yet. Receiving stock or using it on a board will chart here."));
   }
 
-  view.append(el("div", "section-title", "Recent activity"));
-  if (!state.movements.length) {
-    view.append(el("div", "card muted", "No stock movements yet."));
+  // --- stock levels with meters
+  const levelsPanel = panel("Stock levels", `${state.stock.length} parts`);
+  levelsPanel.body.classList.add("flush");
+  const rows = el("div", "rows");
+  const top = [...state.stock].sort((a, b) => b.onHand - a.onHand).slice(0, 6);
+  const peak = Math.max(1, ...top.map((s) => s.onHand));
+  if (!top.length) {
+    levelsPanel.body.append(emptyState("box", isAdmin()
+      ? "No parts tracked yet. Add one from the Stock page."
+      : "No parts tracked yet."));
+  } else {
+    top.forEach((s) => {
+      const isLow = s.minimumLevel != null && s.onHand <= s.minimumLevel;
+      const row = el("div", "row click");
+      const main = el("div", "row-main");
+      main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
+      const meter = el("div", "meter");
+      const fill = el("i");
+      fill.style.width = `${Math.max(3, (s.onHand / peak) * 100)}%`;
+      fill.style.background = isLow ? "var(--warning)" : "var(--primary)";
+      meter.append(fill);
+      main.append(meter);
+      const qty = el("div", "qty-col");
+      qty.append(el("div", `num ${isLow ? "low" : "ok"}`, String(s.onHand)));
+      row.append(main, qty);
+      row.addEventListener("click", () => switchView("stock"));
+      rows.append(row);
+    });
+    levelsPanel.body.append(rows);
   }
-  state.movements.slice(0, 10).forEach((m) => view.append(movementRow(m)));
+  left.append(levelsPanel);
+
+  // --- right rail: activity
+  const activity = panel("Recent activity", movedIn ? `${state.movements.length} events` : "");
+  activity.body.classList.add("flush");
+  if (!state.movements.length) {
+    activity.body.append(emptyState("pulse", "Nothing has moved yet."));
+  } else {
+    const feed = el("div", "rows");
+    state.movements.slice(0, 7).forEach((m) => feed.append(movementRow(m)));
+    activity.body.append(feed);
+  }
+  right.append(activity);
+
+  // --- right rail: boards snapshot
+  const boardsPanel = panel("Boards", `${open} open`);
+  boardsPanel.body.classList.add("flush");
+  if (!state.boards.length) {
+    boardsPanel.body.append(emptyState("board", isAdmin()
+      ? "Create a board and assign it to whoever builds it."
+      : "No boards assigned yet."));
+  } else {
+    const feed = el("div", "rows");
+    state.boards.slice(0, 5).forEach((b) => {
+      const row = el("div", "row click");
+      const main = el("div", "row-main");
+      main.append(el("div", "row-title", [b.number, b.name].filter(Boolean).join(" \u2014 ")));
+      main.append(el("div", "row-sub", b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"));
+      row.append(main, statusBadge(b.status));
+      row.addEventListener("click", () => switchView("boards"));
+      feed.append(row);
+    });
+    boardsPanel.body.append(feed);
+  }
+  right.append(boardsPanel);
 }
 
 // ---------------------------------------------------------------- stock
@@ -173,20 +385,23 @@ function renderStock() {
   const view = $("#view-stock");
   view.replaceChildren();
 
-  const toolbar = el("div", "toolbar");
-  const search = el("input");
-  search.placeholder = "Search stock…";
-  toolbar.append(search);
+  const actions = [];
   if (isAdmin()) {
-    const addBtn = el("button", "chip accent", "＋ Add part to stock");
-    addBtn.addEventListener("click", () => openPartPicker());
-    const newBtn = el("button", "chip", "＋ New custom part");
-    newBtn.addEventListener("click", () => openNewPartModal());
-    toolbar.append(addBtn, newBtn);
+    actions.push(smallBtn("Add part", "accent", "plus", () => openPartPicker()));
+    actions.push(smallBtn("New custom part", "", "plus", () => openNewPartModal()));
   }
+  view.append(viewHead("Stock", ...actions));
+
+  const toolbar = el("div", "toolbar");
+  const wrap = el("div", "search-wrap");
+  wrap.append(icon("search", 16));
+  const search = el("input");
+  search.placeholder = "Search stock";
+  wrap.append(search);
+  toolbar.append(wrap);
   view.append(toolbar);
 
-  const list = el("div", "view");
+  const list = el("div", "list");
   view.append(list);
 
   const draw = () => {
@@ -195,30 +410,41 @@ function renderStock() {
     const rows = state.stock.filter((s) =>
       !q || `${s.part.manufacturer} ${s.part.model} ${s.part.type} ${s.location}`.toLowerCase().includes(q));
     if (!rows.length) {
-      list.append(el("div", "card muted", state.stock.length
+      list.append(emptyState("box", state.stock.length
         ? "Nothing matches that search."
-        : "No stock yet. The boss or a manager adds parts here."));
+        : isAdmin()
+          ? "No stock yet. Add a part to start tracking the warehouse."
+          : "No stock yet — the boss or a manager adds parts here."));
+      return;
     }
     rows.forEach((s) => {
-      const card = el("div", "card row");
-      const grow = el("div", "grow");
-      grow.append(el("div", "title", `${s.part.manufacturer} ${s.part.model}`));
-      const bits = [s.part.type, s.part.rating, s.location].filter(Boolean).join(" • ");
-      grow.append(el("div", "sub", bits));
+      const row = el("div", "row");
+      row.append(chipIcon("box", colorForType(s.part.type)));
+      const main = el("div", "row-main");
+      main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
+      const bits = [s.part.type, s.part.rating, s.location].filter(Boolean).join(" · ");
+      main.append(el("div", "row-sub", bits));
+      row.append(main);
+
       const isLow = s.minimumLevel != null && s.onHand <= s.minimumLevel;
-      card.append(grow, el("div", `qty ${isLow ? "low" : "ok"}`, String(s.onHand)));
+      const qty = el("div", "qty-col");
+      qty.append(el("div", `num ${isLow ? "low" : "ok"}`, String(s.onHand)), el("div", "cap", "on hand"));
+      row.append(qty);
+
       if (isAdmin()) {
-        const actions = el("div", "toolbar");
-        const receive = el("button", "chip accent", "＋ In");
-        receive.addEventListener("click", () => openMovementModal(s, "receive"));
-        const consume = el("button", "chip", "－ Out");
-        consume.addEventListener("click", () => openMovementModal(s, "consume"));
-        const settings = el("button", "chip", "⚙");
+        const rowActions = el("div", "row-actions");
+        rowActions.append(
+          smallBtn("In", "accent", "arrowIn", () => openMovementModal(s, "receive")),
+          smallBtn("Out", "", "arrowOut", () => openMovementModal(s, "consume")),
+        );
+        const settings = el("button", "icon-btn");
+        settings.title = "Part settings";
+        settings.append(icon("sliders"));
         settings.addEventListener("click", () => openSettingsModal(s));
-        actions.append(receive, consume, settings);
-        card.append(actions);
+        rowActions.append(settings);
+        row.append(rowActions);
       }
-      list.append(card);
+      list.append(row);
     });
   };
   search.addEventListener("input", draw);
@@ -231,56 +457,57 @@ function renderBoards() {
   const view = $("#view-boards");
   view.replaceChildren();
 
-  if (isAdmin()) {
-    const toolbar = el("div", "toolbar");
-    const btn = el("button", "chip accent", "＋ New board");
-    btn.addEventListener("click", openNewBoardModal);
-    toolbar.append(btn);
-    view.append(toolbar);
-  }
+  const actions = [];
+  if (isAdmin()) actions.push(smallBtn("New board", "accent", "plus", openNewBoardModal));
+  view.append(viewHead("Boards", ...actions));
 
   if (!state.boards.length) {
-    view.append(el("div", "card muted", "No boards yet."));
+    view.append(emptyState("board", isAdmin()
+      ? "No boards yet. Create one and assign it to whoever builds it."
+      : "No boards yet."));
+    return;
   }
 
   const mine = state.boards.filter((b) => b.assignedTo === state.me.id);
   const others = state.boards.filter((b) => b.assignedTo !== state.me.id);
+  const listFor = () => { const l = el("div", "list"); view.append(l); return l; };
 
-  const boardCard = (b, isMine) => {
-    const card = el("div", "card row");
-    const grow = el("div", "grow");
+  const boardRow = (b, isMine) => {
+    const row = el("div", "row");
+    row.append(chipIcon("board", isMine ? "var(--primary)" : "var(--secondary)"));
+    const main = el("div", "row-main");
     const title = [b.number, b.name].filter(Boolean).join(" — ");
-    grow.append(el("div", "title", title + (isMine ? "  (yours)" : "")));
-    grow.append(el("div", "sub", [b.customer, b.assignedName ? `→ ${b.assignedName}` : "unassigned"].filter(Boolean).join(" • ")));
-    card.append(grow);
-    const status = el("span", `badge ${b.status.replace(" ", "")}`, b.status);
-    card.append(status);
+    main.append(el("div", "row-title", title));
+    main.append(el("div", "row-sub",
+      [b.customer, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
+    row.append(main, statusBadge(b.status));
+
+    const rowActions = el("div", "row-actions");
     if (isAdmin() || isMine) {
-      const next = el("button", "chip", "Status ▸");
-      next.addEventListener("click", async () => {
+      rowActions.append(smallBtn("Status", "", "chevron", async () => {
         const order = ["Design", "In Progress", "Completed"];
         const nextStatus = order[(order.indexOf(b.status) + 1) % order.length];
         await api("/api/board-update", { boardID: b.id, status: nextStatus });
         await refresh();
         switchView("boards");
-      });
-      card.append(next);
+      }));
     }
     if (isAdmin()) {
-      const assign = el("button", "chip", "Assign");
-      assign.addEventListener("click", () => openAssignModal(b));
-      card.append(assign);
+      rowActions.append(smallBtn("Assign", "", null, () => openAssignModal(b)));
     }
-    return card;
+    if (rowActions.childElementCount) row.append(rowActions);
+    return row;
   };
 
   if (mine.length) {
-    view.append(el("div", "section-title", "Your boards"));
-    mine.forEach((b) => view.append(boardCard(b, true)));
+    view.append(el("div", "section-label", "Your boards"));
+    const l = listFor();
+    mine.forEach((b) => l.append(boardRow(b, true)));
   }
   if (others.length) {
-    view.append(el("div", "section-title", mine.length ? "All boards" : "Boards"));
-    others.forEach((b) => view.append(boardCard(b, false)));
+    view.append(el("div", "section-label", mine.length ? "All boards" : "Boards"));
+    const l = listFor();
+    others.forEach((b) => l.append(boardRow(b, false)));
   }
 }
 
@@ -290,63 +517,66 @@ function renderTeam() {
   const view = $("#view-team");
   view.replaceChildren();
 
-  view.append(el("div", "section-title", "Invite links"));
-  const info = el("div", "card muted small",
-    "Send a link to your team. Workers see stock and their boards; managers can also change the warehouse and assign boards.");
+  const actions = [smallBtn("Worker link", "accent", "link", () => createInvite("worker"))];
+  if (state.me.role === "owner") {
+    actions.push(smallBtn("Manager link", "", "link", () => createInvite("manager")));
+  }
+  view.append(viewHead("Team", ...actions));
+
+  const info = el("div", "card");
+  info.style.color = "var(--ink-3)";
+  info.style.fontSize = "13px";
+  info.textContent = "Send an invite link to your team. Workers see stock and their boards; managers can also change the warehouse and assign boards.";
   view.append(info);
 
-  const toolbar = el("div", "toolbar");
-  const workerBtn = el("button", "chip accent", "＋ Worker invite link");
-  workerBtn.addEventListener("click", () => createInvite("worker"));
-  toolbar.append(workerBtn);
-  if (state.me.role === "owner") {
-    const managerBtn = el("button", "chip", "＋ Manager invite link");
-    managerBtn.addEventListener("click", () => createInvite("manager"));
-    toolbar.append(managerBtn);
-  }
-  view.append(toolbar);
-
-  (state.invites || []).forEach((invite) => {
-    const card = el("div", "card");
-    const link = `${location.origin}/#join/${state.company.code}/${invite.code}`;
-    const head = el("div", "row");
-    head.append(el("span", `badge ${invite.role}`, invite.role));
-    const copy = el("button", "chip accent", "Copy link");
-    copy.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(link);
-      copy.textContent = "Copied ✓";
-      setTimeout(() => (copy.textContent = "Copy link"), 1500);
-    });
-    const revoke = el("button", "chip danger", "Revoke");
-    revoke.addEventListener("click", async () => {
-      await api("/api/invite-revoke", { code: invite.code });
-      await refresh();
-      switchView("team");
-    });
-    const grow = el("div", "grow");
-    head.insertBefore(grow, copy);
-    head.append(copy, revoke);
-    card.append(head, el("div", "invite-box", link));
-    view.append(card);
-  });
-
-  view.append(el("div", "section-title", "Members"));
-  (state.members || []).forEach((member) => {
-    const card = el("div", "card row");
-    const grow = el("div", "grow");
-    grow.append(el("div", "title", member.name + (member.active ? "" : "  (disabled)")));
-    grow.append(el("div", "sub", `joined ${new Date(member.createdAt).toLocaleDateString()}`));
-    card.append(grow, el("span", `badge ${member.role}`, member.role));
-    if (state.me.role === "owner" && member.role !== "owner") {
-      const toggle = el("button", `chip ${member.active ? "danger" : "accent"}`, member.active ? "Disable" : "Enable");
-      toggle.addEventListener("click", async () => {
-        await api("/api/member-update", { userID: member.id, active: !member.active });
+  if ((state.invites || []).length) {
+    view.append(el("div", "section-label", "Active invite links"));
+    state.invites.forEach((invite) => {
+      const card = el("div", "card");
+      const head = el("div", "row");
+      head.style.cssText = "border:0;background:none;padding:0";
+      const roleBadge = el("span", `badge ${invite.role}`, invite.role);
+      const grow = el("div", "row-main");
+      grow.append(roleBadge);
+      head.append(grow);
+      const link = `${location.origin}/#join/${state.company.code}/${invite.code}`;
+      const copy = smallBtn("Copy link", "accent", "copy", async () => {
+        await navigator.clipboard.writeText(link);
+        copy.replaceChildren(icon("copy", 14), document.createTextNode("Copied"));
+        setTimeout(() => copy.replaceChildren(icon("copy", 14), document.createTextNode("Copy link")), 1500);
+      });
+      const revoke = smallBtn("Revoke", "danger", "x", async () => {
+        await api("/api/invite-revoke", { code: invite.code });
         await refresh();
         switchView("team");
       });
-      card.append(toggle);
+      head.append(copy, revoke);
+      card.append(head, Object.assign(el("div", "invite-link", link)));
+      view.append(card);
+    });
+  }
+
+  view.append(el("div", "section-label", "Members"));
+  const memberList = el("div", "list");
+  view.append(memberList);
+  (state.members || []).forEach((member) => {
+    const row = el("div", "row");
+    const avatar = el("div", "avatar", member.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase());
+    row.append(avatar);
+    const main = el("div", "row-main");
+    main.append(el("div", "row-title", member.name + (member.active ? "" : " (disabled)")));
+    main.append(el("div", "row-sub", `joined ${new Date(member.createdAt).toLocaleDateString()}`));
+    row.append(main, el("span", `badge ${member.role}`, member.role));
+    if (state.me.role === "owner" && member.role !== "owner") {
+      const rowActions = el("div", "row-actions");
+      rowActions.append(smallBtn(member.active ? "Disable" : "Enable", member.active ? "danger" : "accent", null, async () => {
+        await api("/api/member-update", { userID: member.id, active: !member.active });
+        await refresh();
+        switchView("team");
+      }));
+      row.append(rowActions);
     }
-    view.append(card);
+    memberList.append(row);
   });
 }
 
@@ -361,7 +591,7 @@ async function createInvite(role) {
 function openModal(build) {
   const root = $("#modal-root");
   const backdrop = el("div", "modal-backdrop");
-  const modal = el("div", "card modal");
+  const modal = el("div", "modal");
   const close = () => root.replaceChildren();
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) close();
@@ -369,26 +599,21 @@ function openModal(build) {
   build(modal, close);
   backdrop.append(modal);
   root.replaceChildren(backdrop);
+  modal.querySelector("input")?.focus();
 }
 
 function modalActions(close, submitLabel, onSubmit) {
   const actions = el("div", "actions");
-  const cancel = el("button", "ghost", "Cancel");
+  const cancel = el("button", "btn-ghost", "Cancel");
   cancel.addEventListener("click", close);
-  const ok = el("button", "primary", submitLabel);
+  const ok = el("button", "btn-primary", submitLabel);
   ok.addEventListener("click", onSubmit);
   actions.append(cancel, ok);
   return actions;
 }
 
-function labeledInput(labelText, placeholder, type = "text") {
-  const label = el("label", "small");
-  label.style.display = "flex";
-  label.style.flexDirection = "column";
-  label.style.gap = "6px";
-  label.style.fontWeight = "700";
-  label.style.color = "var(--muted)";
-  label.append(labelText);
+function field(labelText, placeholder, type = "text") {
+  const label = el("label", null, labelText);
   const input = el("input");
   input.placeholder = placeholder;
   input.type = type;
@@ -399,9 +624,9 @@ function labeledInput(labelText, placeholder, type = "text") {
 function openMovementModal(entry, kind) {
   openModal((modal, close) => {
     modal.append(el("h3", null, kind === "receive" ? "Stock in" : "Stock out"));
-    modal.append(el("div", "muted small", `${entry.part.manufacturer} ${entry.part.model} — ${entry.onHand} on hand`));
-    const qty = labeledInput("Quantity", "e.g. 10", "number");
-    const ref = labeledInput(kind === "consume" ? "Board number" : "Delivery note / reference", "optional");
+    modal.append(el("div", "modal-sub", `${entry.part.manufacturer} ${entry.part.model} · ${entry.onHand} on hand`));
+    const qty = field("Quantity", "e.g. 10", "number");
+    const ref = field(kind === "consume" ? "Board number" : "Delivery note / reference", "optional");
     modal.append(qty.label, ref.label);
     modal.append(modalActions(close, "Save", async () => {
       const quantity = parseInt(qty.input.value, 10);
@@ -417,10 +642,10 @@ function openMovementModal(entry, kind) {
 function openSettingsModal(entry) {
   openModal((modal, close) => {
     modal.append(el("h3", null, "Part settings"));
-    modal.append(el("div", "muted small", `${entry.part.manufacturer} ${entry.part.model}`));
-    const min = labeledInput("Minimum level (0 = no alert)", "0", "number");
+    modal.append(el("div", "modal-sub", `${entry.part.manufacturer} ${entry.part.model}`));
+    const min = field("Minimum level (0 = no alert)", "0", "number");
     min.input.value = entry.minimumLevel ?? 0;
-    const loc = labeledInput("Location", "Shelf / drawer");
+    const loc = field("Location", "Shelf / drawer");
     loc.input.value = entry.location;
     modal.append(min.label, loc.label);
     modal.append(modalActions(close, "Save", async () => {
@@ -441,33 +666,37 @@ async function openPartPicker() {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
     modal.append(el("h3", null, "Add part to stock"));
+    const wrap = el("div", "search-wrap");
+    wrap.style.maxWidth = "none";
+    wrap.append(icon("search", 16));
     const search = el("input");
-    search.placeholder = "Search 199+ parts…";
-    modal.append(search);
+    search.placeholder = `Search ${catalog.length} parts`;
+    wrap.append(search);
+    modal.append(wrap);
     const list = el("div", "list-scroll");
     modal.append(list);
 
     const draw = () => {
       list.replaceChildren();
       const q = search.value.trim().toLowerCase();
-      const matches = catalog
+      catalog
         .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type}`.toLowerCase().includes(q))
-        .slice(0, 40);
-      matches.forEach((p) => {
-        const row = el("div", "card row");
-        const grow = el("div", "grow");
-        grow.append(el("div", "title", `${p.manufacturer} ${p.model}`));
-        grow.append(el("div", "sub", `${p.type} • ${p.rating}`));
-        row.append(grow);
-        row.style.cursor = "pointer";
-        row.addEventListener("click", async () => {
-          await api("/api/part-settings", { partID: p.id, minimumLevel: null, location: "" });
-          close();
-          await refresh();
-          switchView("stock");
+        .slice(0, 40)
+        .forEach((p) => {
+          const row = el("div", "row click");
+          row.append(chipIcon("box", colorForType(p.type)));
+          const main = el("div", "row-main");
+          main.append(el("div", "row-title", `${p.manufacturer} ${p.model}`));
+          main.append(el("div", "row-sub", [p.type, p.rating].filter(Boolean).join(" · ")));
+          row.append(main);
+          row.addEventListener("click", async () => {
+            await api("/api/part-settings", { partID: p.id, minimumLevel: null, location: "" });
+            close();
+            await refresh();
+            switchView("stock");
+          });
+          list.append(row);
         });
-        list.append(row);
-      });
     };
     search.addEventListener("input", draw);
     draw();
@@ -477,10 +706,11 @@ async function openPartPicker() {
 function openNewPartModal() {
   openModal((modal, close) => {
     modal.append(el("h3", null, "New custom part"));
-    const model = labeledInput("Model", "e.g. Cable tray 200mm");
-    const manufacturer = labeledInput("Manufacturer", "optional");
-    const type = labeledInput("Type", "e.g. Cable Tray");
-    const rating = labeledInput("Rating", "optional");
+    modal.append(el("div", "modal-sub", "For anything the catalog doesn't carry."));
+    const model = field("Model", "e.g. Cable tray 200mm");
+    const manufacturer = field("Manufacturer", "optional");
+    const type = field("Type", "e.g. Cable Tray");
+    const rating = field("Rating", "optional");
     modal.append(model.label, manufacturer.label, type.label, rating.label);
     modal.append(modalActions(close, "Add part", async () => {
       if (!model.input.value.trim() || !type.input.value.trim()) return;
@@ -511,15 +741,15 @@ function memberSelect(selected) {
 function openNewBoardModal() {
   openModal((modal, close) => {
     modal.append(el("h3", null, "New board"));
-    const number = labeledInput("Board number", "e.g. 2026-114");
-    const name = labeledInput("Name", "e.g. Azrieli MDB");
-    const customer = labeledInput("Customer", "optional");
-    const assignLabel = el("label", "small", "Give the board to");
-    assignLabel.style.cssText = "display:flex;flex-direction:column;gap:6px;font-weight:700;color:var(--muted)";
+    const number = field("Board number", "e.g. 2026-114");
+    const name = field("Name", "e.g. Azrieli MDB");
+    const customer = field("Customer", "optional");
+    const assign = el("label", null, "Give the board to");
     const select = memberSelect(null);
-    assignLabel.append(select);
-    modal.append(number.label, name.label, customer.label, assignLabel);
+    assign.append(select);
+    modal.append(number.label, name.label, customer.label, assign);
     modal.append(modalActions(close, "Create", async () => {
+      if (!number.input.value.trim() && !name.input.value.trim()) return;
       await api("/api/boards", {
         number: number.input.value,
         name: name.input.value,
@@ -536,9 +766,11 @@ function openNewBoardModal() {
 function openAssignModal(board) {
   openModal((modal, close) => {
     modal.append(el("h3", null, "Assign board"));
-    modal.append(el("div", "muted small", [board.number, board.name].filter(Boolean).join(" — ")));
+    modal.append(el("div", "modal-sub", [board.number, board.name].filter(Boolean).join(" — ")));
+    const label = el("label", null, "Assigned to");
     const select = memberSelect(board.assignedTo);
-    modal.append(select);
+    label.append(select);
+    modal.append(label);
     modal.append(modalActions(close, "Save", async () => {
       await api("/api/board-update", { boardID: board.id, assignedTo: select.value || null });
       close();
