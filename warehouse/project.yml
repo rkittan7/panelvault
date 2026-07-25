@@ -1,0 +1,27 @@
+# XcodeGen spec for the PanelVault Warehouse companion app.
+# Regenerate the project with: xcodegen generate (run inside warehouse/)
+name: Warehouse
+options:
+  bundleIdPrefix: com.panelvault
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Warehouse:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.panelvault.warehouse
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: 1
+        SWIFT_VERSION: "5.0"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: PV Warehouse
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: The camera scans supplier delivery notes so stock can be received automatically.
