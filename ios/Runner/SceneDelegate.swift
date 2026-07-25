@@ -6502,7 +6502,7 @@ struct PhotoPickerSection: View {
           .foregroundStyle(.secondary)
 
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-          ForEach(photoTokens, id: \.self) { token in
+          ForEach(photoTokens, id: \.self) { (token: String) in
             ZStack(alignment: .topTrailing) {
               GeometryReader { proxy in
                 Button {
@@ -6518,7 +6518,7 @@ struct PhotoPickerSection: View {
                       .clipped()
                   } else {
                     Rectangle()
-                      .fill(theme.card)
+                      .fill(theme.surface)
                       .frame(width: proxy.size.width, height: proxy.size.width)
                   }
                 }
