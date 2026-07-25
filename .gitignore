@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# PanelVault Cloud local data (accounts, stock) — never commit
+webapp/data/

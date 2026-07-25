@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PanelVault Cloud</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Auth screens -->
+    <section id="auth" class="auth hidden">
+      <div class="auth-brand">
+        <div class="logo">PV</div>
+        <h1>PanelVault <span>Cloud</span></h1>
+        <p class="muted">The company warehouse, from anywhere.</p>
+      </div>
+
+      <div class="auth-card card">
+        <div class="auth-tabs">
+          <button data-tab="login" class="active">Sign in</button>
+          <button data-tab="create">New company</button>
+          <button data-tab="join">I have an invite</button>
+        </div>
+
+        <form id="form-login" class="auth-form">
+          <label>Company code <input name="companyCode" autocapitalize="characters" autocomplete="off" placeholder="e.g. K7M2XQ" required></label>
+          <label>Your name <input name="name" autocomplete="username" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary" type="submit">Sign in</button>
+        </form>
+
+        <form id="form-create" class="auth-form hidden">
+          <label>Company name <input name="companyName" placeholder="e.g. Kittan Electric" required></label>
+          <label>Your name <input name="name" required></label>
+          <label>Password <input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
+          <p class="muted small">You become the owner. You'll get a company code and invite links to send your team.</p>
+          <button class="primary" type="submit">Create company</button>
+        </form>
+
+        <form id="form-join" class="auth-form hidden">
+          <label>Company code <input name="companyCode" autocapitalize="characters" autocomplete="off" required></label>
+          <label>Invite code <input name="inviteCode" autocapitalize="characters" autocomplete="off" required></label>
+          <label>Your name <input name="name" required></label>
+          <label>Choose a password <input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
+          <button class="primary" type="submit">Join company</button>
+        </form>
+
+        <p id="auth-error" class="error hidden"></p>
+      </div>
+    </section>
+
+    <!-- Main app -->
+    <section id="main" class="hidden">
+      <header class="topbar">
+        <div class="logo small">PV</div>
+        <div class="topbar-title">
+          <strong id="company-name"></strong>
+          <span class="muted" id="me-line"></span>
+        </div>
+        <button id="logout" class="ghost">Sign out</button>
+      </header>
+
+      <nav class="tabs">
+        <button data-view="dashboard" class="active">Dashboard</button>
+        <button data-view="stock">Stock</button>
+        <button data-view="boards">Boards</button>
+        <button data-view="team" id="tab-team" class="hidden">Team</button>
+      </nav>
+
+      <main>
+        <div id="view-dashboard" class="view"></div>
+        <div id="view-stock" class="view hidden"></div>
+        <div id="view-boards" class="view hidden"></div>
+        <div id="view-team" class="view hidden"></div>
+      </main>
+    </section>
+  </div>
+
+  <div id="modal-root"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

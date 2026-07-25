@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "panelvault-cloud",
+      "url": "http://localhost:8090",
+      "port": 8090
+    }
+  ]
+}
