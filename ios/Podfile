@@ -1,0 +1,28 @@
+# PanelVault iOS is a native SwiftUI app (see Runner/SceneDelegate.swift).
+# It intentionally does NOT use any Flutter plugins — it relies only on system
+# frameworks (SwiftUI, UIKit, PhotosUI, UniformTypeIdentifiers). The old Podfile
+# ran `flutter_install_all_ios_pods`, which linked Flutter plugin pods
+# (isar_flutter_libs, file_picker, image_picker, …). Those frameworks link
+# against Flutter.framework, which this target never embeds, so the app crashed
+# on launch with `dyld: Library not loaded: @rpath/Flutter.framework/Flutter`
+# (a white screen). Keeping the target free of those pods is the fix.
+
+platform :ios, '16.0'
+
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+target 'Runner' do
+  use_frameworks!
+
+  # No pods: the app uses only Apple system frameworks.
+
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end

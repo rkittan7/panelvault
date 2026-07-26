@@ -46,3 +46,7 @@ app.*.map.json
 
 # PanelVault Cloud local data (accounts, stock) — never commit
 webapp/data/
+
+# Xcode / CocoaPods build output
+ios/build/
+**/xcuserdata/
