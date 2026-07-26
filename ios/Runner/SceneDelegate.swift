@@ -262,6 +262,9 @@ struct PanelVaultAppView: View {
       if let token = manufacturer.imageToken { tokens.insert(token) }
     }
     tokens.formUnion(ComponentImageStore.load().values)
+    // The profile photo belongs to no project or board, so it has to be kept
+    // explicitly or the sweep deletes it and the avatar goes blank on relaunch.
+    if !profileImageToken.isEmpty { tokens.insert(profileImageToken) }
 
     ImageStore.shared.sweepOrphans(keeping: tokens)
   }
@@ -2075,7 +2078,7 @@ struct DashboardProjectRecentRow: View {
 
         VStack(alignment: .leading, spacing: 5) {
           HStack(spacing: 7) {
-            RecentKindBadge(title: "Project", color: Color(hex: 0x64D2FF))
+            RecentKindBadge(title: "Project", color: theme.primary)
             RecentStatusBadge(status: displayedStatus)
           }
 
@@ -2175,7 +2178,7 @@ struct DashboardBoardProgressRow: View {
           }
           HStack(spacing: 5) {
             RecentBoardInfoChip(symbol: "number", text: board.number, color: board.color)
-            RecentBoardInfoChip(symbol: "bolt.shield.fill", text: board.mainBreakerType, color: Color(hex: 0x64D2FF))
+            RecentBoardInfoChip(symbol: "bolt.fill", text: board.ampere, color: theme.secondary)
             RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
           }
           .fixedSize(horizontal: false, vertical: true)
@@ -2302,7 +2305,7 @@ struct DashboardBoardRecentRow: View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 9) {
         HStack(spacing: 7) {
-          RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
+          RecentKindBadge(title: "Board", color: theme.secondary)
           RecentStatusBadge(status: board.statusTitle)
           Spacer(minLength: 10)
         }
@@ -2321,7 +2324,7 @@ struct DashboardBoardRecentRow: View {
             }
             HStack(spacing: 5) {
               RecentBoardInfoChip(symbol: "number", text: board.number, color: board.color)
-              RecentBoardInfoChip(symbol: "bolt.shield.fill", text: board.mainBreakerType, color: Color(hex: 0x64D2FF))
+              RecentBoardInfoChip(symbol: "bolt.fill", text: board.ampere, color: theme.secondary)
               RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -2694,7 +2697,7 @@ struct PanelToggleStyle: ToggleStyle {
         Spacer()
         ZStack(alignment: configuration.isOn ? .trailing : .leading) {
           Capsule()
-            .fill(configuration.isOn ? theme.primary.opacity(0.95) : Color.white.opacity(0.14))
+            .fill(configuration.isOn ? theme.primary.opacity(0.95) : Color.primary.opacity(0.16))
             .frame(width: 50, height: 30)
           Circle()
             .fill(.white)
@@ -3955,10 +3958,10 @@ struct CreationFieldShell<Accessory: View>: View {
     .padding(.vertical, 9)
     .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
     .background(theme.surface.opacity(0.56))
-    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .stroke(.white.opacity(0.07), lineWidth: 1)
+      RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous)
+        .stroke(theme.cardBorder, lineWidth: 1)
     )
   }
 }
@@ -6178,18 +6181,19 @@ struct CabinetTab: View {
 
   var body: some View {
     Button(action: action) {
-      VStack(spacing: 2) {
-        Text("Cabinet \(number)")
-          .font(.system(size: 13, weight: .bold))
+      HStack(spacing: 6) {
+        Text("\(number)")
+          .font(.system(size: 14, weight: .heavy))
         Text("\(percent)%")
-          .font(.system(size: 11, weight: .heavy))
-          .opacity(0.9)
+          .font(.system(size: 12, weight: .semibold))
+          .opacity(0.75)
       }
       .foregroundStyle(selected ? Color.white : theme.primary)
-      .padding(.horizontal, 14)
-      .padding(.vertical, 8)
+      .lineLimit(1)
+      .padding(.horizontal, 13)
+      .frame(height: 34)
       .background(selected ? theme.primary : theme.primary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .clipShape(Capsule())
     }
     .buttonStyle(PanelPressButtonStyle())
   }
@@ -7551,26 +7555,34 @@ struct MoreView: View {
           }
 
           Toggle(isOn: $contractorMode) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text("Contractor Mode")
-                .font(.headline)
-              Text("Switch between companies from the dashboard menu.")
-                .foregroundStyle(.secondary)
-                .font(.caption)
+            HStack(spacing: 12) {
+              Image(systemName: "person.2.fill")
+                .foregroundStyle(theme.primary)
+                .frame(width: 38, height: 38)
+                .background(theme.primary.opacity(0.14))
+                .clipShape(Circle())
+              VStack(alignment: .leading, spacing: 4) {
+                Text("Contractor Mode")
+                  .font(.headline)
+                Text("Switch between companies")
+                  .foregroundStyle(.secondary)
+                  .font(.caption)
+                  .lineLimit(1)
+              }
             }
           }
           .toggleStyle(PanelToggleStyle(theme: theme))
-          .padding(14)
+          .padding(12)
           .background(theme.surface.opacity(0.78))
-          .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+          .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
 
           Button {
             profileOpen = true
           } label: {
-            MoreRow(
+            ProfileMoreRow(
               theme: theme,
-              symbol: "person.crop.circle.fill",
-              title: "Profile",
+              name: profileName,
+              imageToken: profileImageToken,
               subtitle: profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add your name, company and phone" : profileName
             )
           }
@@ -7768,8 +7780,8 @@ struct ProfileEditorSheet: View {
 
   var body: some View {
     NavigationStack {
-      Form {
-        Section {
+      ScrollView {
+        VStack(spacing: 14) {
           VStack(spacing: 12) {
             ProfileAvatarView(theme: theme, name: name, imageToken: imageToken, size: 92)
             PhotosPicker(selection: $pickerItem, matching: .images) {
@@ -7786,21 +7798,16 @@ struct ProfileEditorSheet: View {
             }
           }
           .frame(maxWidth: .infinity)
-          .listRowBackground(Color.clear)
-        }
+          .padding(.vertical, 6)
 
-        Section("Profile") {
-          TextField("Full name", text: $name)
-            .textInputAutocapitalization(.words)
-          TextField("Company", text: $company)
-            .textInputAutocapitalization(.words)
-          TextField("Phone", text: $phone)
-            .keyboardType(.phonePad)
+          CreationTextInput(theme: theme, title: "Full name", placeholder: "Your name", symbol: "person.fill", text: $name, capitalization: .words)
+          CreationTextInput(theme: theme, title: "Company", placeholder: "Company", symbol: "building.2.fill", text: $company, capitalization: .words)
+          CreationTextInput(theme: theme, title: "Phone", placeholder: "Phone", symbol: "phone.fill", text: $phone, keyboardType: .phonePad)
+
+          BottomTabClearance()
         }
-      }
-      .scrollContentBackground(.hidden)
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        BottomTabClearance()
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
       }
       .background(theme.background.ignoresSafeArea())
       .navigationTitle("Profile")
@@ -10023,43 +10030,37 @@ struct AddComponentSheet: View {
 
   var body: some View {
     NavigationStack {
-      Form {
-        Section("Company") {
-          Picker("Manufacturer", selection: $manufacturer) {
-            ForEach(Array(Set(manufacturerNames)).sorted() + ["Other"], id: \.self) { Text($0) }
-          }
-          if manufacturer == "Other" {
-            TextField("Manufacturer name", text: $customManufacturer)
-          }
-          Picker("Equipment Type", selection: $type) {
-            ForEach(EquipmentTypeCatalog.all + ["Other"], id: \.self) { Text($0) }
-          }
-          if type == "Other" {
-            TextField("Equipment type", text: $customType)
-          }
-        }
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          Text("Company")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(.secondary)
 
-        Section("Specification") {
-          TextField("Model", text: $model)
-          HStack {
-            TextField("Ampere / rating", text: $rating)
-              .keyboardType(.numberPad)
-            if isMCBType || resolvedType.localizedCaseInsensitiveContains("MCCB") || resolvedType.localizedCaseInsensitiveContains("Contactor") {
-              Text("A")
-                .foregroundStyle(.secondary)
-            }
+          CreationMenuInput(theme: theme, title: "Manufacturer", symbol: "building.2.fill", value: manufacturer, options: Array(Set(manufacturerNames)).sorted() + ["Other"], selection: $manufacturer)
+          if manufacturer == "Other" {
+            CreationTextInput(theme: theme, title: "Manufacturer name", placeholder: "Name", symbol: "pencil", text: $customManufacturer, capitalization: .words)
           }
-          Picker("Poles", selection: $poles) {
-            ForEach(PoleRating.all, id: \.self) { Text($0) }
+          CreationMenuInput(theme: theme, title: "Equipment Type", symbol: "shippingbox.fill", value: type, options: EquipmentTypeCatalog.all + ["Other"], selection: $type)
+          if type == "Other" {
+            CreationTextInput(theme: theme, title: "Equipment type", placeholder: "Type", symbol: "pencil", text: $customType, capitalization: .words)
           }
+
+          Text("Specification")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
+
+          CreationTextInput(theme: theme, title: "Model", placeholder: "Model", symbol: "tag.fill", text: $model, capitalization: .characters)
+          CreationTextInput(theme: theme, title: "Ampere / rating", placeholder: "Rating", symbol: "bolt.fill", text: $rating, keyboardType: .numberPad)
+          CreationMenuInput(theme: theme, title: "Poles", symbol: "square.grid.2x2.fill", value: poles, options: PoleRating.all, selection: $poles)
           if isMCBType {
-            TextField("Curve", text: $curve)
+            CreationTextInput(theme: theme, title: "Curve", placeholder: "B/C/D", symbol: "waveform.path.ecg", text: $curve, capitalization: .characters)
           }
+
+          BottomTabClearance()
         }
-      }
-      .scrollContentBackground(.hidden)
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        BottomTabClearance()
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
       }
       .background(theme.background.ignoresSafeArea())
       .navigationTitle("Add Component")
@@ -10360,6 +10361,30 @@ struct ThemeRow: View {
   }
 }
 
+/// The Profile row in More. Same shape as [MoreRow], but its leading bubble is
+/// the profile picture itself rather than a symbol.
+struct ProfileMoreRow: View {
+  let theme: PanelTheme
+  let name: String
+  let imageToken: String
+  let subtitle: String
+
+  var body: some View {
+    HStack(spacing: 12) {
+      ProfileAvatarView(theme: theme, name: name, imageToken: imageToken, size: 38)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Profile").font(.headline)
+        Text(subtitle).font(.caption).foregroundStyle(.secondary)
+      }
+      Spacer()
+      Image(systemName: "chevron.right").foregroundStyle(.secondary)
+    }
+    .padding(12)
+    .background(theme.surface.opacity(0.78))
+    .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
+  }
+}
+
 struct ThemePickerRow: View {
   let theme: PanelTheme
   let selectedTheme: PanelTheme
@@ -10371,8 +10396,8 @@ struct ThemePickerRow: View {
         selectedTheme.primary
         selectedTheme.secondary
       }
-      .frame(width: 42, height: 42)
-      .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+      .frame(width: 38, height: 38)
+      .clipShape(Circle())
 
       VStack(alignment: .leading, spacing: 4) {
         Text("Theme").font(.headline)
@@ -10621,15 +10646,15 @@ struct PanelTheme: Identifiable, Equatable {
   static let terminal = PanelTheme(
     id: "terminal",
     name: "Terminal",
-    description: "Phosphor green on pure black with hard corners",
+    description: "Phosphor green and amber on pure black",
     background: Color(hex: 0x000000),
     surface: Color(hex: 0x0A140A),
     primary: Color(hex: 0x33FF66),
     secondary: Color(hex: 0xFFB000),
     colorScheme: .dark,
-    radiusCard: 3,
-    radiusControl: 2,
-    radiusPill: 2,
+    radiusCard: 16,
+    radiusControl: 12,
+    radiusPill: 8,
     cardBorder: Color(hex: 0x33FF66).opacity(0.24),
     elevatedSurface: Color(hex: 0x33FF66).opacity(0.06),
     success: Color(hex: 0x33FF66),
@@ -10698,9 +10723,9 @@ struct PanelTheme: Identifiable, Equatable {
     primary: Color(hex: 0x0F6D7E),
     secondary: Color(hex: 0x1B4D8F),
     colorScheme: .light,
-    radiusCard: 6,
-    radiusControl: 5,
-    radiusPill: 4,
+    radiusCard: 14,
+    radiusControl: 11,
+    radiusPill: 8,
     cardBorder: Color(hex: 0x16222E).opacity(0.16),
     elevatedSurface: Color.black.opacity(0.03),
     success: Color(hex: 0x2F7D32),
