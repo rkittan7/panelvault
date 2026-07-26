@@ -40,7 +40,7 @@ struct PanelVaultAppView: View {
   @State private var archiveMode: ArchiveMode = .projects
   @State private var newHubSelection: NewHubSelection?
   @State private var pendingProjectOpenID: String?
-  @AppStorage("panelvault.theme") private var selectedThemeID = PanelTheme.vaultPurple.id
+  @AppStorage("panelvault.theme") private var selectedThemeID = PanelTheme.cupertino.id
   @AppStorage("panelvault.interfaceSize") private var selectedInterfaceSizeID = InterfaceSize.standard.id
   @AppStorage("panelvault.standardSizeMigration") private var standardSizeMigration = false
   @AppStorage("panelvault.contractorMode") private var contractorMode = false
@@ -53,7 +53,7 @@ struct PanelVaultAppView: View {
   @State private var pendingPersistWorkItem: DispatchWorkItem?
 
   private var selectedTheme: PanelTheme {
-    PanelTheme.all.first { $0.id == selectedThemeID } ?? .vaultPurple
+    PanelTheme.all.first { $0.id == selectedThemeID } ?? .cupertino
   }
 
   private var activeCompany: Binding<ContractorCompany?> {
@@ -10107,10 +10107,10 @@ struct GlassCard<Content: View>: View {
     content
       .padding(14)
       .background(theme.surface.opacity(0.78))
-      .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
       .overlay(
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-          .stroke(.white.opacity(0.07), lineWidth: 1)
+        RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous)
+          .stroke(theme.cardBorder, lineWidth: 1)
       )
   }
 }
@@ -10383,7 +10383,7 @@ struct ThemePickerRow: View {
     }
     .padding(12)
     .background(theme.surface.opacity(0.78))
-    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
   }
 }
 
@@ -10491,7 +10491,7 @@ struct MoreRow: View {
     }
     .padding(12)
     .background(theme.surface.opacity(0.78))
-    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
   }
 }
 
@@ -10524,12 +10524,144 @@ struct PanelTheme: Identifiable, Equatable {
   var tabBarTint: Color = Color.black
   var tabBarInactive: Color = Color.white.opacity(0.78)
 
-  static let vaultPurple = PanelTheme(id: "vault-purple", name: "Obsidian Blue", description: "Black glass with precise blue controls", background: Color(hex: 0x050607), surface: Color(hex: 0x121417), primary: Color(hex: 0x6E86FF), secondary: Color(hex: 0x4CC9F0))
-  static let graphiteCopper = PanelTheme(id: "graphite-copper", name: "Carbon Steel", description: "Neutral graphite with soft silver-blue", background: Color(hex: 0x060708), surface: Color(hex: 0x15171A), primary: Color(hex: 0xB8C2D6), secondary: Color(hex: 0x5D7CFA))
-  static let emeraldGrid = PanelTheme(id: "emerald-grid", name: "Switchgear Green", description: "Deep black-green for completion work", background: Color(hex: 0x040807), surface: Color(hex: 0x101916), primary: Color(hex: 0x48D597), secondary: Color(hex: 0x7AD7C4))
-  static let oceanControl = PanelTheme(id: "ocean-control", name: "Control Teal", description: "Dark technical teal with cool contrast", background: Color(hex: 0x04090C), surface: Color(hex: 0x0F171B), primary: Color(hex: 0x31D7C8), secondary: Color(hex: 0x4E9DFF))
-  static let blackout = PanelTheme(id: "blackout", name: "Blackout", description: "Almost pure black with quiet white controls", background: Color(hex: 0x020304), surface: Color(hex: 0x101113), primary: Color(hex: 0xF2F5F7), secondary: Color(hex: 0x8A98A8))
-  static let deepMarine = PanelTheme(id: "deep-marine", name: "Deep Marine", description: "Navy-black with professional cyan accents", background: Color(hex: 0x03070D), surface: Color(hex: 0x0D1420), primary: Color(hex: 0x3EA7FF), secondary: Color(hex: 0x38E8B0))
+  // Synthwave. Purple-black ground, hot magenta controls, cyan support, and a
+  // neon-tinted card edge instead of the usual hairline.
+  static let neonNights = PanelTheme(
+    id: "neon-nights",
+    name: "Neon Nights",
+    description: "Synthwave purple-black with hot magenta and cyan",
+    background: Color(hex: 0x0B0313),
+    surface: Color(hex: 0x1A0B2E),
+    primary: Color(hex: 0xFF2E97),
+    secondary: Color(hex: 0x00E5FF),
+    colorScheme: .dark,
+    radiusCard: 18,
+    radiusControl: 14,
+    radiusPill: 10,
+    cardBorder: Color(hex: 0xFF2E97).opacity(0.20),
+    elevatedSurface: Color.white.opacity(0.06),
+    success: Color(hex: 0x3DFFA8),
+    info: Color(hex: 0x00E5FF),
+    designAccent: Color(hex: 0xFF2E97),
+    danger: Color(hex: 0xFF4D6D),
+    tabBarTint: Color(hex: 0x12061F),
+    tabBarInactive: Color(hex: 0x9B7FB8)
+  )
+
+  // Eighties Miami. Deep teal-navy with hot pink and aqua, soft fat corners.
+  static let miami = PanelTheme(
+    id: "miami",
+    name: "Miami",
+    description: "Eighties teal and hot pink with soft fat corners",
+    background: Color(hex: 0x071A26),
+    surface: Color(hex: 0x0E2C3D),
+    primary: Color(hex: 0xFF4FA3),
+    secondary: Color(hex: 0x2EE6C5),
+    colorScheme: .dark,
+    radiusCard: 22,
+    radiusControl: 18,
+    radiusPill: 12,
+    cardBorder: Color(hex: 0x2EE6C5).opacity(0.18),
+    elevatedSurface: Color.white.opacity(0.06),
+    success: Color(hex: 0x2EE6C5),
+    info: Color(hex: 0x4FC3F7),
+    designAccent: Color(hex: 0xFF4FA3),
+    danger: Color(hex: 0xFF6B6B),
+    tabBarTint: Color(hex: 0x05141D),
+    tabBarInactive: Color(hex: 0x7FA6B8)
+  )
+
+  // Electric lime on deep violet. The loudest pairing in the set.
+  static let ultraviolet = PanelTheme(
+    id: "ultraviolet",
+    name: "Ultraviolet",
+    description: "Deep violet with electric lime controls",
+    background: Color(hex: 0x0A0618),
+    surface: Color(hex: 0x171030),
+    primary: Color(hex: 0xB4FF39),
+    secondary: Color(hex: 0xA855F7),
+    colorScheme: .dark,
+    radiusCard: 16,
+    radiusControl: 12,
+    radiusPill: 8,
+    cardBorder: Color(hex: 0xB4FF39).opacity(0.16),
+    elevatedSurface: Color.white.opacity(0.06),
+    success: Color(hex: 0xB4FF39),
+    info: Color(hex: 0xA855F7),
+    designAccent: Color(hex: 0xC77DFF),
+    danger: Color(hex: 0xFF5C7C),
+    tabBarTint: Color(hex: 0x080412),
+    tabBarInactive: Color(hex: 0x8B7FA8)
+  )
+
+  // Molten. Near-black brown ground with vivid orange and yellow.
+  static let solarFlare = PanelTheme(
+    id: "solar-flare",
+    name: "Solar Flare",
+    description: "Molten orange and yellow on scorched black",
+    background: Color(hex: 0x140A02),
+    surface: Color(hex: 0x241203),
+    primary: Color(hex: 0xFF7A18),
+    secondary: Color(hex: 0xFFD028),
+    colorScheme: .dark,
+    radiusCard: 10,
+    radiusControl: 8,
+    radiusPill: 6,
+    cardBorder: Color(hex: 0xFF7A18).opacity(0.20),
+    elevatedSurface: Color.white.opacity(0.06),
+    success: Color(hex: 0x7FD858),
+    info: Color(hex: 0xFFD028),
+    designAccent: Color(hex: 0xFF7A18),
+    danger: Color(hex: 0xFF4530),
+    tabBarTint: Color(hex: 0x0E0701),
+    tabBarInactive: Color(hex: 0xB08A63)
+  )
+
+  // CRT terminal. Pure black, phosphor green, amber support, hard corners.
+  static let terminal = PanelTheme(
+    id: "terminal",
+    name: "Terminal",
+    description: "Phosphor green on pure black with hard corners",
+    background: Color(hex: 0x000000),
+    surface: Color(hex: 0x0A140A),
+    primary: Color(hex: 0x33FF66),
+    secondary: Color(hex: 0xFFB000),
+    colorScheme: .dark,
+    radiusCard: 3,
+    radiusControl: 2,
+    radiusPill: 2,
+    cardBorder: Color(hex: 0x33FF66).opacity(0.24),
+    elevatedSurface: Color(hex: 0x33FF66).opacity(0.06),
+    success: Color(hex: 0x33FF66),
+    info: Color(hex: 0x00E5FF),
+    designAccent: Color(hex: 0xFFB000),
+    danger: Color(hex: 0xFF3B30),
+    tabBarTint: Color(hex: 0x000000),
+    tabBarInactive: Color(hex: 0x4E7A57)
+  )
+
+  // The light funky option. Candy pink ground, magenta and purple, very round.
+  static let bubblegum = PanelTheme(
+    id: "bubblegum",
+    name: "Bubblegum",
+    description: "Candy pink and purple, extra round and playful",
+    background: Color(hex: 0xFFF0F6),
+    surface: Color(hex: 0xFFFFFF),
+    primary: Color(hex: 0xE5399B),
+    secondary: Color(hex: 0x7C4DFF),
+    colorScheme: .light,
+    radiusCard: 22,
+    radiusControl: 18,
+    radiusPill: 14,
+    cardBorder: Color(hex: 0xE5399B).opacity(0.16),
+    elevatedSurface: Color.black.opacity(0.03),
+    success: Color(hex: 0x00B37E),
+    info: Color(hex: 0x7C4DFF),
+    designAccent: Color(hex: 0xE5399B),
+    danger: Color(hex: 0xF43F5E),
+    tabBarTint: Color.white,
+    tabBarInactive: Color(hex: 0xB08AA0)
+  )
 
   // Apple-native light skin. Light system grays, iOS blue, tighter rounding,
   // and a light frosted tab bar. Reads like a first-party iOS app.
@@ -10603,7 +10735,7 @@ struct PanelTheme: Identifiable, Equatable {
     tabBarInactive: Color(hex: 0x9AA0A6)
   )
 
-  static let all = [cupertino, blueprint, field, vaultPurple, graphiteCopper, blackout, deepMarine, oceanControl, emeraldGrid]
+  static let all = [cupertino, neonNights, miami, ultraviolet, solarFlare, terminal, bubblegum, blueprint, field]
 }
 
 struct ContractorCompany: Identifiable, Equatable {
