@@ -48,6 +48,7 @@ struct PanelVaultAppView: View {
   @AppStorage("panelvault.profileName") private var profileName = ""
   @AppStorage("panelvault.profileCompany") private var profileCompany = ""
   @AppStorage("panelvault.profilePhone") private var profilePhone = ""
+  @AppStorage("panelvault.profileImageToken") private var profileImageToken = ""
   @State private var loadedSnapshot = false
   @State private var pendingPersistWorkItem: DispatchWorkItem?
 
@@ -73,7 +74,7 @@ struct PanelVaultAppView: View {
     }
     .ignoresSafeArea(.keyboard, edges: .bottom)
     .tint(selectedTheme.primary)
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(selectedTheme.colorScheme)
     .onAppear {
       if !standardSizeMigration {
         selectedInterfaceSizeID = InterfaceSize.standard.id
@@ -126,7 +127,10 @@ struct PanelVaultAppView: View {
         boardTypes: boardTypes,
         customers: customers,
         manufacturers: manufacturers,
-        profileName: profileName,
+        profileName: $profileName,
+        profileCompany: $profileCompany,
+        profilePhone: $profilePhone,
+        profileImageToken: $profileImageToken,
         newHubSelection: $newHubSelection,
         activeCompany: activeCompany,
         companies: $contractorCompanies,
@@ -206,6 +210,7 @@ struct PanelVaultAppView: View {
         profileName: $profileName,
         profileCompany: $profileCompany,
         profilePhone: $profilePhone,
+        profileImageToken: $profileImageToken,
         activeCompany: activeCompany,
         companies: $contractorCompanies
       )
@@ -374,7 +379,7 @@ struct PanelVaultTabBar: View {
               Image(systemName: tab.iconName)
                 .font(.system(size: tab == .newBoard ? 23 : 20, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(selectedTab == tab ? theme.primary.opacity(1) : Color.white.opacity(0.78))
+                .foregroundStyle(selectedTab == tab ? theme.primary.opacity(1) : theme.tabBarInactive)
                 .scaleEffect(selectedTab == tab ? 1.03 : 1)
             }
             .frame(width: 62, height: 50)
@@ -388,26 +393,16 @@ struct PanelVaultTabBar: View {
       .padding(.vertical, 7)
       .background(
         Capsule(style: .continuous)
-          .fill(.black.opacity(0.76))
+          .fill(.ultraThinMaterial)
           .overlay(
             Capsule(style: .continuous)
-              .fill(.black.opacity(0.58))
+              .fill(theme.tabBarTint.opacity(theme.colorScheme == .dark ? 0.68 : 0.55))
           )
           .overlay(
             Capsule(style: .continuous)
-              .fill(
-                LinearGradient(
-                  colors: [.black.opacity(0.20), .black.opacity(0.44)],
-                  startPoint: .top,
-                  endPoint: .bottom
-                )
-              )
+              .stroke(theme.cardBorder, lineWidth: 1)
           )
-          .overlay(
-            Capsule(style: .continuous)
-              .stroke(.white.opacity(0.08), lineWidth: 1)
-          )
-          .shadow(color: .black.opacity(0.34), radius: 16, x: 0, y: 8)
+          .shadow(color: .black.opacity(theme.colorScheme == .dark ? 0.34 : 0.12), radius: 16, x: 0, y: 8)
       )
       .frame(maxWidth: 388)
     }
@@ -544,11 +539,15 @@ struct DashboardView: View {
   let boardTypes: [BoardType]
   let customers: [CustomerItem]
   let manufacturers: [ManufacturerItem]
-  let profileName: String
+  @Binding var profileName: String
+  @Binding var profileCompany: String
+  @Binding var profilePhone: String
+  @Binding var profileImageToken: String
   @Binding var newHubSelection: NewHubSelection?
   @Binding var activeCompany: ContractorCompany?
   @Binding var companies: [ContractorCompany]
   @Binding var recentVisits: [RecentVisit]
+  @State private var profileOpen = false
   @State private var companySheetOpen = false
   @State private var dashboardSheet: DashboardSheet?
   @State private var selectedProject: ProjectItem?
@@ -646,7 +645,7 @@ struct DashboardView: View {
           header
           statsGrid
           greetingHeader
-          sectionHeader("Boards", count: activeBoardDashboardCount) {
+          sectionHeader("Boards", count: activeBoardDashboardCount, accent: theme.secondary) {
             archiveQuery = ""
             archiveBoardTypeFilter = "All"
             archiveStatusFilter = "In Progress"
@@ -836,38 +835,22 @@ struct DashboardView: View {
 
       Spacer(minLength: 8)
 
-      Menu {
-        Button {
-          newHubSelection = .board
-          selectedTab = .newBoard
-        } label: {
-          Label("New Board", systemImage: "rectangle.3.group.fill")
-        }
-
-        Button {
-          newHubSelection = .project
-          selectedTab = .newBoard
-        } label: {
-          Label("New Project", systemImage: "folder.badge.plus")
-        }
+      Button {
+        profileOpen = true
       } label: {
-        HStack(spacing: 7) {
-          Image(systemName: "plus")
-            .font(.system(size: 12, weight: .black))
-          Text("New")
-            .font(.system(size: 13, weight: .heavy))
-          Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .black))
-            .opacity(0.9)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(theme.primary)
-        .foregroundStyle(.white)
-        .clipShape(Capsule())
-        .shadow(color: theme.primary.opacity(0.28), radius: 12, y: 5)
+        ProfileAvatarView(theme: theme, name: profileName, imageToken: profileImageToken, size: 48)
       }
       .buttonStyle(PanelPressButtonStyle())
+      .accessibilityLabel("Profile")
+    }
+    .sheet(isPresented: $profileOpen) {
+      ProfileEditorSheet(
+        theme: theme,
+        name: $profileName,
+        company: $profileCompany,
+        phone: $profilePhone,
+        imageToken: $profileImageToken
+      )
     }
   }
 
@@ -1107,34 +1090,35 @@ struct DashboardView: View {
     }
   }
 
-  func sectionHeader(_ title: String, count: Int? = nil, action: @escaping () -> Void) -> some View {
-    HStack {
+  func sectionHeader(_ title: String, count: Int? = nil, accent: Color? = nil, action: @escaping () -> Void) -> some View {
+    let tint = accent ?? theme.primary
+    return HStack {
       Text(title)
         .font(.system(size: 22, weight: .heavy))
       if let count {
         Text(count > 3 ? "3+" : "\(count)")
           .font(.system(size: 12, weight: .heavy))
-          .foregroundStyle(theme.primary)
+          .foregroundStyle(tint)
           .padding(.horizontal, 9)
           .padding(.vertical, 5)
-          .background(theme.primary.opacity(0.14))
+          .background(tint.opacity(0.14))
           .clipShape(Capsule())
           .overlay(
             Capsule()
-              .stroke(theme.primary.opacity(0.18), lineWidth: 1)
+              .stroke(tint.opacity(0.18), lineWidth: 1)
           )
       }
       Spacer()
       Button(action: action) {
         Image(systemName: "arrow.right")
           .font(.system(size: 14, weight: .heavy))
-          .foregroundStyle(theme.primary)
+          .foregroundStyle(tint)
           .frame(width: 34, height: 28)
-          .background(theme.primary.opacity(0.13))
+          .background(tint.opacity(0.13))
           .clipShape(Capsule())
           .overlay(
             Capsule()
-              .stroke(theme.primary.opacity(0.18), lineWidth: 1)
+              .stroke(tint.opacity(0.18), lineWidth: 1)
           )
       }
       .buttonStyle(.plain)
@@ -1174,6 +1158,12 @@ struct ProjectsView: View {
 
   private var statuses: [String] {
     archiveMode == .projects ? ["All", "In Progress", "Completed", "Design"] : ["All", "In Progress", "Finished"]
+  }
+
+  /// Projects carry the primary accent and boards the secondary one, matching
+  /// the identity used on the dashboard so the color follows into this tab.
+  private var modeAccent: Color {
+    archiveMode == .projects ? theme.primary : theme.secondary
   }
 
   private var filteredProjects: [ProjectItem] {
@@ -1310,9 +1300,9 @@ struct ProjectsView: View {
       ScrollView(showsIndicators: false) {
         VStack(alignment: .leading, spacing: 20) {
           HStack(spacing: 12) {
-            Image(systemName: "folder")
+            Image(systemName: archiveMode == .projects ? "folder" : "rectangle.3.group")
               .font(.system(size: 21, weight: .semibold))
-              .foregroundStyle(theme.primary)
+              .foregroundStyle(modeAccent)
               .frame(width: 40, height: 40)
               .background(theme.surface.opacity(0.78))
               .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1332,6 +1322,7 @@ struct ProjectsView: View {
             }
           }
           .pickerStyle(.segmented)
+          .tint(modeAccent)
           .animation(.easeOut(duration: 0.14), value: archiveMode)
 
           archiveSearchField
@@ -1360,7 +1351,7 @@ struct ProjectsView: View {
               archiveStatusFilter = "All"
               archiveBoardTypeFilter = "All"
             } label: {
-              ProjectMetricCard(theme: theme, title: archiveMode == .projects ? "Projects" : "Boards", value: "\(archiveMode == .projects ? projects.count : filteredBoardsForType.count)", symbol: archiveMode == .projects ? "folder.fill" : "rectangle.3.group.fill", color: theme.primary)
+              ProjectMetricCard(theme: theme, title: archiveMode == .projects ? "Projects" : "Boards", value: "\(archiveMode == .projects ? projects.count : filteredBoardsForType.count)", symbol: archiveMode == .projects ? "folder.fill" : "rectangle.3.group.fill", color: modeAccent)
             }
             .buttonStyle(.plain)
           }
@@ -1395,7 +1386,7 @@ struct ProjectsView: View {
                   .font(.system(size: 22, weight: .heavy))
                 Image(systemName: "arrow.left.arrow.right")
                   .font(.caption.bold())
-                  .foregroundStyle(theme.primary)
+                  .foregroundStyle(modeAccent)
               }
             }
             .buttonStyle(.plain)
@@ -1409,7 +1400,7 @@ struct ProjectsView: View {
                 .font(.system(size: 13, weight: .bold))
                 .padding(.horizontal, 11)
                 .padding(.vertical, 8)
-                .background(theme.primary)
+                .background(modeAccent)
                 .foregroundStyle(.white)
                 .clipShape(Capsule())
             }
@@ -2161,11 +2152,6 @@ struct DashboardBoardProgressRow: View {
   var body: some View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 9) {
-        HStack {
-          Spacer()
-          RecentBoardTypeChip(boardType: boardType, color: board.color)
-        }
-
         HStack(spacing: 12) {
           BoardCardThumbnail(theme: theme, boardType: boardType, color: board.color, image: board.coverThumbnail, completed: board.isCompleted)
 
@@ -2319,7 +2305,6 @@ struct DashboardBoardRecentRow: View {
           RecentKindBadge(title: "Board", color: Color(hex: 0xFF4E5F))
           RecentStatusBadge(status: board.statusTitle)
           Spacer(minLength: 10)
-          RecentBoardTypeChip(boardType: boardType, color: board.color)
         }
 
         HStack(spacing: 12) {
@@ -5145,7 +5130,8 @@ struct CreatedBoardScreen: View {
   @State private var catalogOpen = false
   @State private var componentTypes: [String] = []
   @State private var addedComponentsByType: [String: [PanelComponent]] = [:]
-  @State private var completedChecklistItems: Set<String> = []
+  @State private var cabinetChecklists: [Set<String>] = []
+  @State private var selectedCabinet: Int = 0
   @State private var personalChecklistItems: [PersonalChecklistItem] = []
   @State private var localBoardLoaded = false
   @State private var pendingBoardSyncWorkItem: DispatchWorkItem?
@@ -5155,9 +5141,72 @@ struct CreatedBoardScreen: View {
   private var displayBoard: BoardDraft {
     var copy = board
     copy.componentTypes = componentTypes
-    copy.completedChecklistItems = completedChecklistItems
+    copy.cabinetChecklists = cabinetChecklists
     copy.personalChecklistItems = personalChecklistItems
     return copy
+  }
+
+  private var cabinetBinding: Binding<Set<String>> {
+    Binding {
+      let idx = min(max(selectedCabinet, 0), max(cabinetChecklists.count - 1, 0))
+      return cabinetChecklists.indices.contains(idx) ? cabinetChecklists[idx] : []
+    } set: { newValue in
+      let idx = min(max(selectedCabinet, 0), max(cabinetChecklists.count - 1, 0))
+      if cabinetChecklists.indices.contains(idx) {
+        cabinetChecklists[idx] = newValue
+      }
+    }
+  }
+
+  private func cabinetCompletion(_ index: Int) -> Int {
+    guard cabinetChecklists.indices.contains(index) else { return 0 }
+    let checklist = ChecklistTemplate.items(for: board.cabinetCount)
+    let total = max(checklist.map(\.weight).reduce(0, +), 1)
+    let done = checklist.filter { cabinetChecklists[index].contains($0.id) }.map(\.weight).reduce(0, +)
+    return Int((Double(done) / Double(total) * 100).rounded())
+  }
+
+  private func normalizeLocalCabinets() {
+    let n = board.cabinetCountValue
+    if cabinetChecklists.count < n {
+      cabinetChecklists.append(contentsOf: Array(repeating: Set<String>(), count: n - cabinetChecklists.count))
+    } else if cabinetChecklists.count > n {
+      cabinetChecklists = Array(cabinetChecklists.prefix(n))
+    }
+    selectedCabinet = min(max(selectedCabinet, 0), max(n - 1, 0))
+  }
+
+  @ViewBuilder
+  private var cabinetChecklistSection: some View {
+    let count = board.cabinetCountValue
+    VStack(alignment: .leading, spacing: 10) {
+      if count > 1 {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 8) {
+            ForEach(0..<count, id: \.self) { index in
+              CabinetTab(
+                theme: theme,
+                number: index + 1,
+                percent: cabinetCompletion(index),
+                selected: index == selectedCabinet
+              ) {
+                withAnimation(.easeOut(duration: 0.16)) { selectedCabinet = index }
+              }
+            }
+          }
+          .padding(.vertical, 2)
+        }
+      }
+      ChecklistProgressSection(
+        theme: theme,
+        title: count > 1 ? "Cabinet \(selectedCabinet + 1) Progress" : "Completion Progress",
+        items: ChecklistTemplate.items(for: board.cabinetCount),
+        checkedItems: cabinetBinding
+      )
+      .onChange(of: cabinetChecklists) { _ in
+        scheduleBoardSync()
+      }
+    }
   }
 
   private var visibleComponentTypes: [String] {
@@ -5186,9 +5235,9 @@ struct CreatedBoardScreen: View {
           editOpen = true
         }
 
-        ChecklistProgressSection(theme: theme, title: "Completion Progress", items: ChecklistTemplate.items(for: board.cabinetCount), checkedItems: $completedChecklistItems)
-          .onChange(of: completedChecklistItems) { _ in
-            scheduleBoardSync()
+        cabinetChecklistSection
+          .onChange(of: board.cabinetCount) { _ in
+            normalizeLocalCabinets()
           }
         PersonalChecklistSection(theme: theme, items: $personalChecklistItems)
           .onChange(of: personalChecklistItems) { _ in
@@ -5379,7 +5428,8 @@ struct CreatedBoardScreen: View {
     guard !localBoardLoaded else { return }
     localBoardLoaded = true
     componentTypes = board.componentTypes
-    completedChecklistItems = board.completedChecklistItems
+    cabinetChecklists = board.normalizedCabinetChecklists
+    selectedCabinet = min(max(selectedCabinet, 0), max(board.cabinetCountValue - 1, 0))
     personalChecklistItems = board.personalChecklistItems
   }
 
@@ -5396,7 +5446,7 @@ struct CreatedBoardScreen: View {
     pendingBoardSyncWorkItem?.cancel()
     pendingBoardSyncWorkItem = nil
     board.componentTypes = componentTypes
-    board.completedChecklistItems = completedChecklistItems
+    board.cabinetChecklists = cabinetChecklists
     board.personalChecklistItems = personalChecklistItems
   }
 }
@@ -6116,6 +6166,33 @@ struct ChecklistItem: Identifiable, Hashable {
   let weight: Int
 
   var id: String { title }
+}
+
+/// A selectable cabinet chip shown above the per-cabinet checklist on a board.
+struct CabinetTab: View {
+  let theme: PanelTheme
+  let number: Int
+  let percent: Int
+  let selected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(spacing: 2) {
+        Text("Cabinet \(number)")
+          .font(.system(size: 13, weight: .bold))
+        Text("\(percent)%")
+          .font(.system(size: 11, weight: .heavy))
+          .opacity(0.9)
+      }
+      .foregroundStyle(selected ? Color.white : theme.primary)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 8)
+      .background(selected ? theme.primary : theme.primary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+    .buttonStyle(PanelPressButtonStyle())
+  }
 }
 
 struct ChecklistProgressSection: View {
@@ -7432,6 +7509,7 @@ struct MoreView: View {
   @Binding var profileName: String
   @Binding var profileCompany: String
   @Binding var profilePhone: String
+  @Binding var profileImageToken: String
   @Binding var activeCompany: ContractorCompany?
   @Binding var companies: [ContractorCompany]
   @State private var componentCatalogOpen = false
@@ -7454,7 +7532,7 @@ struct MoreView: View {
         VStack(alignment: .leading, spacing: 18) {
           GlassCard(theme: theme) {
             HStack(spacing: 14) {
-              PanelVaultLogoMark(theme: theme, size: 48)
+              PanelVaultLogoMark(theme: theme, size: 30)
               VStack(alignment: .leading, spacing: 4) {
                 Text("PanelVault")
                   .font(.system(size: 27, weight: .heavy))
@@ -7611,7 +7689,7 @@ struct MoreView: View {
         }
       }
       .sheet(isPresented: $profileOpen) {
-        ProfileEditorSheet(theme: theme, name: $profileName, company: $profileCompany, phone: $profilePhone)
+        ProfileEditorSheet(theme: theme, name: $profileName, company: $profileCompany, phone: $profilePhone, imageToken: $profileImageToken)
           .presentationDetents([.medium])
           .presentationDragIndicator(.visible)
       }
@@ -7632,16 +7710,85 @@ enum MoreSheet: String, Identifiable {
   var id: String { rawValue }
 }
 
+/// Circular profile picture. Shows the stored photo, or the person's initials,
+/// or a person glyph when nothing has been set yet.
+struct ProfileAvatarView: View {
+  let theme: PanelTheme
+  let name: String
+  let imageToken: String
+  var size: CGFloat = 40
+
+  private var initials: String {
+    let words = name
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .split(separator: " ")
+      .prefix(2)
+    let letters = words.compactMap { $0.first }.map(String.init).joined()
+    return letters.uppercased()
+  }
+
+  private var image: UIImage? {
+    guard !imageToken.isEmpty else { return nil }
+    return ImageStore.shared.thumbnail(for: imageToken)
+  }
+
+  var body: some View {
+    ZStack {
+      if let image {
+        Image(uiImage: image)
+          .resizable()
+          .scaledToFill()
+      } else {
+        theme.primary.opacity(0.16)
+        if initials.isEmpty {
+          Image(systemName: "person.fill")
+            .font(.system(size: size * 0.44, weight: .semibold))
+            .foregroundStyle(theme.primary)
+        } else {
+          Text(initials)
+            .font(.system(size: size * 0.4, weight: .bold))
+            .foregroundStyle(theme.primary)
+        }
+      }
+    }
+    .frame(width: size, height: size)
+    .clipShape(Circle())
+    .overlay(Circle().stroke(theme.cardBorder, lineWidth: 1))
+  }
+}
+
 struct ProfileEditorSheet: View {
   let theme: PanelTheme
   @Binding var name: String
   @Binding var company: String
   @Binding var phone: String
+  @Binding var imageToken: String
   @Environment(\.dismiss) private var dismiss
+  @State private var pickerItem: PhotosPickerItem?
 
   var body: some View {
     NavigationStack {
       Form {
+        Section {
+          VStack(spacing: 12) {
+            ProfileAvatarView(theme: theme, name: name, imageToken: imageToken, size: 92)
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+              Text(imageToken.isEmpty ? "Add photo" : "Change photo")
+                .font(.subheadline.bold())
+                .foregroundStyle(theme.primary)
+            }
+            if !imageToken.isEmpty {
+              Button(role: .destructive) {
+                imageToken = ""
+              } label: {
+                Text("Remove photo").font(.caption)
+              }
+            }
+          }
+          .frame(maxWidth: .infinity)
+          .listRowBackground(Color.clear)
+        }
+
         Section("Profile") {
           TextField("Full name", text: $name)
             .textInputAutocapitalization(.words)
@@ -7661,6 +7808,15 @@ struct ProfileEditorSheet: View {
         ToolbarItem(placement: .topBarTrailing) {
           Button("Done") { dismiss() }
             .fontWeight(.bold)
+        }
+      }
+      .onChange(of: pickerItem) { item in
+        guard let item else { return }
+        Task {
+          if let data = try? await item.loadTransferable(type: Data.self),
+             let imported = await ImageStore.imported(from: data) {
+            await MainActor.run { imageToken = imported.token }
+          }
         }
       }
     }
@@ -9195,10 +9351,93 @@ struct ComponentCatalogView: View {
   @State private var componentToConfigure: PanelComponent?
   @State private var componentToDescribe: PanelComponent?
   @State private var componentToAssign: PanelComponent?
-
   private var visibleGroups: [ComponentGroup] {
     if customComponents.isEmpty { return groups }
     return [ComponentGroup(id: "custom-components", name: "Custom Components", items: customComponents)] + groups
+  }
+
+  /// An SF symbol that represents a catalog category, chosen from the parts it
+  /// contains. Keeps the block grid readable at a glance.
+  private func categorySymbol(for group: ComponentGroup) -> String {
+    if group.id == "custom-components" { return "wrench.and.screwdriver.fill" }
+    let key = (group.items.first?.type ?? group.name).lowercased()
+    switch true {
+    case key.contains("mccb"): return "bolt.shield.fill"
+    case key.contains("mcb"): return "bolt.fill"
+    case key.contains("rcbo"): return "shield.lefthalf.filled"
+    case key.contains("rcd"), key.contains("rccb"), key.contains("rccb"): return "shield.fill"
+    case key.contains("contactor"): return "square.stack.3d.up.fill"
+    case key.contains("relay"): return "switch.2"
+    case key.contains("vfd"), key.contains("drive"): return "gauge.with.dots.needle.67percent"
+    case key.contains("psu"), key.contains("supply"): return "powerplug.fill"
+    case key.contains("busbar"), key.contains("bus"): return "rectangle.split.3x1.fill"
+    case key.contains("meter"): return "speedometer"
+    case key.contains("spd"), key.contains("surge"): return "exclamationmark.shield.fill"
+    case key.contains("terminal"): return "circle.grid.3x3.fill"
+    case key.contains("transformer"), key.contains("ct"): return "circle.circle.fill"
+    default: return "shippingbox.fill"
+    }
+  }
+
+  /// One catalog part row. Extracted so both the (future) grid and the drill-in
+  /// category page render parts identically.
+  @ViewBuilder
+  private func componentRow(for item: PanelComponent, in group: ComponentGroup) -> some View {
+    let image = storedThumbnail(for: item)
+    ComponentRow(
+      theme: theme,
+      component: item,
+      manufacturer: manufacturer(for: item.manufacturer),
+      storedImage: image,
+      isAdded: addedComponentIDs.contains(item.id),
+      hasPhoto: photoComponentIDs.contains(item.id) || image != nil,
+      toggleAdded: {
+        if addedComponentIDs.contains(item.id) {
+          addedComponentIDs.remove(item.id)
+        } else {
+          componentToConfigure = item
+        }
+      },
+      togglePhoto: {
+        if photoComponentIDs.contains(item.id) {
+          photoComponentIDs.remove(item.id)
+        } else {
+          photoComponentIDs.insert(item.id)
+        }
+      },
+      savePhoto: { image in
+        componentImages[item.imageStorageID] = ImageStore.shared.store(image)
+        photoComponentIDs.insert(item.id)
+        persistComponentImages()
+      },
+      showDetails: {
+        componentToDescribe = item
+      },
+      deleteComponent: group.id == "custom-components" ? {
+        customComponents.removeAll { $0.id == item.id }
+        addedComponentIDs.remove(item.id)
+        photoComponentIDs.remove(item.id)
+      } : nil
+    )
+  }
+
+  /// The drill-in page for one category, listing every part under it.
+  @ViewBuilder
+  private func categoryDetail(_ group: ComponentGroup) -> some View {
+    let live = visibleGroups.first { $0.id == group.id } ?? group
+    ScrollView {
+      VStack(alignment: .leading, spacing: 8) {
+        ForEach(live.items) { item in
+          componentRow(for: item, in: live)
+        }
+        BottomTabClearance()
+      }
+      .padding(18)
+      .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+    .background(theme.background.ignoresSafeArea())
+    .navigationTitle(live.name)
+    .navigationBarTitleDisplayMode(.inline)
   }
 
   var body: some View {
@@ -9223,48 +9462,19 @@ struct ComponentCatalogView: View {
         .tint(theme.primary)
       }
 
-      ForEach(visibleGroups) { group in
-        VStack(alignment: .leading, spacing: 8) {
-          Text(group.name)
-            .font(.headline)
-          ForEach(group.items) { item in
-            let image = storedThumbnail(for: item)
-            ComponentRow(
+      LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        ForEach(visibleGroups) { group in
+          NavigationLink {
+            categoryDetail(group)
+          } label: {
+            CatalogCategoryBlock(
               theme: theme,
-              component: item,
-              manufacturer: manufacturer(for: item.manufacturer),
-              storedImage: image,
-              isAdded: addedComponentIDs.contains(item.id),
-              hasPhoto: photoComponentIDs.contains(item.id) || image != nil,
-              toggleAdded: {
-                if addedComponentIDs.contains(item.id) {
-                  addedComponentIDs.remove(item.id)
-                } else {
-                  componentToConfigure = item
-                }
-              },
-              togglePhoto: {
-                if photoComponentIDs.contains(item.id) {
-                  photoComponentIDs.remove(item.id)
-                } else {
-                  photoComponentIDs.insert(item.id)
-                }
-              },
-              savePhoto: { image in
-                componentImages[item.imageStorageID] = ImageStore.shared.store(image)
-                photoComponentIDs.insert(item.id)
-                persistComponentImages()
-              },
-              showDetails: {
-                componentToDescribe = item
-              },
-              deleteComponent: group.id == "custom-components" ? {
-                customComponents.removeAll { $0.id == item.id }
-                addedComponentIDs.remove(item.id)
-                photoComponentIDs.remove(item.id)
-              } : nil
+              title: group.name,
+              count: group.items.count,
+              symbol: categorySymbol(for: group)
             )
           }
+          .buttonStyle(PanelPressButtonStyle())
         }
       }
     }
@@ -9454,6 +9664,52 @@ struct ComponentBoardPickerSheet: View {
   private func iconType(for board: BoardDraft) -> BoardType {
     BoardType.samples.first { $0.name.localizedCaseInsensitiveCompare(board.type) == .orderedSame } ??
       BoardType(id: "component-target", name: board.type, subtitle: "", symbol: "rectangle.3.group.fill", color: board.color)
+  }
+}
+
+/// A catalog category tile. Tapping it drills into the parts under that type.
+/// Kept deliberately simple so the catalog landing page reads as a clean grid
+/// of categories (and can later sit alongside warehouse stock links).
+struct CatalogCategoryBlock: View {
+  let theme: PanelTheme
+  let title: String
+  let count: Int
+  let symbol: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Image(systemName: symbol)
+          .font(.system(size: 20, weight: .semibold))
+          .foregroundStyle(theme.primary)
+          .frame(width: 44, height: 44)
+          .background(theme.primary.opacity(0.14))
+          .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        Spacer(minLength: 0)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 13, weight: .bold))
+          .foregroundStyle(.secondary)
+      }
+      VStack(alignment: .leading, spacing: 3) {
+        Text(title)
+          .font(.system(size: 15, weight: .bold))
+          .foregroundStyle(.primary)
+          .lineLimit(2)
+          .multilineTextAlignment(.leading)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(count == 1 ? "1 part" : "\(count) parts")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+    .padding(14)
+    .background(theme.surface.opacity(0.78))
+    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .stroke(theme.cardBorder, lineWidth: 1)
+    )
   }
 }
 
@@ -9915,16 +10171,12 @@ struct PanelVaultLogoMark: View {
   let size: CGFloat
 
   var body: some View {
-    Image("PanelVaultLogo")
-      .resizable()
-      .scaledToFill()
-    .frame(width: size, height: size)
-    .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-        .stroke(.white.opacity(0.10), lineWidth: max(size * 0.025, 0.75))
-    )
-    .shadow(color: theme.primary.opacity(0.30), radius: 12, y: 5)
+    Image(systemName: "bolt")
+      .font(.system(size: size, weight: .regular))
+      .foregroundStyle(theme.primary)
+      .frame(width: size, height: size)
+      .shadow(color: theme.primary.opacity(0.9), radius: size * 0.32)
+      .shadow(color: theme.primary.opacity(0.55), radius: size * 0.7)
   }
 }
 
@@ -10018,6 +10270,8 @@ struct EquipmentPill: View {
     Text(text)
       .font(.system(size: 10, weight: .bold))
       .foregroundStyle(color)
+      .lineLimit(1)
+      .minimumScaleFactor(0.8)
       .padding(.horizontal, 7)
       .padding(.vertical, 4)
       .background(color.opacity(0.12))
@@ -10062,8 +10316,13 @@ struct ThemeRow: View {
   let theme: PanelTheme
   let selected: Bool
 
+  // Each row previews its own theme, so text must read against that theme's
+  // surface rather than the app's current mode.
+  private var ink: Color { theme.colorScheme == .dark ? .white : Color(hex: 0x141414) }
+  private var subInk: Color { ink.opacity(0.62) }
+
   var body: some View {
-    HStack {
+    HStack(spacing: 12) {
       HStack(spacing: 0) {
         theme.background
         theme.primary
@@ -10071,18 +10330,33 @@ struct ThemeRow: View {
       }
       .frame(width: 46, height: 46)
       .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .stroke(theme.cardBorder, lineWidth: 1)
+      )
 
       VStack(alignment: .leading, spacing: 4) {
-        Text(theme.name).font(.headline)
-        Text(theme.description).font(.caption).foregroundStyle(.secondary)
+        Text(theme.name)
+          .font(.headline)
+          .foregroundStyle(ink)
+        Text(theme.description)
+          .font(.caption)
+          .foregroundStyle(subInk)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
-      Spacer()
+      Spacer(minLength: 8)
       Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-        .foregroundStyle(selected ? theme.primary : .secondary)
+        .font(.system(size: 21))
+        .foregroundStyle(selected ? theme.primary : subInk)
     }
-    .padding(12)
-    .background(theme.surface.opacity(0.82))
+    .padding(14)
+    .background(theme.surface)
     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .stroke(selected ? theme.primary : theme.cardBorder, lineWidth: selected ? 2 : 1)
+    )
   }
 }
 
@@ -10230,13 +10504,106 @@ struct PanelTheme: Identifiable, Equatable {
   let primary: Color
   let secondary: Color
 
+  // MARK: Design tokens
+  // These default to the dark control-room language so every existing theme
+  // keeps its current look with no call-site changes. Light skins such as
+  // Cupertino override them to change the whole feel — not just the accent.
+  var colorScheme: ColorScheme = .dark
+  var radiusCard: CGFloat = 16
+  var radiusControl: CGFloat = 12
+  var radiusPill: CGFloat = 8
+  var cardBorder: Color = Color.white.opacity(0.07)
+  var elevatedSurface: Color = Color.white.opacity(0.06)
+  // Semantic status colors, tuned per skin so pills stay legible on the ground.
+  var success: Color = Color(hex: 0x35E177)
+  var info: Color = Color(hex: 0x64D2FF)
+  var designAccent: Color = Color(hex: 0xFF4FD8)
+  var danger: Color = Color(hex: 0xFF6B6B)
+  // Floating tab-bar material. Dark skins use a black glass pill; light skins
+  // opt into a light one so it doesn't read as a hole in the layout.
+  var tabBarTint: Color = Color.black
+  var tabBarInactive: Color = Color.white.opacity(0.78)
+
   static let vaultPurple = PanelTheme(id: "vault-purple", name: "Obsidian Blue", description: "Black glass with precise blue controls", background: Color(hex: 0x050607), surface: Color(hex: 0x121417), primary: Color(hex: 0x6E86FF), secondary: Color(hex: 0x4CC9F0))
   static let graphiteCopper = PanelTheme(id: "graphite-copper", name: "Carbon Steel", description: "Neutral graphite with soft silver-blue", background: Color(hex: 0x060708), surface: Color(hex: 0x15171A), primary: Color(hex: 0xB8C2D6), secondary: Color(hex: 0x5D7CFA))
   static let emeraldGrid = PanelTheme(id: "emerald-grid", name: "Switchgear Green", description: "Deep black-green for completion work", background: Color(hex: 0x040807), surface: Color(hex: 0x101916), primary: Color(hex: 0x48D597), secondary: Color(hex: 0x7AD7C4))
   static let oceanControl = PanelTheme(id: "ocean-control", name: "Control Teal", description: "Dark technical teal with cool contrast", background: Color(hex: 0x04090C), surface: Color(hex: 0x0F171B), primary: Color(hex: 0x31D7C8), secondary: Color(hex: 0x4E9DFF))
   static let blackout = PanelTheme(id: "blackout", name: "Blackout", description: "Almost pure black with quiet white controls", background: Color(hex: 0x020304), surface: Color(hex: 0x101113), primary: Color(hex: 0xF2F5F7), secondary: Color(hex: 0x8A98A8))
   static let deepMarine = PanelTheme(id: "deep-marine", name: "Deep Marine", description: "Navy-black with professional cyan accents", background: Color(hex: 0x03070D), surface: Color(hex: 0x0D1420), primary: Color(hex: 0x3EA7FF), secondary: Color(hex: 0x38E8B0))
-  static let all = [vaultPurple, graphiteCopper, blackout, deepMarine, oceanControl, emeraldGrid]
+
+  // Apple-native light skin. Light system grays, iOS blue, tighter rounding,
+  // and a light frosted tab bar. Reads like a first-party iOS app.
+  static let cupertino = PanelTheme(
+    id: "cupertino",
+    name: "Cupertino",
+    description: "Apple-native light theme with system grays and iOS blue",
+    background: Color(hex: 0xF2F2F7),
+    surface: Color(hex: 0xFFFFFF),
+    primary: Color(hex: 0x007AFF),
+    secondary: Color(hex: 0x5AC8FA),
+    colorScheme: .light,
+    radiusCard: 14,
+    radiusControl: 10,
+    radiusPill: 7,
+    cardBorder: Color.black.opacity(0.06),
+    elevatedSurface: Color.black.opacity(0.03),
+    success: Color(hex: 0x34C759),
+    info: Color(hex: 0x007AFF),
+    designAccent: Color(hex: 0xFF9500),
+    danger: Color(hex: 0xFF3B30),
+    tabBarTint: Color.white,
+    tabBarInactive: Color(hex: 0x8A8A8E)
+  )
+
+  // Draftsman skin. A cool "spec sheet" identity: paper-gray ground, white
+  // cards, ink-teal accent. Reads like an electrical single-line diagram.
+  static let blueprint = PanelTheme(
+    id: "blueprint",
+    name: "Blueprint",
+    description: "Technical spec-sheet look with paper ground and ink teal",
+    background: Color(hex: 0xE9EDF1),
+    surface: Color(hex: 0xFFFFFF),
+    primary: Color(hex: 0x0F6D7E),
+    secondary: Color(hex: 0x1B4D8F),
+    colorScheme: .light,
+    radiusCard: 6,
+    radiusControl: 5,
+    radiusPill: 4,
+    cardBorder: Color(hex: 0x16222E).opacity(0.16),
+    elevatedSurface: Color.black.opacity(0.03),
+    success: Color(hex: 0x2F7D32),
+    info: Color(hex: 0x0F6D7E),
+    designAccent: Color(hex: 0x9A5B00),
+    danger: Color(hex: 0xC0392B),
+    tabBarTint: Color.white,
+    tabBarInactive: Color(hex: 0x5A6B78)
+  )
+
+  // Rugged workshop skin. Dark slate with a safety-amber accent — high
+  // contrast, warm, built to be read fast on site.
+  static let field = PanelTheme(
+    id: "field",
+    name: "Field",
+    description: "Rugged dark slate with a safety-amber accent",
+    background: Color(hex: 0x16181C),
+    surface: Color(hex: 0x202429),
+    primary: Color(hex: 0xFFB020),
+    secondary: Color(hex: 0xFF6A3D),
+    colorScheme: .dark,
+    radiusCard: 8,
+    radiusControl: 7,
+    radiusPill: 4,
+    cardBorder: Color.white.opacity(0.09),
+    elevatedSurface: Color.white.opacity(0.06),
+    success: Color(hex: 0x5FD08A),
+    info: Color(hex: 0x4EA3FF),
+    designAccent: Color(hex: 0xFFB020),
+    danger: Color(hex: 0xFF6B6B),
+    tabBarTint: Color(hex: 0x101215),
+    tabBarInactive: Color(hex: 0x9AA0A6)
+  )
+
+  static let all = [cupertino, blueprint, field, vaultPurple, graphiteCopper, blackout, deepMarine, oceanControl, emeraldGrid]
 }
 
 struct ContractorCompany: Identifiable, Equatable {
@@ -10900,6 +11267,9 @@ struct BoardDraft: Identifiable {
   var schemeAttachments: [SchemeAttachment] = []
   var completedChecklistItems: Set<String> = []
   var personalChecklistItems: [PersonalChecklistItem] = []
+  /// Completed checklist item IDs per cabinet, index 0 = cabinet 1. Each cabinet
+  /// is built and tracked on its own; the board's completion averages them.
+  var cabinetChecklists: [Set<String>] = []
 
   var coverImage: UIImage? {
     get { ImageStore.shared.image(for: coverToken) }
@@ -10928,6 +11298,24 @@ struct BoardDraft: Identifiable {
     return "\(type) • \(cleanSubtype)"
   }
 
+  var cabinetCountValue: Int { max(Int(cabinetCount) ?? 1, 1) }
+
+  /// Per-cabinet checklists sized to the current cabinet count. Migrates a legacy
+  /// single shared checklist into cabinet 1 so existing boards keep their progress.
+  var normalizedCabinetChecklists: [Set<String>] {
+    var lists = cabinetChecklists
+    if lists.isEmpty && !completedChecklistItems.isEmpty {
+      lists = [completedChecklistItems]
+    }
+    let n = cabinetCountValue
+    if lists.count < n {
+      lists.append(contentsOf: Array(repeating: Set<String>(), count: n - lists.count))
+    } else if lists.count > n {
+      lists = Array(lists.prefix(n))
+    }
+    return lists
+  }
+
   var persistenceSignature: String {
     let coverSignature = ImageStore.shared.signature(for: coverToken)
     let photoSignature = photoTokens.joined(separator: "|")
@@ -10942,7 +11330,7 @@ struct BoardDraft: Identifiable {
       componentTypes.joined(separator: ","), "\(color.archiveHex)",
       coverSignature, photoSignature,
       schemeSignature,
-      completedChecklistItems.sorted().joined(separator: ","),
+      normalizedCabinetChecklists.map { $0.sorted().joined(separator: ",") }.joined(separator: ";"),
       personalChecklistItems.map { "\($0.id):\($0.title):\($0.isDone)" }.joined(separator: ",")
     ].joined(separator: "||")
   }
@@ -10954,14 +11342,17 @@ struct BoardDraft: Identifiable {
       .joined(separator: " • ")
   }
 
+  /// Board completion is the average of each cabinet's checklist completion.
   var completion: Int {
     let checklist = ChecklistTemplate.items(for: cabinetCount)
     let totalWeight = max(checklist.map(\.weight).reduce(0, +), 1)
-    let completedWeight = checklist
-      .filter { completedChecklistItems.contains($0.id) }
-      .map(\.weight)
-      .reduce(0, +)
-    return Int((Double(completedWeight) / Double(totalWeight) * 100).rounded())
+    let lists = normalizedCabinetChecklists
+    guard !lists.isEmpty else { return 0 }
+    let averageFraction = lists.map { checked in
+      let done = checklist.filter { checked.contains($0.id) }.map(\.weight).reduce(0, +)
+      return Double(done) / Double(totalWeight)
+    }.reduce(0, +) / Double(lists.count)
+    return Int((averageFraction * 100).rounded())
   }
 
   var isCompleted: Bool {
@@ -11544,6 +11935,7 @@ struct BoardRecord: Codable {
   let photoImageData: [String]?
   let schemes: [SchemeRecord]
   let completedChecklistItems: [String]
+  let cabinetChecklists: [[String]]?
   let personalChecklistItems: [PersonalChecklistRecord]
 
   init(board: BoardDraft) {
@@ -11573,6 +11965,7 @@ struct BoardRecord: Codable {
     photoImageData = board.photoTokens
     schemes = board.schemeAttachments.map(SchemeRecord.init(attachment:))
     completedChecklistItems = Array(board.completedChecklistItems)
+    cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0) }
     personalChecklistItems = board.personalChecklistItems.map(PersonalChecklistRecord.init(item:))
   }
 
@@ -11604,7 +11997,8 @@ struct BoardRecord: Codable {
       photoTokens: ImageStore.shared.adopt(photoImageData),
       schemeAttachments: schemes.map(\.attachment),
       completedChecklistItems: Set(completedChecklistItems),
-      personalChecklistItems: personalChecklistItems.map(\.item)
+      personalChecklistItems: personalChecklistItems.map(\.item),
+      cabinetChecklists: (cabinetChecklists ?? []).map(Set.init)
     )
   }
 }
