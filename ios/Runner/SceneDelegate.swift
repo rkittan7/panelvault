@@ -648,7 +648,7 @@ struct DashboardView: View {
           header
           statsGrid
           greetingHeader
-          sectionHeader("Boards", count: activeBoardDashboardCount, accent: theme.secondary) {
+          sectionHeader("Boards", symbol: "rectangle.3.group.fill", count: activeBoardDashboardCount, accent: theme.secondary) {
             archiveQuery = ""
             archiveBoardTypeFilter = "All"
             archiveStatusFilter = "In Progress"
@@ -656,7 +656,7 @@ struct DashboardView: View {
             selectedTab = .projects
           }
           activeBoardsList
-          sectionHeader("Projects", count: activeProjectDashboardCount) {
+          sectionHeader("Projects", symbol: "folder.fill", count: activeProjectDashboardCount) {
             archiveQuery = ""
             archiveBoardTypeFilter = "All"
             archiveStatusFilter = "In Progress"
@@ -664,12 +664,12 @@ struct DashboardView: View {
             selectedTab = .projects
           }
           activeProjectsList
-          sectionHeader("Board Types") {
+          sectionHeader("Board Types", symbol: "square.grid.2x2.fill") {
             dashboardSheet = .boardTypes
           }
           boardTypesGrid
           quickSearch
-          sectionHeader("Recents") {
+          sectionHeader("Recents", symbol: "clock.arrow.circlepath") {
             archiveQuery = ""
             selectedTab = .search
           }
@@ -1016,7 +1016,13 @@ struct DashboardView: View {
   var quickSearch: some View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 14) {
-        HStack {
+        HStack(spacing: 10) {
+          Image(systemName: "magnifyingglass")
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(theme.primary)
+            .frame(width: 30, height: 30)
+            .background(theme.primary.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
           Text("Quick Search")
             .font(.system(size: 19, weight: .heavy))
           Spacer()
@@ -1093,9 +1099,15 @@ struct DashboardView: View {
     }
   }
 
-  func sectionHeader(_ title: String, count: Int? = nil, accent: Color? = nil, action: @escaping () -> Void) -> some View {
+  func sectionHeader(_ title: String, symbol: String, count: Int? = nil, accent: Color? = nil, action: @escaping () -> Void) -> some View {
     let tint = accent ?? theme.primary
-    return HStack {
+    return HStack(spacing: 10) {
+      Image(systemName: symbol)
+        .font(.system(size: 15, weight: .bold))
+        .foregroundStyle(tint)
+        .frame(width: 30, height: 30)
+        .background(tint.opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
       Text(title)
         .font(.system(size: 22, weight: .heavy))
       if let count {
@@ -1986,7 +1998,7 @@ struct ProjectDashboardRow: View {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
-              .frame(width: 58, height: 58)
+              .frame(width: 48, height: 48)
               .clipped()
           } else {
             Image(systemName: "building.2.crop.circle.fill")
@@ -2065,7 +2077,7 @@ struct DashboardProjectRecentRow: View {
             Image(uiImage: image)
               .resizable()
               .scaledToFill()
-              .frame(width: 58, height: 58)
+              .frame(width: 48, height: 48)
               .clipped()
           } else {
             Image(systemName: "folder.fill")
@@ -2202,7 +2214,7 @@ struct DashboardBoardProgressRow: View {
           }
         }
       }
-      .frame(minHeight: 104)
+      .frame(minHeight: 82)
     }
     .background(progressColor.opacity(0.06 + Double(progress) * 0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     .overlay(
@@ -2236,13 +2248,13 @@ struct BoardCardThumbnail: View {
         Image(uiImage: image)
           .resizable()
           .scaledToFill()
-          .frame(width: 58, height: 58)
+          .frame(width: 48, height: 48)
           .clipped()
       } else {
-        BoardTypeIcon(board: boardType, size: 34, overrideColor: color)
+        BoardTypeIcon(board: boardType, size: 28, overrideColor: color)
       }
     }
-      .frame(width: 58, height: 58)
+      .frame(width: 48, height: 48)
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
       .overlay(alignment: .bottomTrailing) {
         if completed || image == nil {
@@ -2417,7 +2429,9 @@ struct RecentKindBadge: View {
     Text(title)
       .font(.system(size: 10, weight: .heavy))
       .foregroundStyle(color)
-      .frame(width: 64, height: 24)
+      .lineLimit(1)
+      .padding(.horizontal, 9)
+      .frame(height: 21)
       .background(color.opacity(0.16))
       .clipShape(Capsule())
   }
@@ -2444,11 +2458,10 @@ struct RecentStatusBadge: View {
       .font(.system(size: 10, weight: .heavy))
       .foregroundStyle(color)
       .lineLimit(1)
-      .minimumScaleFactor(0.7)
-      .frame(width: 88, height: 24)
+      .padding(.horizontal, 9)
+      .frame(height: 21)
       .background(color.opacity(0.18))
       .clipShape(Capsule())
-      .shadow(color: color.opacity(0.24), radius: 8, y: 2)
   }
 }
 
