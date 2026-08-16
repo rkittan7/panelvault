@@ -33,10 +33,10 @@ The flow is deliberately:
 4. Confirm the delivery.
 5. Add the confirmed receipt movements to warehouse stock immediately.
 
-Nothing changes stock until the user confirms the review screen. At present,
-the confirmed scan updates the warehouse data stored on that iPhone. Sending
-those movements to PanelVault Cloud so the boss sees the same stock from any
-computer is the next synchronization milestone.
+Nothing changes stock until the user confirms the review screen. Confirmed
+receipts are stored on the iPhone first and then synchronized to the correct
+PanelVault Cloud company. Uploads are safe to retry: movement IDs are
+deduplicated by the server, so a delivery cannot be counted twice.
 
 ## Repository layout
 
@@ -56,6 +56,7 @@ computer is the next synchronization milestone.
 - Custom parts, minimum levels, locations, and movement history
 - Board creation, assignment, and worker status updates
 - Persistent company data with atomic JSON writes
+- Mobile token authentication and cursor-based stock movement synchronization
 
 ### Warehouse app
 
@@ -65,6 +66,10 @@ computer is the next synchronization milestone.
 - Delivery-note camera scanning and on-device OCR
 - Scan review before stock is committed
 - Manual receiving, usage, corrections, history, and low-stock tracking
+- PanelVault Cloud sign-in, secure Keychain sessions, pending upload status,
+  and automatic sync when the app opens or returns to the foreground
+- Barcode opening stocktake with reusable box-to-component mappings and
+  reviewed counted-versus-recorded adjustments
 
 ## Run PanelVault Cloud
 
@@ -82,11 +87,36 @@ For a shared production deployment, use HTTPS and back up `webapp/data/`.
 That directory contains the company accounts and movement history and is
 intentionally excluded from Git.
 
+## Production domain and hosting
+
+The registered production domain is **panel-vault.com**, managed through
+GoDaddy. The intended layout is:
+
+- `panel-vault.com` — public PanelVault website
+- `cloud.panel-vault.com` — authenticated web app and shared iPhone API
+
+DNS has not been cut over yet. The first hosted pilot will deploy the Node web
+service from this GitHub repository, terminate HTTPS at the host, and point a
+GoDaddy `cloud` record at that service. Runtime data must live on persistent
+storage through `DATA_DIR`; an ephemeral deployment would lose company data on
+restart. PostgreSQL and object storage for PDFs/photos are required before the
+system becomes business-critical.
+
+The planned receipt and scheme AI integration will call the OpenAI Responses
+API from PanelVault Cloud. `OPENAI_API_KEY` must be a server environment secret
+and must never be embedded in either iPhone app, browser JavaScript, or Git.
+Scanned results will always pass through a user review screen before creating
+boards or changing stock.
+
 ## Run the Warehouse app
 
 Open `warehouse/Warehouse.xcodeproj` in Xcode and run the `Warehouse` scheme.
 The app is pure SwiftUI and targets iOS 16 or newer. Use a physical iPhone to
 test document scanning; manual receiving works in the simulator.
+
+Open the Cloud tab and enter the server address, company code, user name, and
+password. For local iPhone testing, use the Mac's Wi-Fi address such as
+`http://192.168.1.20:8090`, not `localhost`.
 
 ## Run the PanelVault app
 
@@ -96,13 +126,16 @@ Flutter, CocoaPods, or the removed `Runner.xcworkspace`.
 
 ## Roadmap
 
-1. Add authenticated synchronization between the Warehouse app and PanelVault
-   Cloud.
-2. Push confirmed delivery-note movements to the company warehouse so stock
-   updates appear on the website immediately.
-3. Sync board component usage back to warehouse consumption.
-4. Add conflict-safe offline merging by movement ID.
-5. Add purchase orders and delivery reconciliation.
+1. Use the barcode stocktake on the real warehouse boxes and refine the first
+   company component list.
+2. Deploy PanelVault Cloud at `cloud.panel-vault.com` with HTTPS and durable
+   storage.
+3. Store scanned delivery batches and their source pages in PanelVault Cloud.
+4. Add reviewed AI extraction for receipts and electrical schemes.
+5. Synchronize projects, boards, customers, photos, PDFs, and checklists from
+   the main PanelVault app.
+6. Sync board component usage back to warehouse consumption.
+7. Add purchase orders and delivery reconciliation.
 
 More implementation details are available in `webapp/README.md` and
 `warehouse/README.md`.

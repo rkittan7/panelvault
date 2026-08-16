@@ -26,9 +26,36 @@ manual receive works everywhere.
   the delivery note, the parser extracts quantities and fuzzy-matches lines to
   the catalog, and a review screen is the gate — nothing touches the stock log
   until the user confirms.
+- **Offline-first Cloud sync.** Every movement is saved locally before upload.
+  The Cloud API deduplicates its stable ID, and the app downloads new company
+  movements using a sequence cursor. The session token is stored in Keychain.
 
-## Not built yet, by design
+## Connect to PanelVault Cloud
 
-- Sync/backend (the movement log is shaped for it)
+Use the Cloud tab to enter the server address, company code, user name, and
+password. A physical phone cannot reach the Mac through `localhost`; use the
+Mac's local Wi-Fi address, for example `http://192.168.1.20:8090`.
+
+The dashboard and Cloud tab show whether data is synchronized and how many
+movements are waiting. The app retries when it launches, returns to the
+foreground, records a movement, or the user taps **Sync Now**.
+
+## Digitize existing stock with barcodes
+
+Open **Stock** and tap the barcode viewfinder in the top bar. Scan every box
+once. The first time PanelVault sees a barcode, choose its exact component and
+set how many units are in one box. That mapping is saved for the company, so
+future scans recognize it immediately on every synchronized phone.
+
+The stocktake remains a draft while scanning. Its review shows the counted
+quantity beside the currently recorded quantity. **Review and Set Stock**
+creates auditable adjustment movements only after confirmation. Camera scans
+never change stock directly. Managers can also type a damaged barcode or test
+the flow in Simulator using the keyboard button.
+
+## Not built yet
+
+- Delivery batch metadata and scanned page/PDF upload
+- Continuous network-path monitoring and exponential retry backoff
 - App Group data sharing with PanelVault on-device
 - Purchase orders and delivery reconciliation

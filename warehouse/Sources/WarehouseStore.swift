@@ -6,6 +6,7 @@ import Combine
 ///
 /// Same persistence philosophy as PanelVault after its storage fix: plain
 /// files, written atomically off the main thread, no UserDefaults blobs.
+@MainActor
 final class WarehouseStore: ObservableObject {
   @Published private(set) var movements: [StockMovement] = []
   @Published private(set) var settings: [String: PartSettings] = [:]
@@ -14,11 +15,19 @@ final class WarehouseStore: ObservableObject {
   /// special relays, brackets, whatever the workshop actually stocks.
   /// Same shape as catalog parts so the rest of the app cannot tell them apart.
   @Published private(set) var customParts: [CatalogPart] = []
+  @Published private(set) var barcodeMappings: [BarcodeMapping] = []
+  @Published private(set) var account: WarehouseCloudAccount?
+  @Published private(set) var syncPhase: WarehouseSyncPhase = .signedOut
 
   private let queue = DispatchQueue(label: "warehouse.persistence", qos: .utility)
+  private let cloud = WarehouseCloudClient()
+  private var syncMetadata = WarehouseSyncMetadata()
 
   init() {
+    account = WarehouseAccountKeychain.load()
     load()
+    syncPhase = account == nil ? .signedOut : .idle
+    if account != nil { triggerSync() }
   }
 
   // MARK: - Part lookup (catalog + custom)
@@ -113,17 +122,28 @@ final class WarehouseStore: ObservableObject {
     movements.sorted { $0.date > $1.date }
   }
 
+  var pendingMovementCount: Int {
+    movements.lazy.filter { !self.syncMetadata.syncedMovementIDs.contains($0.id) }.count
+  }
+
+  func barcodeMapping(for rawCode: String) -> BarcodeMapping? {
+    let code = WarehouseStore.normalizedBarcode(rawCode)
+    return barcodeMappings.first { $0.code == code }
+  }
+
   // MARK: - Mutations
 
   func append(_ movement: StockMovement) {
     movements.append(movement)
     persistMovements()
+    triggerSync()
   }
 
   func append(_ batch: [StockMovement]) {
     guard !batch.isEmpty else { return }
     movements.append(contentsOf: batch)
     persistMovements()
+    triggerSync()
   }
 
   func updateSettings(for partID: String, _ update: PartSettings) {
@@ -133,6 +153,155 @@ final class WarehouseStore: ObservableObject {
       settings[partID] = update
     }
     persistSettings()
+  }
+
+  func upsertBarcodeMapping(
+    code rawCode: String,
+    symbology: String,
+    partID: String,
+    packageQuantity: Int,
+    boxLabel: String
+  ) {
+    let code = WarehouseStore.normalizedBarcode(rawCode)
+    guard !code.isEmpty, part(for: partID) != nil else { return }
+    let mapping = BarcodeMapping(
+      code: code,
+      symbology: symbology,
+      partID: partID,
+      packageQuantity: max(1, packageQuantity),
+      boxLabel: boxLabel.trimmingCharacters(in: .whitespacesAndNewlines),
+      updatedAt: ISO8601DateFormatter.warehouse.string(from: Date()),
+      updatedByDeviceID: StockMovement.currentDeviceID
+    )
+    if let index = barcodeMappings.firstIndex(where: { $0.code == code }) {
+      barcodeMappings[index] = mapping
+    } else {
+      barcodeMappings.append(mapping)
+    }
+    persistBarcodeMappings()
+    triggerSync()
+  }
+
+  // MARK: - PanelVault Cloud
+
+  func signIn(baseURL: String, companyCode: String, name: String, password: String) async throws {
+    let signedIn = try await cloud.login(
+      baseURL: baseURL,
+      companyCode: companyCode,
+      name: name,
+      password: password
+    )
+    if !syncMetadata.companyCode.isEmpty,
+       syncMetadata.companyCode != signedIn.companyCode,
+       !movements.isEmpty {
+      throw WarehouseCloudError.companyConflict(syncMetadata.companyCode)
+    }
+    if syncMetadata.companyCode != signedIn.companyCode {
+      syncMetadata = WarehouseSyncMetadata(companyCode: signedIn.companyCode)
+      persistSyncMetadata()
+    }
+    account = signedIn
+    WarehouseAccountKeychain.save(signedIn)
+    syncPhase = .idle
+    await sync()
+  }
+
+  func signOut() {
+    account = nil
+    WarehouseAccountKeychain.save(nil)
+    syncPhase = .signedOut
+  }
+
+  func sync() async {
+    guard let account else {
+      syncPhase = .signedOut
+      return
+    }
+    guard syncPhase != .syncing else { return }
+    syncPhase = .syncing
+
+    do {
+      if !customParts.isEmpty {
+        let response = try await cloud.uploadCustomParts(customParts, account: account)
+        mergeCustomParts(response.customParts)
+      }
+      if !barcodeMappings.isEmpty {
+        let response = try await cloud.uploadBarcodeMappings(barcodeMappings, account: account)
+        mergeBarcodeMappings(response.barcodeMappings)
+      }
+
+      while true {
+        let pending = movements
+          .filter { !syncMetadata.syncedMovementIDs.contains($0.id) }
+          .prefix(500)
+        guard !pending.isEmpty else { break }
+        let response = try await cloud.upload(Array(pending), account: account)
+        syncMetadata.syncedMovementIDs.formUnion(response.acceptedIDs)
+        syncMetadata.syncedMovementIDs.formUnion(response.duplicateIDs)
+        persistSyncMetadata()
+      }
+
+      var shouldContinue = true
+      while shouldContinue {
+        let response = try await cloud.download(after: syncMetadata.lastSequence, account: account)
+        mergeCustomParts(response.customParts)
+        mergeBarcodeMappings(response.barcodeMappings)
+        mergeRemoteMovements(response.movements)
+        if response.hasMore {
+          syncMetadata.lastSequence = response.movements.compactMap(\.sequence).max()
+            ?? syncMetadata.lastSequence
+        } else {
+          syncMetadata.lastSequence = response.latestSequence
+          shouldContinue = false
+        }
+        persistSyncMetadata()
+      }
+      syncPhase = .idle
+    } catch {
+      syncPhase = .failed(error.localizedDescription)
+    }
+  }
+
+  private func triggerSync() {
+    guard account != nil else { return }
+    Task { [weak self] in
+      await self?.sync()
+    }
+  }
+
+  private func mergeRemoteMovements(_ remote: [CloudMovement]) {
+    let existing = Set(movements.map(\.id))
+    let additions = remote.compactMap { item -> StockMovement? in
+      syncMetadata.syncedMovementIDs.insert(item.id)
+      guard !existing.contains(item.id) else { return nil }
+      return item.localMovement
+    }
+    if !additions.isEmpty {
+      movements.append(contentsOf: additions)
+      persistMovements()
+    }
+  }
+
+  private func mergeCustomParts(_ remote: [CatalogPart]) {
+    let existing = Set(customParts.map(\.id))
+    let additions = remote.filter { !existing.contains($0.id) }
+    guard !additions.isEmpty else { return }
+    customParts.append(contentsOf: additions)
+    persist(customParts, to: WarehouseStore.customPartsURL)
+  }
+
+  private func mergeBarcodeMappings(_ remote: [BarcodeMapping]) {
+    var changed = false
+    for incoming in remote {
+      if let index = barcodeMappings.firstIndex(where: { $0.code == incoming.code }) {
+        guard barcodeMappings[index].updatedAt < incoming.updatedAt else { continue }
+        barcodeMappings[index] = incoming
+      } else {
+        barcodeMappings.append(incoming)
+      }
+      changed = true
+    }
+    if changed { persistBarcodeMappings() }
   }
 
   // MARK: - Persistence
@@ -150,6 +319,12 @@ final class WarehouseStore: ObservableObject {
   private static var movementsURL: URL { directory.appendingPathComponent("movements.json") }
   private static var settingsURL: URL { directory.appendingPathComponent("partSettings.json") }
   private static var customPartsURL: URL { directory.appendingPathComponent("customParts.json") }
+  private static var syncMetadataURL: URL { directory.appendingPathComponent("cloudSync.json") }
+  private static var barcodeMappingsURL: URL { directory.appendingPathComponent("barcodeMappings.json") }
+
+  private static func normalizedBarcode(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+  }
 
   private func load() {
     if let data = try? Data(contentsOf: WarehouseStore.movementsURL),
@@ -164,6 +339,14 @@ final class WarehouseStore: ObservableObject {
        let decoded = try? JSONDecoder.warehouse.decode([CatalogPart].self, from: data) {
       customParts = decoded
     }
+    if let data = try? Data(contentsOf: WarehouseStore.syncMetadataURL),
+       let decoded = try? JSONDecoder.warehouse.decode(WarehouseSyncMetadata.self, from: data) {
+      syncMetadata = decoded
+    }
+    if let data = try? Data(contentsOf: WarehouseStore.barcodeMappingsURL),
+       let decoded = try? JSONDecoder.warehouse.decode([BarcodeMapping].self, from: data) {
+      barcodeMappings = decoded
+    }
   }
 
   private func persistMovements() {
@@ -172,6 +355,14 @@ final class WarehouseStore: ObservableObject {
 
   private func persistSettings() {
     persist(settings, to: WarehouseStore.settingsURL)
+  }
+
+  private func persistSyncMetadata() {
+    persist(syncMetadata, to: WarehouseStore.syncMetadataURL)
+  }
+
+  private func persistBarcodeMappings() {
+    persist(barcodeMappings, to: WarehouseStore.barcodeMappingsURL)
   }
 
   private func persist<T: Encodable>(_ value: T, to url: URL) {

@@ -14,8 +14,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const PORT = process.env.PORT || 8090;
-const DATA_DIR = path.join(__dirname, "data");
+const PORT = Number.parseInt(process.env.PORT || "8090", 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DB_FILE = path.join(DATA_DIR, "companies.json");
 const SECRET_FILE = path.join(DATA_DIR, "secret");
@@ -43,6 +43,14 @@ let db = { companies: {} };
 try {
   db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 } catch {}
+
+for (const company of Object.values(db.companies || {})) {
+  company.movements ||= [];
+  company.customParts ||= [];
+  company.partSettings ||= {};
+  company.boards ||= [];
+  company.barcodeMappings ||= [];
+}
 
 let saveTimer = null;
 function save() {
@@ -80,6 +88,14 @@ function signSession(companyCode, userID, expires) {
   const payload = `${companyCode}.${userID}.${expires}`;
   const mac = crypto.createHmac("sha256", SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}.${mac}`).toString("base64url");
+}
+
+function createSession(companyCode, userID) {
+  const expires = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+  return {
+    token: signSession(companyCode, userID, expires),
+    expiresAt: new Date(expires).toISOString(),
+  };
 }
 
 function verifySession(token) {
@@ -131,6 +147,25 @@ function stockEntries(company) {
   return entries;
 }
 
+function ensureMovementSequences(company) {
+  let next = Math.max(1, Math.trunc(Number(company.nextMovementSequence)) || 1);
+  for (const movement of company.movements) {
+    if (!Number.isInteger(movement.sequence) || movement.sequence < 1) {
+      movement.sequence = next;
+    }
+    next = Math.max(next, movement.sequence + 1);
+  }
+  company.nextMovementSequence = next;
+  return next - 1;
+}
+
+function appendMovement(company, movement) {
+  ensureMovementSequences(company);
+  movement.sequence = company.nextMovementSequence++;
+  company.movements.push(movement);
+  return movement;
+}
+
 // ---------------------------------------------------------------- http plumbing
 
 function sendJSON(res, status, body, headers = {}) {
@@ -165,6 +200,9 @@ function readBody(req) {
 }
 
 function sessionFrom(req) {
+  const authorization = req.headers.authorization || "";
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i);
+  if (bearer) return verifySession(bearer[1]);
   const cookie = req.headers.cookie || "";
   const match = cookie.match(/(?:^|;\s*)session=([^;]+)/);
   return match ? verifySession(match[1]) : null;
@@ -222,6 +260,7 @@ const routes = {
       customParts: [],
       partSettings: {},
       boards: [],
+      barcodeMappings: [],
     };
     save();
     sendJSON(res, 200, { companyCode: code }, issueSession(res, code, owner.id));
@@ -237,6 +276,23 @@ const routes = {
       return fail(res, 401, "Wrong company code, name or password.");
     }
     sendJSON(res, 200, { ok: true }, issueSession(res, company.code, user.id));
+  },
+
+  "POST /api/mobile/login": async (req, res) => {
+    const { companyCode, name, password } = await readBody(req);
+    const company = db.companies[(companyCode || "").trim().toUpperCase()];
+    const user = company?.users.find(
+      (u) => u.name.toLowerCase() === (name || "").trim().toLowerCase() && u.active
+    );
+    if (!user || hashPassword(password || "", user.salt) !== user.passHash) {
+      return fail(res, 401, "Wrong company code, name or password.");
+    }
+    const session = createSession(company.code, user.id);
+    sendJSON(res, 200, {
+      ...session,
+      company: { code: company.code, name: company.name },
+      user: publicUser(user),
+    });
   },
 
   "POST /api/logout": async (req, res) => {
@@ -296,6 +352,7 @@ const routes = {
       customParts: company.customParts,
       members: admin ? company.users.map(publicUser) : undefined,
       invites: admin ? company.invites.filter((i) => i.active) : undefined,
+      barcodeMappings: company.barcodeMappings,
     });
   },
 
@@ -315,7 +372,7 @@ const routes = {
     if (!Number.isFinite(qty) || qty === 0 || Math.abs(qty) > 100000) {
       return fail(res, 400, "Bad quantity.");
     }
-    company.movements.push({
+    appendMovement(company, {
       id: id("mv"),
       partID,
       kind,
@@ -326,6 +383,177 @@ const routes = {
     });
     save();
     sendJSON(res, 200, { ok: true });
+  },
+
+  // --- mobile synchronization ------------------------------------------
+
+  "POST /api/sync/movements": async (req, res, session) => {
+    const { company, user } = session;
+    const { movements } = await readBody(req);
+    if (!Array.isArray(movements) || movements.length > 500) {
+      return fail(res, 400, "Send an array of at most 500 movements.");
+    }
+
+    ensureMovementSequences(company);
+    const existingIDs = new Set(company.movements.map((movement) => movement.id));
+    const acceptedIDs = [];
+    const duplicateIDs = [];
+    const validated = [];
+
+    for (const incoming of movements) {
+      const movementID = String(incoming.id || "").trim();
+      if (!/^[A-Za-z0-9-]{8,100}$/.test(movementID)) {
+        return fail(res, 400, "A movement has an invalid id.");
+      }
+      if (existingIDs.has(movementID)) {
+        duplicateIDs.push(movementID);
+        continue;
+      }
+      if (!partFor(company, incoming.partID)) return fail(res, 400, "Unknown part.");
+      if (!["receive", "consume", "adjust"].includes(incoming.kind)) {
+        return fail(res, 400, "A movement has an invalid kind.");
+      }
+      if (incoming.kind === "adjust" && !isAdmin(user)) {
+        return fail(res, 403, "Only the boss or a manager can upload stock adjustments.");
+      }
+      const quantity = Math.trunc(Number(incoming.quantity));
+      if (!Number.isFinite(quantity) || quantity === 0 || Math.abs(quantity) > 100000) {
+        return fail(res, 400, "A movement has an invalid quantity.");
+      }
+      const parsedDate = new Date(incoming.date);
+      const date = Number.isFinite(parsedDate.getTime())
+        ? parsedDate.toISOString()
+        : new Date().toISOString();
+
+      validated.push({
+        id: movementID,
+        partID: incoming.partID,
+        kind: incoming.kind,
+        quantity: incoming.kind === "adjust" ? quantity : Math.abs(quantity),
+        reference: String(incoming.reference || "").trim().slice(0, 240),
+        date,
+        deviceID: String(incoming.deviceID || "").trim().slice(0, 100),
+        userID: user.id,
+      });
+      existingIDs.add(movementID);
+    }
+
+    for (const movement of validated) {
+      appendMovement(company, movement);
+      acceptedIDs.push(movement.id);
+    }
+
+    if (acceptedIDs.length) save();
+    sendJSON(res, 200, {
+      acceptedIDs,
+      duplicateIDs,
+      latestSequence: ensureMovementSequences(company),
+    });
+  },
+
+  "GET /api/sync/movements": async (req, res, session) => {
+    const { company } = session;
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const after = Math.max(0, Math.trunc(Number(url.searchParams.get("after"))) || 0);
+    const latestSequence = ensureMovementSequences(company);
+    const movements = company.movements
+      .filter((movement) => movement.sequence > after)
+      .sort((a, b) => a.sequence - b.sequence)
+      .slice(0, 1000);
+    sendJSON(res, 200, {
+      movements,
+      latestSequence,
+      hasMore: movements.length === 1000 && movements.at(-1).sequence < latestSequence,
+      customParts: company.customParts,
+      barcodeMappings: company.barcodeMappings,
+    });
+  },
+
+  "POST /api/sync/barcodes": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can teach barcodes.");
+    const { barcodeMappings } = await readBody(req);
+    if (!Array.isArray(barcodeMappings) || barcodeMappings.length > 500) {
+      return fail(res, 400, "Send an array of at most 500 barcode mappings.");
+    }
+
+    const validated = [];
+    for (const incoming of barcodeMappings) {
+      const code = String(incoming.code || "").trim().toUpperCase();
+      if (code.length < 3 || code.length > 120 || /[\r\n]/.test(code)) {
+        return fail(res, 400, "A barcode has an invalid value.");
+      }
+      if (!partFor(company, incoming.partID)) return fail(res, 400, "A barcode references an unknown part.");
+      const packageQuantity = Math.trunc(Number(incoming.packageQuantity));
+      if (!Number.isFinite(packageQuantity) || packageQuantity < 1 || packageQuantity > 100000) {
+        return fail(res, 400, "A barcode has an invalid package quantity.");
+      }
+      const parsedDate = new Date(incoming.updatedAt);
+      validated.push({
+        code,
+        symbology: String(incoming.symbology || "barcode").trim().slice(0, 60),
+        partID: incoming.partID,
+        packageQuantity,
+        boxLabel: String(incoming.boxLabel || "").trim().slice(0, 160),
+        updatedAt: Number.isFinite(parsedDate.getTime())
+          ? parsedDate.toISOString()
+          : new Date().toISOString(),
+        updatedByDeviceID: String(incoming.updatedByDeviceID || "").trim().slice(0, 100),
+        updatedByUserID: user.id,
+      });
+    }
+
+    let changed = false;
+    for (const mapping of validated) {
+      const index = company.barcodeMappings.findIndex((item) => item.code === mapping.code);
+      if (index < 0) {
+        company.barcodeMappings.push(mapping);
+        changed = true;
+      } else if (company.barcodeMappings[index].updatedAt < mapping.updatedAt) {
+        company.barcodeMappings[index] = mapping;
+        changed = true;
+      }
+    }
+    if (changed) save();
+    sendJSON(res, 200, { barcodeMappings: company.barcodeMappings });
+  },
+
+  "POST /api/sync/parts": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add company parts.");
+    const { customParts } = await readBody(req);
+    if (!Array.isArray(customParts) || customParts.length > 500) {
+      return fail(res, 400, "Send an array of at most 500 custom parts.");
+    }
+
+    const existingIDs = new Set(company.customParts.map((part) => part.id));
+    const validated = [];
+    for (const incoming of customParts) {
+      const partID = String(incoming.id || "").trim();
+      if (!/^custom-[A-Za-z0-9-]{8,100}$/.test(partID) || CATALOG_BY_ID.has(partID)) {
+        return fail(res, 400, "A custom part has an invalid id.");
+      }
+      if (!String(incoming.model || "").trim() || !String(incoming.type || "").trim()) {
+        return fail(res, 400, "Every custom part needs a model and type.");
+      }
+      if (existingIDs.has(partID)) continue;
+      validated.push({
+        id: partID,
+        manufacturer: String(incoming.manufacturer || "Generic").trim().slice(0, 100),
+        type: String(incoming.type).trim().slice(0, 100),
+        model: String(incoming.model).trim().slice(0, 140),
+        rating: String(incoming.rating || "").trim().slice(0, 100),
+        poles: String(incoming.poles || "").trim().slice(0, 60),
+        curve: String(incoming.curve || "").trim().slice(0, 80),
+        about: String(incoming.about || "").trim().slice(0, 500),
+      });
+      existingIDs.add(partID);
+    }
+    if (validated.length) {
+      company.customParts.push(...validated);
+      save();
+    }
+    sendJSON(res, 200, { customParts: company.customParts });
   },
 
   "POST /api/parts": async (req, res, session) => {
@@ -462,7 +690,12 @@ const routes = {
 };
 
 // Routes that must work without a session.
-const OPEN_ROUTES = new Set(["POST /api/company", "POST /api/login", "POST /api/join"]);
+const OPEN_ROUTES = new Set([
+  "POST /api/company",
+  "POST /api/login",
+  "POST /api/mobile/login",
+  "POST /api/join",
+]);
 
 // ---------------------------------------------------------------- static files
 
@@ -509,5 +742,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`PanelVault Cloud listening on http://localhost:${PORT}`);
+  const address = server.address();
+  const activePort = typeof address === "object" && address ? address.port : PORT;
+  console.log(`PanelVault Cloud listening on http://localhost:${activePort}`);
 });

@@ -25,3 +25,6 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSCameraUsageDescription: The camera scans supplier delivery notes so stock can be received automatically.
+        NSLocalNetworkUsageDescription: PanelVault connects to your company's local warehouse server.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true

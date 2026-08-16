@@ -5,11 +5,17 @@ struct StockListView: View {
   @EnvironmentObject private var store: WarehouseStore
   @State private var query = ""
   @State private var addingPart = false
+  @State private var showingStocktake = false
 
   private var filtered: [StockEntry] {
     let trimmed = query.trimmingCharacters(in: .whitespaces).lowercased()
     guard !trimmed.isEmpty else { return store.entries }
     return store.entries.filter { $0.part.searchText.contains(trimmed) }
+  }
+
+  private var canRunStocktake: Bool {
+    guard let role = store.account?.role else { return true }
+    return role == "owner" || role == "manager"
   }
 
   var body: some View {
@@ -40,6 +46,16 @@ struct StockListView: View {
       .navigationTitle("Stock")
       .searchable(text: $query, prompt: "Search model, type, manufacturer")
       .toolbar {
+        if canRunStocktake {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button {
+              showingStocktake = true
+            } label: {
+              Image(systemName: "barcode.viewfinder")
+            }
+            .accessibilityLabel("Barcode stocktake")
+          }
+        }
         ToolbarItem(placement: .topBarTrailing) {
           Button {
             addingPart = true
@@ -47,6 +63,9 @@ struct StockListView: View {
             Image(systemName: "plus")
           }
         }
+      }
+      .fullScreenCover(isPresented: $showingStocktake) {
+        BarcodeStocktakeView(theme: theme)
       }
       .sheet(isPresented: $addingPart) {
         PartPickerSheet(theme: theme, title: "Track a Part") { part in

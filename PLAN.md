@@ -21,7 +21,27 @@ Build one connected PanelVault platform for electrical-board companies:
 - Every important action records who performed it and when.
 - Build and verify one complete workflow before expanding the interface.
 
+## Phase 0: Digitize the existing warehouse
+
+**Status: first barcode stocktake workflow implemented (August 2026).**
+
+- Scan EAN, UPC, Code 39/93/128, ITF-14, Data Matrix, QR, and PDF417 labels.
+- Teach an unknown barcode its component, exact box label, and units per box.
+- Reuse and synchronize that mapping for the whole company.
+- Count repeated boxes without changing live stock during scanning.
+- Review counted quantities against recorded quantities.
+- Confirm the opening stock as auditable adjustment movements.
+- Upload custom parts before their barcode mappings and stock movements.
+
+Next, run this workflow against representative ABB, Schneider, Siemens, and
+other real boxes. Record which labels encode a useful GTIN and which require a
+company-taught mapping before considering an external product-data provider.
+
 ## Phase 1: Prove cloud synchronization
+
+**Status: implemented and integration-tested (August 2026).** Manual and
+scan-confirmed movements use the same local append path, upload queue, stable
+IDs, and Cloud endpoints.
 
 Start with manual stock receiving. Do not connect OCR yet.
 
@@ -58,6 +78,10 @@ Start with manual stock receiving. Do not connect OCR yet.
 - Signing into the wrong company cannot expose another company's stock.
 
 ## Phase 2: Offline sync queue
+
+**Status: core queue implemented.** Local persistence, UUID deduplication,
+cursor downloads, launch/foreground retries, pending count, errors, and manual
+retry are working. Network monitoring and exponential backoff remain.
 
 - Give every movement a UUID generated on the device.
 - Track local sync state: `pending`, `syncing`, `synced`, or `failed`.

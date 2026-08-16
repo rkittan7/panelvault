@@ -15,6 +15,7 @@ struct WarehouseApp: App {
 
 struct RootView: View {
   @EnvironmentObject private var store: WarehouseStore
+  @Environment(\.scenePhase) private var scenePhase
   private let theme = WarehouseTheme.standard
 
   var body: some View {
@@ -27,7 +28,13 @@ struct RootView: View {
         .tabItem { Label("Receive", systemImage: "doc.viewfinder.fill") }
       ActivityView(theme: theme)
         .tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }
+      AccountView(theme: theme)
+        .tabItem { Label("Cloud", systemImage: "icloud.fill") }
     }
     .tint(theme.primary)
+    .onChange(of: scenePhase) { phase in
+      guard phase == .active else { return }
+      Task { await store.sync() }
+    }
   }
 }

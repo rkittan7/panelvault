@@ -8,6 +8,7 @@ struct DashboardView: View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
+          syncStatus
           statsGrid
           if !store.lowStock.isEmpty {
             SectionHeading(title: "Low Stock")
@@ -39,6 +40,26 @@ struct DashboardView: View {
         ItemDetailView(theme: theme, partID: partID)
       }
     }
+  }
+
+  private var syncStatus: some View {
+    HStack(spacing: 9) {
+      Image(systemName: store.account == nil ? "icloud.slash" : "icloud.fill")
+        .foregroundStyle(store.account == nil ? theme.mutedText : theme.secondary)
+      Text(store.syncPhase.title)
+        .font(.footnote.weight(.bold))
+      if store.pendingMovementCount > 0 {
+        Text("\(store.pendingMovementCount) waiting")
+          .font(.caption.weight(.bold))
+          .foregroundStyle(theme.warning)
+      }
+      Spacer()
+      if store.syncPhase == .syncing {
+        ProgressView().controlSize(.small).tint(theme.secondary)
+      }
+    }
+    .foregroundStyle(theme.mutedText)
+    .padding(.horizontal, 4)
   }
 
   private var statsGrid: some View {

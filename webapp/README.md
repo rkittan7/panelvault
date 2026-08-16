@@ -4,10 +4,9 @@ PanelVault's browser-based company and warehouse portal. The boss and managers
 can run the warehouse and assign boards from any computer; workers can see
 stock and their own boards.
 
-The companion Warehouse iPhone app already scans delivery notes, reviews the
-recognized components, and records confirmed receipts in its local movement
-log. Cloud synchronization is the next milestone: once connected, a confirmed
-scan will push those movements here so the website's stock updates immediately.
+The companion Warehouse iPhone app scans delivery notes, reviews recognized
+components, records confirmed receipts locally, and synchronizes those stock
+movements to the correct company here.
 
 ## Run
 
@@ -30,7 +29,9 @@ port 8090 (override with `PORT=...`).
 - **worker** — sees stock and boards, and can update the status of boards
   assigned to them. Nothing else.
 
-Passwords are scrypt-hashed; sessions are HMAC-signed http-only cookies.
+Passwords are scrypt-hashed; browser sessions are HMAC-signed http-only
+cookies. The iPhone client uses an expiring HMAC bearer token stored in
+Keychain.
 
 ## Deploying so the team can reach it
 
@@ -50,13 +51,18 @@ with a tunnel). Two things matter in production:
 - Storage is one JSON file with debounced atomic writes — right-sized for a
   company-scale team, easy to move to a database later without changing the
   API.
-- The PanelVault iOS app and the Warehouse iOS app are untouched by any of
-  this.
+- Mobile movement uploads are validated as a complete batch before anything is
+  appended. Stable movement IDs make retries idempotent.
+- Movement downloads use an increasing company sequence cursor, while stock
+  remains derived from the immutable movement log.
 
-## Next integration milestone
+## Mobile sync API
 
-1. Authenticate the Warehouse app against a PanelVault Cloud company.
-2. Upload confirmed delivery-note movements after the scan review screen.
-3. Merge movements by their unique event IDs so offline devices cannot double
-   count a delivery.
-4. Refresh the website stock and activity feed as soon as the upload succeeds.
+- `POST /api/mobile/login` returns the company, user, and expiring bearer token.
+- `POST /api/sync/movements` validates and deduplicates up to 500 movements.
+- `GET /api/sync/movements?after=<sequence>` downloads ordered changes.
+- `POST /api/sync/parts` uploads phone-created company catalog parts first.
+- `POST /api/sync/barcodes` shares barcode, component, and box-quantity
+  mappings across the company.
+
+Run the integration test with `node --test server.test.js`.

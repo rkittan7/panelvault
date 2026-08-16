@@ -17,7 +17,7 @@ struct StockMovement: Identifiable, Codable, Equatable {
     case adjust
   }
 
-  let id: UUID
+  let id: String
   /// PanelVault catalog component id — the shared key between the two apps.
   let partID: String
   let kind: Kind
@@ -30,13 +30,31 @@ struct StockMovement: Identifiable, Codable, Equatable {
   let deviceID: String
 
   init(partID: String, kind: Kind, quantity: Int, reference: String = "") {
-    self.id = UUID()
+    self.id = UUID().uuidString
     self.partID = partID
     self.kind = kind
     self.quantity = quantity
     self.date = Date()
     self.reference = reference
     self.deviceID = StockMovement.currentDeviceID
+  }
+
+  init(
+    id: String,
+    partID: String,
+    kind: Kind,
+    quantity: Int,
+    date: Date,
+    reference: String,
+    deviceID: String
+  ) {
+    self.id = id
+    self.partID = partID
+    self.kind = kind
+    self.quantity = quantity
+    self.date = date
+    self.reference = reference
+    self.deviceID = deviceID
   }
 
   /// Effect of this movement on the on-hand count.
@@ -80,4 +98,18 @@ struct StockEntry: Identifiable {
     guard let minimum = settings.minimumLevel else { return false }
     return onHand <= minimum
   }
+}
+
+/// A manufacturer barcode taught once and reused by every future stocktake.
+/// The code identifies the box SKU; packageQuantity says how many physical
+/// units one scan contributes to the count.
+struct BarcodeMapping: Identifiable, Codable, Equatable {
+  var id: String { code }
+  let code: String
+  let symbology: String
+  let partID: String
+  let packageQuantity: Int
+  let boxLabel: String
+  let updatedAt: String
+  let updatedByDeviceID: String
 }
