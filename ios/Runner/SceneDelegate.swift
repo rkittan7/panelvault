@@ -7534,6 +7534,8 @@ struct MoreView: View {
   @State private var themePickerOpen = false
   @State private var displaySizeOpen = false
   @State private var profileOpen = false
+  @State private var warehouseStockOpen = false
+  @ObservedObject private var stockStore = WarehouseStockStore.shared
 
   private var selectedThemeOption: PanelTheme {
     PanelTheme.all.first { $0.id == selectedThemeID } ?? theme
@@ -7597,6 +7599,18 @@ struct MoreView: View {
               name: profileName,
               imageToken: profileImageToken,
               subtitle: profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add your name, company and phone" : profileName
+            )
+          }
+          .buttonStyle(PanelPressButtonStyle())
+
+          Button {
+            warehouseStockOpen = true
+          } label: {
+            MoreRow(
+              theme: theme,
+              symbol: "shippingbox.fill",
+              title: "Warehouse Stock",
+              subtitle: stockStore.account.map { "\($0.companyName) • live stock" } ?? "Connect to PanelVault Cloud"
             )
           }
           .buttonStyle(PanelPressButtonStyle())
@@ -7715,6 +7729,11 @@ struct MoreView: View {
       }
       .sheet(isPresented: $profileOpen) {
         ProfileEditorSheet(theme: theme, name: $profileName, company: $profileCompany, phone: $profilePhone, imageToken: $profileImageToken)
+      }
+      .sheet(isPresented: $warehouseStockOpen) {
+        WarehouseStockSheet(theme: theme)
+          .presentationDetents([.large])
+          .presentationDragIndicator(.visible)
           .presentationDetents([.medium])
           .presentationDragIndicator(.visible)
       }
@@ -9371,6 +9390,8 @@ struct ComponentCatalogView: View {
   @State private var componentToConfigure: PanelComponent?
   @State private var componentToDescribe: PanelComponent?
   @State private var componentToAssign: PanelComponent?
+  @ObservedObject private var stockStore = WarehouseStockStore.shared
+
   private var visibleGroups: [ComponentGroup] {
     if customComponents.isEmpty { return groups }
     return [ComponentGroup(id: "custom-components", name: "Custom Components", items: customComponents)] + groups
@@ -9491,7 +9512,8 @@ struct ComponentCatalogView: View {
               theme: theme,
               title: group.name,
               count: group.items.count,
-              symbol: categorySymbol(for: group)
+              symbol: categorySymbol(for: group),
+              stock: stockStore.totalStock(forComponentIDs: group.items.map(\.id))
             )
           }
           .buttonStyle(PanelPressButtonStyle())
@@ -9695,6 +9717,8 @@ struct CatalogCategoryBlock: View {
   let title: String
   let count: Int
   let symbol: String
+  /// Total warehouse stock across the category, or nil when Cloud is not linked.
+  var stock: Int? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -9706,6 +9730,9 @@ struct CatalogCategoryBlock: View {
           .background(theme.primary.opacity(0.14))
           .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         Spacer(minLength: 0)
+        if let stock {
+          StockBadge(theme: theme, count: stock, compact: true)
+        }
         Image(systemName: "chevron.right")
           .font(.system(size: 13, weight: .bold))
           .foregroundStyle(.secondary)
@@ -9746,6 +9773,7 @@ struct ComponentRow: View {
   let showDetails: () -> Void
   var deleteComponent: (() -> Void)? = nil
   @State private var selectedPhotoItem: PhotosPickerItem?
+  @ObservedObject private var stockStore = WarehouseStockStore.shared
 
   private var displayImage: UIImage? {
     storedImage
@@ -9814,6 +9842,9 @@ struct ComponentRow: View {
               EquipmentPill(text: component.type, color: manufacturerColor)
               EquipmentPill(text: component.poles, color: Color(hex: 0x7FA6C9))
               EquipmentPill(text: component.ratingLabel, color: Color(hex: 0x7FAE9A))
+              if let stock = stockStore.stock(for: component.id) {
+                StockBadge(theme: theme, count: stock, compact: true)
+              }
             }
           }
         }
@@ -12319,5 +12350,491 @@ extension Color {
     var alpha: CGFloat = 0
     guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return 0x5E78FF }
     return (UInt32(red * 255) << 16) | (UInt32(green * 255) << 8) | UInt32(blue * 255)
+  }
+}
+
+// MARK: - Warehouse stock (PanelVault Cloud)
+//
+// The warehouse app and this app share one key: a component's catalog id.
+// `StockMovement.partID` in warehouse/Sources/Models.swift is exactly
+// `PanelComponent.id` here, so on-hand counts pulled from Cloud can be shown
+// straight on the catalog. Stock is always replayed from the append-only
+// movement log; this client never invents or edits a total.
+
+/// Credentials and identity for a PanelVault Cloud session. Mirrors the
+/// warehouse app's `WarehouseCloudAccount` so both clients speak one contract.
+struct PanelCloudAccount: Codable, Equatable {
+  let baseURL: String
+  let token: String
+  let expiresAt: String
+  let companyCode: String
+  let companyName: String
+  let userName: String
+  let role: String
+}
+
+struct PanelCloudLoginResponse: Decodable {
+  struct Company: Decodable { let code: String; let name: String }
+  struct User: Decodable { let id: String; let name: String; let role: String }
+  let token: String
+  let expiresAt: String
+  let company: Company
+  let user: User
+}
+
+/// One movement as Cloud returns it, narrowed to what stock derivation needs.
+struct PanelCloudMovement: Decodable {
+  let id: String
+  let partID: String
+  let kind: String
+  let quantity: Int
+  let sequence: Int?
+
+  /// Effect on the on-hand count. Matches `StockMovement.delta` in the
+  /// warehouse app: receive adds, consume subtracts, adjust carries a signed
+  /// delta.
+  var delta: Int {
+    switch kind {
+    case "receive": return quantity
+    case "consume": return -quantity
+    default: return quantity
+    }
+  }
+}
+
+struct PanelCloudDownloadResponse: Decodable {
+  let movements: [PanelCloudMovement]
+  let latestSequence: Int
+  let hasMore: Bool
+}
+
+enum PanelCloudError: LocalizedError {
+  case invalidServer
+  case server(String)
+  case invalidResponse
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidServer: return "Enter a valid PanelVault Cloud address."
+    case .server(let message): return message
+    case .invalidResponse: return "PanelVault Cloud returned an invalid response."
+    }
+  }
+}
+
+struct PanelCloudClient {
+  func login(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
+    let normalized = try PanelCloudClient.normalizedBaseURL(baseURL)
+    let response: PanelCloudLoginResponse = try await request(
+      baseURL: normalized,
+      path: "/api/mobile/login",
+      method: "POST",
+      body: ["companyCode": companyCode, "name": name, "password": password],
+      token: nil
+    )
+    return PanelCloudAccount(
+      baseURL: normalized.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+      token: response.token,
+      expiresAt: response.expiresAt,
+      companyCode: response.company.code,
+      companyName: response.company.name,
+      userName: response.user.name,
+      role: response.user.role
+    )
+  }
+
+  func download(after sequence: Int, account: PanelCloudAccount) async throws -> PanelCloudDownloadResponse {
+    try await request(
+      baseURL: try PanelCloudClient.normalizedBaseURL(account.baseURL),
+      path: "/api/sync/movements?after=\(sequence)",
+      method: "GET",
+      body: Optional<[String: String]>.none,
+      token: account.token
+    )
+  }
+
+  private static func normalizedBaseURL(_ value: String) throws -> URL {
+    var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !text.contains("://") { text = "https://\(text)" }
+    guard let url = URL(string: text),
+          ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+          url.host != nil else { throw PanelCloudError.invalidServer }
+    return url
+  }
+
+  private func request<Response: Decodable, Body: Encodable>(
+    baseURL: URL,
+    path: String,
+    method: String,
+    body: Body?,
+    token: String?
+  ) async throws -> Response {
+    guard let url = URL(string: path, relativeTo: baseURL) else { throw PanelCloudError.invalidServer }
+    var request = URLRequest(url: url)
+    request.httpMethod = method
+    request.timeoutInterval = 30
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+    if let body {
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try JSONEncoder().encode(body)
+    }
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse else { throw PanelCloudError.invalidResponse }
+    guard 200..<300 ~= http.statusCode else {
+      let message = (try? JSONDecoder().decode(PanelCloudErrorBody.self, from: data).error)
+        ?? "PanelVault Cloud request failed (\(http.statusCode))."
+      throw PanelCloudError.server(message)
+    }
+    guard let decoded = try? JSONDecoder().decode(Response.self, from: data) else {
+      throw PanelCloudError.invalidResponse
+    }
+    return decoded
+  }
+}
+
+private struct PanelCloudErrorBody: Decodable { let error: String }
+
+/// The session token lives in the keychain, not UserDefaults. Its service id is
+/// distinct from the warehouse app's so the two never fight over one entry.
+enum PanelCloudKeychain {
+  private static let service = "com.panelvault.ios.cloud"
+  private static let account = "active-account"
+
+  static func load() -> PanelCloudAccount? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var result: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+          let data = result as? Data else { return nil }
+    return try? JSONDecoder().decode(PanelCloudAccount.self, from: data)
+  }
+
+  static func save(_ value: PanelCloudAccount?) {
+    let base: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    SecItemDelete(base as CFDictionary)
+    guard let value, let data = try? JSONEncoder().encode(value) else { return }
+    var insert = base
+    insert[kSecValueData as String] = data
+    insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    SecItemAdd(insert as CFDictionary, nil)
+  }
+}
+
+/// On-hand stock per catalog component, replayed from PanelVault Cloud.
+///
+/// A shared instance rather than an environment object: the catalog is shown
+/// from several sheets, and an `@EnvironmentObject` that fails to propagate
+/// into one of them is a crash rather than a blank badge.
+@MainActor
+final class WarehouseStockStore: ObservableObject {
+  static let shared = WarehouseStockStore()
+
+  @Published private(set) var account: PanelCloudAccount?
+  @Published private(set) var onHand: [String: Int] = [:]
+  @Published private(set) var lastSyncedAt: Date?
+  @Published private(set) var isSyncing = false
+  @Published var errorMessage: String?
+
+  private var lastSequence = 0
+  private let client = PanelCloudClient()
+
+  var isConnected: Bool { account != nil }
+
+  /// Nil when nothing is connected, so the UI can hide stock entirely rather
+  /// than claim every part is at zero.
+  func stock(for componentID: String) -> Int? {
+    guard isConnected else { return nil }
+    return onHand[componentID] ?? 0
+  }
+
+  func totalStock(forComponentIDs ids: [String]) -> Int? {
+    guard isConnected else { return nil }
+    return ids.reduce(0) { $0 + (onHand[$1] ?? 0) }
+  }
+
+  private init() {
+    account = PanelCloudKeychain.load()
+    loadCache()
+  }
+
+  func connect(baseURL: String, companyCode: String, name: String, password: String) async {
+    isSyncing = true
+    errorMessage = nil
+    defer { isSyncing = false }
+    do {
+      let signedIn = try await client.login(baseURL: baseURL, companyCode: companyCode, name: name, password: password)
+      // A different company means the cached counts describe someone else's
+      // warehouse; start clean rather than blending two logs.
+      if signedIn.companyCode != account?.companyCode {
+        onHand = [:]
+        lastSequence = 0
+        lastSyncedAt = nil
+      }
+      account = signedIn
+      PanelCloudKeychain.save(signedIn)
+      saveCache()
+      await sync()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func disconnect() {
+    account = nil
+    onHand = [:]
+    lastSequence = 0
+    lastSyncedAt = nil
+    errorMessage = nil
+    PanelCloudKeychain.save(nil)
+    saveCache()
+  }
+
+  func sync() async {
+    guard let account else { return }
+    isSyncing = true
+    errorMessage = nil
+    defer { isSyncing = false }
+
+    var counts = onHand
+    var cursor = lastSequence
+    // The cursor only ever moves forward, so a malformed page cannot spin here
+    // forever; the page cap is a belt-and-braces stop.
+    var pages = 0
+
+    do {
+      while pages < 100 {
+        let page = try await client.download(after: cursor, account: account)
+        for movement in page.movements {
+          counts[movement.partID, default: 0] += movement.delta
+        }
+        let highest = page.movements.compactMap(\.sequence).max()
+        let next = max(highest ?? page.latestSequence, cursor)
+        if !page.hasMore || next <= cursor {
+          cursor = max(next, page.latestSequence)
+          break
+        }
+        cursor = next
+        pages += 1
+      }
+      onHand = counts
+      lastSequence = cursor
+      lastSyncedAt = Date()
+      saveCache()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  // MARK: - Cache
+
+  private struct Cache: Codable {
+    var companyCode: String
+    var onHand: [String: Int]
+    var lastSequence: Int
+    var lastSyncedAt: Date?
+  }
+
+  private var cacheURL: URL {
+    let base = FileManager.default
+      .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? FileManager.default.temporaryDirectory
+    let folder = base.appendingPathComponent("PanelVault", isDirectory: true)
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder.appendingPathComponent("warehouse-stock.json")
+  }
+
+  private func loadCache() {
+    guard let data = try? Data(contentsOf: cacheURL),
+          let cache = try? JSONDecoder().decode(Cache.self, from: data) else { return }
+    // Only trust the cache if it belongs to the signed-in company.
+    guard cache.companyCode == account?.companyCode else { return }
+    onHand = cache.onHand
+    lastSequence = cache.lastSequence
+    lastSyncedAt = cache.lastSyncedAt
+  }
+
+  private func saveCache() {
+    let cache = Cache(
+      companyCode: account?.companyCode ?? "",
+      onHand: onHand,
+      lastSequence: lastSequence,
+      lastSyncedAt: lastSyncedAt
+    )
+    guard let data = try? JSONEncoder().encode(cache) else { return }
+    try? data.write(to: cacheURL, options: .atomic)
+  }
+}
+
+/// Small pill showing on-hand stock for a catalog part.
+struct StockBadge: View {
+  let theme: PanelTheme
+  let count: Int
+  var compact = false
+
+  private var color: Color {
+    if count <= 0 { return theme.danger }
+    if count <= 5 { return theme.designAccent }
+    return theme.success
+  }
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "shippingbox.fill")
+        .font(.system(size: compact ? 8 : 9, weight: .bold))
+      Text(count <= 0 ? "None" : "\(count)")
+        .font(.system(size: compact ? 10 : 11, weight: .heavy))
+    }
+    .foregroundStyle(color)
+    .lineLimit(1)
+    .padding(.horizontal, 7)
+    .frame(height: compact ? 19 : 21)
+    .background(color.opacity(0.14))
+    .clipShape(Capsule())
+  }
+}
+
+/// Connect this app to PanelVault Cloud and pull warehouse stock.
+struct WarehouseStockSheet: View {
+  let theme: PanelTheme
+  @ObservedObject private var store = WarehouseStockStore.shared
+  @Environment(\.dismiss) private var dismiss
+
+  @State private var server = ""
+  @State private var companyCode = ""
+  @State private var name = ""
+  @State private var password = ""
+
+  private var lastSyncedText: String {
+    guard let date = store.lastSyncedAt else { return "Never" }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    return formatter.localizedString(for: date, relativeTo: Date())
+  }
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(spacing: 14) {
+          if let account = store.account {
+            GlassCard(theme: theme) {
+              VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                  Label("Connected", systemImage: "checkmark.seal.fill")
+                    .font(.headline)
+                    .foregroundStyle(theme.success)
+                  Spacer()
+                  if store.isSyncing { ProgressView() }
+                }
+                Text(account.companyName)
+                  .font(.system(size: 17, weight: .heavy))
+                Text("\(account.userName) • \(account.role.capitalized)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                Divider().opacity(0.4)
+                HStack {
+                  Text("Parts in stock").font(.caption).foregroundStyle(.secondary)
+                  Spacer()
+                  Text("\(store.onHand.values.filter { $0 > 0 }.count)")
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundStyle(theme.primary)
+                }
+                HStack {
+                  Text("Last synced").font(.caption).foregroundStyle(.secondary)
+                  Spacer()
+                  Text(lastSyncedText).font(.caption.bold())
+                }
+              }
+            }
+
+            Button {
+              Task { await store.sync() }
+            } label: {
+              Label("Sync now", systemImage: "arrow.clockwise")
+                .font(.system(size: 15, weight: .heavy))
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(theme.primary)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous))
+            }
+            .buttonStyle(PanelPressButtonStyle())
+            .disabled(store.isSyncing)
+
+            Button(role: .destructive) {
+              store.disconnect()
+            } label: {
+              Text("Disconnect")
+                .font(.system(size: 14, weight: .bold))
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+            }
+            .buttonStyle(PanelPressButtonStyle())
+          } else {
+            Text("Sign in to PanelVault Cloud to show live warehouse stock on the equipment catalog.")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+
+            CreationTextInput(theme: theme, title: "Server", placeholder: "cloud.panelvault.app", symbol: "network", text: $server, keyboardType: .URL, capitalization: .never)
+            CreationTextInput(theme: theme, title: "Company code", placeholder: "Company code", symbol: "building.2.fill", text: $companyCode, capitalization: .characters)
+            CreationTextInput(theme: theme, title: "Your name", placeholder: "Your name", symbol: "person.fill", text: $name, capitalization: .words)
+
+            CreationFieldShell(theme: theme, title: "Password", symbol: "lock.fill") {
+              SecureField("Password", text: $password)
+                .font(.system(size: 15, weight: .semibold))
+                .multilineTextAlignment(.trailing)
+            }
+
+            Button {
+              Task {
+                await store.connect(baseURL: server, companyCode: companyCode, name: name, password: password)
+                if store.errorMessage == nil { password = "" }
+              }
+            } label: {
+              HStack(spacing: 8) {
+                if store.isSyncing { ProgressView().tint(.white) }
+                Text(store.isSyncing ? "Connecting" : "Connect")
+                  .font(.system(size: 15, weight: .heavy))
+              }
+              .frame(maxWidth: .infinity)
+              .frame(height: 48)
+              .background(theme.primary)
+              .foregroundStyle(.white)
+              .clipShape(RoundedRectangle(cornerRadius: theme.radiusControl, style: .continuous))
+            }
+            .buttonStyle(PanelPressButtonStyle())
+            .disabled(store.isSyncing || server.isEmpty || companyCode.isEmpty || name.isEmpty || password.isEmpty)
+          }
+
+          if let message = store.errorMessage {
+            Text(message)
+              .font(.caption)
+              .foregroundStyle(theme.danger)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+
+          BottomTabClearance()
+        }
+        .padding(18)
+      }
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Warehouse Stock")
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }.fontWeight(.bold)
+        }
+      }
+    }
   }
 }
