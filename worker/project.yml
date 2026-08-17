@@ -1,0 +1,34 @@
+# XcodeGen spec for the PanelVault Worker app.
+# Regenerate the project with: xcodegen generate (run inside worker/)
+#
+# tools/make_worker_project.py writes the same project without XcodeGen
+# installed. Either is fine; keep them in step if you change this file.
+name: Worker
+options:
+  bundleIdPrefix: com.panelvault
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Worker:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.panelvault.worker
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: 1
+        SWIFT_VERSION: "5.0"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: PV Worker
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: The camera scans supplier delivery notes and box barcodes so warehouse stock can be counted and received.
+        NSPhotoLibraryUsageDescription: Board and project photos are saved to and picked from your photo library.
+        NSLocalNetworkUsageDescription: PanelVault connects to your company's local PanelVault Cloud server.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true

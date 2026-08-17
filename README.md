@@ -10,12 +10,17 @@ what is available in the warehouse.
 PanelVault is being expanded from an iPhone app into a company platform that
 can be used from any computer:
 
-- The **PanelVault app** manages projects, boards, customers, manufacturers,
-  components, photos, schemes, and board completion.
+- The **PanelVault app** is the manager's iPhone app. It creates and manages
+  projects, boards, customers, manufacturers, components, photos, schemes, and
+  board completion.
+- The **PanelVault Worker app** is the same interface for the workshop floor:
+  the warehouse in place of the creation tab, and nothing that creates or
+  renames a record. A worker builds boards, works checklists, takes photos,
+  receives deliveries and consumes parts.
 - **PanelVault Cloud** gives the boss and managers a browser-based control
   center for the company, warehouse, boards, assignments, and team.
-- The **Warehouse iPhone app** lets workshop staff receive, consume, and
-  correct stock where the physical parts are handled.
+- The **Warehouse iPhone app** is the standalone stock app, for staff who only
+  handle parts and never touch a board.
 - All clients use the same component IDs and append-only stock movement model,
   which is designed to support reliable company-wide synchronization.
 
@@ -42,9 +47,20 @@ deduplicated by the server, so a delivery cannot be counted twice.
 
 | Path | Purpose |
 | --- | --- |
-| `ios/` | Main native SwiftUI PanelVault iPhone app |
+| `ios/` | Native SwiftUI PanelVault iPhone app — the manager app |
+| `worker/` | Native SwiftUI worker app: PanelVault's interface with the warehouse in it and creation removed |
 | `warehouse/` | Native SwiftUI warehouse companion app and delivery scanner |
 | `webapp/` | PanelVault Cloud website, API, accounts, roles, stock, and boards |
+| `tools/` | Scripts that assemble the worker app from `ios/` and `warehouse/` |
+
+### How the three iPhone apps relate
+
+`ios/` is the source of truth for the interface and the data model. `worker/` is
+a generated copy of it — `tools/split_worker.py` slices
+`ios/Runner/SceneDelegate.swift` into files and drops the manager-only screens,
+and `tools/port_warehouse.py` copies `warehouse/Sources` in beside them. Neither
+`ios/` nor `warehouse/` is modified by this; both still build and ship on their
+own. See `worker/README.md`.
 
 ## Current capabilities
 
@@ -118,6 +134,18 @@ Open the Cloud tab and enter the server address, company code, user name, and
 password. For local iPhone testing, use the Mac's Wi-Fi address such as
 `http://192.168.1.20:8090`, not `localhost`.
 
+## Run the Worker app
+
+Open `worker/Worker.xcodeproj` in Xcode and run the `Worker` scheme. Pure
+SwiftUI, iOS 16 or newer, no packages. Sign in under **More → PanelVault Cloud**
+so warehouse stock syncs. Delivery-note and barcode scanning need a physical
+iPhone.
+
+This app has not been compiled yet — it was assembled from `ios/` and
+`warehouse/` by script. Expect a first pass of small fixes in Xcode.
+`python3 tools/check_worker.py` runs the structural checks used while building
+it.
+
 ## Run the PanelVault app
 
 Open `ios/Runner.xcodeproj` in Xcode, select the `Runner` scheme and choose an
@@ -126,16 +154,20 @@ Flutter, CocoaPods, or the removed `Runner.xcworkspace`.
 
 ## Roadmap
 
-1. Use the barcode stocktake on the real warehouse boxes and refine the first
+1. Build the worker app in Xcode, fix whatever the first compile surfaces, and
+   put it on a workshop phone alongside the manager app.
+2. Use the barcode stocktake on the real warehouse boxes and refine the first
    company component list.
-2. Deploy PanelVault Cloud at `cloud.panel-vault.com` with HTTPS and durable
+3. Deploy PanelVault Cloud at `cloud.panel-vault.com` with HTTPS and durable
    storage.
-3. Store scanned delivery batches and their source pages in PanelVault Cloud.
-4. Add reviewed AI extraction for receipts and electrical schemes.
-5. Synchronize projects, boards, customers, photos, PDFs, and checklists from
-   the main PanelVault app.
-6. Sync board component usage back to warehouse consumption.
-7. Add purchase orders and delivery reconciliation.
+4. Store scanned delivery batches and their source pages in PanelVault Cloud.
+5. Add reviewed AI extraction for receipts and electrical schemes.
+6. Synchronize projects, boards, customers, photos, PDFs, and checklists between
+   the manager app, the worker app, and PanelVault Cloud. Until this lands, the
+   worker app reads its own device's archive only.
+7. Sync board component usage back to warehouse consumption, so ticking a board
+   checklist can create the consumption movements.
+8. Add purchase orders and delivery reconciliation.
 
-More implementation details are available in `webapp/README.md` and
-`warehouse/README.md`.
+More implementation details are available in `worker/README.md`,
+`webapp/README.md` and `warehouse/README.md`.
