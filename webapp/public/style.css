@@ -623,3 +623,32 @@ input:focus, select:focus, textarea:focus {
   background-repeat: no-repeat;
 }
 .skin select:hover { border-color: var(--line-2); }
+
+/* ============================================================ roles + costs */
+
+.badge.owner         { background: var(--primary-dim); color: var(--primary); }
+.badge.manager       { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.badge.staff-manager { background: color-mix(in srgb, var(--secondary) 14%, transparent); color: var(--secondary); }
+.badge.qa            { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+.badge.staff         { background: var(--wash-3); color: var(--ink-2); }
+
+.role-select {
+  appearance: none;
+  background: var(--wash-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.role-select:hover { border-color: var(--line-2); color: var(--ink); }
+
+/* Money is manager-visible data; label it so it reads as a restricted section. */
+.money-head {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-3);
+  margin: 18px 0 8px;
+}
+.money-col { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.money-col .num.muted { color: var(--ink-3); font-weight: 500; }
