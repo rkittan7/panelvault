@@ -198,24 +198,13 @@ struct SearchView: View {
           for index in boards.indices where boards[index].project == previousName {
             boards[index].project = updatedProject.name
           }
-        } onDeleteProject: {
-          projects.removeAll { $0.id == project.id }
-          for index in boards.indices where boards[index].project == project.name {
-            boards[index].project = "No Project"
-          }
-          recentVisits.removeAll { $0.kind == .project && $0.itemID == project.id }
-          selectedProject = nil
         }
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
       }
       .sheet(item: $selectedBoard) { board in
         if let index = boards.firstIndex(where: { $0.id == board.id }) {
-          BoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
-            boards.removeAll { $0.id == board.id }
-            recentVisits.removeAll { $0.kind == .board && $0.itemID == board.id }
-            selectedBoard = nil
-          }) {
+          BoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers) {
             selectedBoard = nil
           }
         } else {

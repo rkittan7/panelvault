@@ -140,7 +140,7 @@ struct PanelCloudClient {
   }
 }
 
-private struct PanelCloudErrorBody: Decodable { let error: String }
+struct PanelCloudErrorBody: Decodable { let error: String }
 
 /// The session token lives in the keychain, not UserDefaults. Its service id is
 /// distinct from the warehouse app's so the two never fight over one entry.

@@ -1003,12 +1003,6 @@ struct ProjectsListSheet: View {
           for index in boards.indices where boards[index].project == previousName {
             boards[index].project = updatedProject.name
           }
-        } onDeleteProject: {
-          projects.removeAll { $0.id == project.id }
-          for index in boards.indices where boards[index].project == project.name {
-            boards[index].project = "No Project"
-          }
-          selectedProject = nil
         }
       }
     }

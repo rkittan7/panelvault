@@ -109,8 +109,6 @@ Xcode's.
 
 ## Known rough edges
 
-- **Not yet compiled.** This was assembled without a Swift toolchain. Expect a
-  first pass of small fixes in Xcode.
 - **No app icon.** `Assets.xcassets` is not set up, so the icon slot is empty.
 - **Two catalogs in one binary.** `Sources/Catalog.swift` (PanelVault's
   `ComponentGroup`) and `Sources/Warehouse/WarehouseCatalog.swift` (`CatalogPart`)

@@ -167,6 +167,15 @@ DECL = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)"
 )
 
+# `private` on a top-level declaration means "visible in this file", and in the
+# PanelVault app that file is the entire app. Slicing it into Sources/ turns one
+# file scope into a dozen, so a top-level `private` helper would stop being
+# visible to the callers it was written for -- `syncedManufacturer` alone is
+# used from five of the files below. Drop the modifier on the way out: internal
+# is still module-scoped, so nothing becomes visible outside the app that was
+# not already visible to every line of the file this came from.
+TOP_LEVEL_PRIVATE = re.compile(r"^((?:@main\s+)?)(?:private|fileprivate)\s+")
+
 
 def slice_declarations(path):
     """Return [(name, kind, [lines])] for every top-level declaration.
@@ -191,9 +200,13 @@ def slice_declarations(path):
         starts.append((j, i, match.group(1), match.group(2)))
 
     out = []
-    for index, (top, _, kind, name) in enumerate(starts):
+    for index, (top, decl, kind, name) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
-        out.append((name, kind, lines[top:end]))
+        body = lines[top:end]
+        # Only the declaration's own line, never a `private` on a member inside
+        # it -- those still mean what they meant.
+        body[decl - top] = TOP_LEVEL_PRIVATE.sub(r"\1", body[decl - top], count=1)
+        out.append((name, kind, body))
     return out
 
 
