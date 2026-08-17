@@ -21,7 +21,7 @@ enum DateDisplay {
   }()
 }
 
-private func dueDateComesFirst(_ left: Date?, _ right: Date?) -> Bool? {
+func dueDateComesFirst(_ left: Date?, _ right: Date?) -> Bool? {
   switch (left, right) {
   case let (left?, right?):
     guard abs(left.timeIntervalSince1970 - right.timeIntervalSince1970) > 1 else { return nil }
@@ -35,30 +35,30 @@ private func dueDateComesFirst(_ left: Date?, _ right: Date?) -> Bool? {
   }
 }
 
-private func activeBoardPrioritySort(_ left: BoardDraft, _ right: BoardDraft) -> Bool {
+func activeBoardPrioritySort(_ left: BoardDraft, _ right: BoardDraft) -> Bool {
   if let dueSort = dueDateComesFirst(left.dueDate, right.dueDate) { return dueSort }
   if left.completion != right.completion { return left.completion > right.completion }
   return left.name < right.name
 }
 
-private func boardPrioritySort(_ left: BoardDraft, _ right: BoardDraft) -> Bool {
+func boardPrioritySort(_ left: BoardDraft, _ right: BoardDraft) -> Bool {
   if let dueSort = dueDateComesFirst(left.dueDate, right.dueDate) { return dueSort }
   if left.isCompleted != right.isCompleted { return !left.isCompleted && right.isCompleted }
   if left.completion != right.completion { return left.completion > right.completion }
   return left.name < right.name
 }
 
-private func projectPrioritySort(_ left: ProjectItem, _ right: ProjectItem) -> Bool {
+func projectPrioritySort(_ left: ProjectItem, _ right: ProjectItem) -> Bool {
   if let dueSort = dueDateComesFirst(left.dueDate, right.dueDate) { return dueSort }
   return left.name < right.name
 }
 
-private func syncedManufacturer(named name: String, in manufacturers: [ManufacturerItem]) -> ManufacturerItem? {
+func syncedManufacturer(named name: String, in manufacturers: [ManufacturerItem]) -> ManufacturerItem? {
   manufacturers.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame } ??
     ManufacturerItem.defaults.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
 }
 
-private func dueUrgencyColor(for date: Date) -> Color {
+func dueUrgencyColor(for date: Date) -> Color {
   let hours = date.timeIntervalSince(Date()) / 3600
   if hours <= 0 { return Color(hex: 0xFF453A) }
   let days = min(max(hours / 24, 0), 14)
