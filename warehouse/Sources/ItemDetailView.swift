@@ -65,6 +65,11 @@ struct ItemDetailView: View {
             Text("\(part.type) • \(part.rating) • \(part.poles)")
               .font(.caption.weight(.semibold))
               .foregroundStyle(theme.mutedText)
+            if let serialNumber = part.serialNumber, !serialNumber.isEmpty {
+              Text("Serial: \(serialNumber)")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(theme.primary)
+            }
           }
           Spacer()
           VStack(alignment: .trailing, spacing: 2) {
