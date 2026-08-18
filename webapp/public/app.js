@@ -78,7 +78,21 @@ async function api(path, body) {
   return data;
 }
 
-const isAdmin = () => state && (state.me.role === "owner" || state.me.role === "manager");
+// Capabilities come from the server with the session, so the UI can never show
+// an action the API would refuse — and never hides one it would allow.
+const isAdmin = () => Boolean(state?.me?.can?.administer);
+const canSeeCosts = () => Boolean(state?.me?.can?.seeCosts);
+const canManageMembers = () => Boolean(state?.me?.can?.manageMembers);
+const roleLabel = (role) => state?.roleLabels?.[role] || role;
+
+/** Minor units to a readable amount. Money is integer cents end to end. */
+function money(minor) {
+  if (minor == null) return "\u2014";
+  return (minor / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 // ---------------------------------------------------------------- auth
 
@@ -173,7 +187,7 @@ async function refresh() {
   $("#company-name").textContent = state.company.name;
   $("#company-code").textContent = state.company.code;
   $("#me-name").textContent = state.me.name;
-  $("#me-role").textContent = state.me.role;
+  $("#me-role").textContent = roleLabel(state.me.role);
   $("#me-avatar").textContent = state.me.name
     .split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   renderNav();
@@ -289,6 +303,22 @@ function renderDashboard() {
     statTile("var(--positive)", "Open boards", open, `${state.boards.length} total`),
   );
   view.append(stats);
+
+  if (canSeeCosts() && state.costSummary) {
+    const c = state.costSummary;
+    const moneyStats = el("div", "stats");
+    moneyStats.append(
+      statTile("var(--primary)", "Stock value", money(c.stockValueMinor), "on the shelf"),
+      statTile("var(--secondary)", "Board cost", money(c.boardCostMinor), "parts consumed"),
+      statTile(
+        c.unpricedParts ? "var(--warning)" : "var(--positive)",
+        "Priced parts",
+        `${c.pricedParts}/${c.pricedParts + c.unpricedParts}`,
+        c.unpricedParts ? `${c.unpricedParts} need a price` : "all parts priced",
+      ),
+    );
+    view.append(el("div", "money-head", "Costs \u00b7 visible to you only"), moneyStats);
+  }
 
   const grid = el("div", "dash-grid");
   const left = el("div", "dash-col");
@@ -431,6 +461,23 @@ function renderStock() {
       qty.append(el("div", `num ${isLow ? "low" : "ok"}`, String(s.onHand)), el("div", "cap", "on hand"));
       row.append(qty);
 
+      if (canSeeCosts()) {
+        const cost = el("div", "qty-col money-col");
+        const unset = s.unitCostMinor == null;
+        cost.append(
+          el("div", `num${unset ? " muted" : ""}`, money(s.unitCostMinor)),
+          el("div", "cap", unset ? "no price" : "each"),
+        );
+        row.append(cost);
+
+        const value = el("div", "qty-col money-col");
+        value.append(
+          el("div", `num${s.stockValueMinor == null ? " muted" : ""}`, money(s.stockValueMinor)),
+          el("div", "cap", "value"),
+        );
+        row.append(value);
+      }
+
       if (isAdmin()) {
         const rowActions = el("div", "row-actions");
         rowActions.append(
@@ -480,7 +527,21 @@ function renderBoards() {
     main.append(el("div", "row-title", title));
     main.append(el("div", "row-sub",
       [b.customer, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
-    row.append(main, statusBadge(b.status));
+    row.append(main);
+
+    if (canSeeCosts()) {
+      const cost = el("div", "qty-col money-col");
+      cost.append(el("div", "num", money(b.costMinor ?? 0)));
+      cost.append(el("div", "cap", b.unpricedLines ? `${b.unpricedLines} unpriced` : "parts cost"));
+      cost.title = (b.costItems || []).length
+        ? (b.costItems || [])
+            .map((i) => `${i.partName} x${i.quantity} = ${money(i.lineTotalMinor)}`)
+            .join("\n")
+        : "No parts consumed against this board yet.";
+      row.append(cost);
+    }
+
+    row.append(statusBadge(b.status));
 
     const rowActions = el("div", "row-actions");
     if (isAdmin() || isMine) {
@@ -517,16 +578,16 @@ function renderTeam() {
   const view = $("#view-team");
   view.replaceChildren();
 
-  const actions = [smallBtn("Worker link", "accent", "link", () => createInvite("worker"))];
-  if (state.me.role === "owner") {
-    actions.push(smallBtn("Manager link", "", "link", () => createInvite("manager")));
-  }
+  const actions = (state.me.invitableRoles || []).map((role, index) =>
+    smallBtn(`${roleLabel(role)} link`, index === 0 ? "accent" : "", "link", () => createInvite(role)));
   view.append(viewHead("Team", ...actions));
 
   const info = el("div", "card");
   info.style.color = "var(--ink-3)";
   info.style.fontSize = "13px";
-  info.textContent = "Send an invite link to your team. Workers see stock and their boards; managers can also change the warehouse and assign boards.";
+  info.textContent =
+    "Managers run the warehouse and see costs. Staff Managers run the floor \u2014 stock and boards \u2014 but not prices. " +
+    "QA reviews work without changing stock. Staff see stock and their own boards.";
   view.append(info);
 
   if ((state.invites || []).length) {
@@ -535,7 +596,7 @@ function renderTeam() {
       const card = el("div", "card");
       const head = el("div", "row");
       head.style.cssText = "border:0;background:none;padding:0";
-      const roleBadge = el("span", `badge ${invite.role}`, invite.role);
+      const roleBadge = el("span", `badge ${invite.role}`, roleLabel(invite.role));
       const grow = el("div", "row-main");
       grow.append(roleBadge);
       head.append(grow);
@@ -566,9 +627,25 @@ function renderTeam() {
     const main = el("div", "row-main");
     main.append(el("div", "row-title", member.name + (member.active ? "" : " (disabled)")));
     main.append(el("div", "row-sub", `joined ${new Date(member.createdAt).toLocaleDateString()}`));
-    row.append(main, el("span", `badge ${member.role}`, member.role));
-    if (state.me.role === "owner" && member.role !== "owner") {
+    row.append(main, el("span", `badge ${member.role}`, roleLabel(member.role)));
+    if (canManageMembers() && member.role !== "owner") {
       const rowActions = el("div", "row-actions");
+
+      // Owner-only role change. The API re-checks, so this is convenience.
+      const roleSelect = el("select", "role-select");
+      ["manager", "staff-manager", "qa", "staff"].forEach((role) => {
+        const option = el("option", null, roleLabel(role));
+        option.value = role;
+        if (role === member.role) option.selected = true;
+        roleSelect.append(option);
+      });
+      roleSelect.addEventListener("change", async () => {
+        await api("/api/member-update", { userID: member.id, role: roleSelect.value });
+        await refresh();
+        switchView("team");
+      });
+      rowActions.append(roleSelect);
+
       rowActions.append(smallBtn(member.active ? "Disable" : "Enable", member.active ? "danger" : "accent", null, async () => {
         await api("/api/member-update", { userID: member.id, active: !member.active });
         await refresh();
@@ -648,13 +725,30 @@ function openSettingsModal(entry) {
     const loc = field("Location", "Shelf / drawer");
     loc.input.value = entry.location;
     modal.append(min.label, loc.label);
+
+    // Only rendered when the server sent prices; posting unitCost from anyone
+    // else is refused server-side regardless.
+    let price = null;
+    if (canSeeCosts()) {
+      price = field("Unit price (blank = unpriced)", "0.00", "number");
+      price.input.step = "0.01";
+      price.input.min = "0";
+      price.input.value = entry.unitCostMinor == null ? "" : (entry.unitCostMinor / 100).toFixed(2);
+      modal.append(price.label);
+    }
+
     modal.append(modalActions(close, "Save", async () => {
       const minimum = parseInt(min.input.value, 10) || 0;
-      await api("/api/part-settings", {
+      const payload = {
         partID: entry.part.id,
         minimumLevel: minimum === 0 ? null : minimum,
         location: loc.input.value,
-      });
+      };
+      if (price) {
+        const raw = price.input.value.trim();
+        payload.unitCost = raw === "" ? null : Number(raw);
+      }
+      await api("/api/part-settings", payload);
       close();
       await refresh();
       switchView("stock");

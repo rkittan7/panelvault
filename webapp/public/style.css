@@ -1,33 +1,146 @@
-/* PanelVault Cloud — dark operations dashboard.
-   Palette mirrors PanelTheme "Obsidian Blue" from the iOS apps.
+/* PanelVault Cloud — operations dashboard.
+   Skins mirror PanelTheme in ios/Runner/SceneDelegate.swift one for one, so the
+   portal and the phone app are the same product. A skin sets its palette and
+   corner radius; the neutral washes and shadows follow the skin's light/dark
+   mode via the two shared blocks below.
    Density over decoration: tight 4px rhythm, recessive chrome, one accent. */
 
-:root {
-  --bg: #08090B;
-  --panel: #0E1014;
-  --panel-2: #14171C;
-  --raise: #191D23;
-
-  --line: rgba(255, 255, 255, 0.07);
-  --line-2: rgba(255, 255, 255, 0.11);
-
-  --ink: #EDF0F5;
-  --ink-2: #9AA3B2;
-  --ink-3: #666F7E;
-
-  --primary: #6E86FF;
-  --primary-dim: rgba(110, 134, 255, 0.14);
-  --secondary: #4CC9F0;
-  --positive: #35E177;
-  --warning: #FFC43D;
-  --negative: #FF5C6B;
-
-  --r: 12px;
-  --r-sm: 9px;
+/* ---- Cupertino: the default, matching the iOS app's default skin ---- */
+:root,
+:root[data-theme="cupertino"] {
+  --bg: #F2F2F7;
+  --panel: #FFFFFF;
+  --panel-2: #F7F7FA;
+  --raise: #FFFFFF;
+  --ink: #1C1C1E;
+  --ink-2: #6B6B70;
+  --ink-3: #9A9AA0;
+  --primary: #007AFF;
+  --secondary: #5AC8FA;
+  --positive: #34C759;
+  --warning: #FF9500;
+  --negative: #FF3B30;
+  --r: 14px;
+  --r-sm: 10px;
+  --scheme: light;
 }
 
+:root[data-theme="neon-nights"] {
+  --bg: #0B0313; --panel: #1A0B2E; --panel-2: #22103A; --raise: #2A1546;
+  --ink: #F4EEFB; --ink-2: #B9A6D0; --ink-3: #8A76A6;
+  --primary: #FF2E97; --secondary: #00E5FF;
+  --positive: #3DFFA8; --warning: #FFC43D; --negative: #FF4D6D;
+  --r: 18px; --r-sm: 13px; --scheme: dark;
+}
+
+:root[data-theme="miami"] {
+  --bg: #071A26; --panel: #0E2C3D; --panel-2: #123646; --raise: #17414F;
+  --ink: #EAF6F8; --ink-2: #9BBECB; --ink-3: #6E93A2;
+  --primary: #FF4FA3; --secondary: #2EE6C5;
+  --positive: #2EE6C5; --warning: #FFC43D; --negative: #FF6B6B;
+  --r: 22px; --r-sm: 16px; --scheme: dark;
+}
+
+:root[data-theme="ultraviolet"] {
+  --bg: #0A0618; --panel: #171030; --panel-2: #1E163C; --raise: #261C4A;
+  --ink: #F1EEFA; --ink-2: #AEA3C8; --ink-3: #8177A0;
+  --primary: #B4FF39; --secondary: #A855F7;
+  --positive: #B4FF39; --warning: #FFC43D; --negative: #FF5C7C;
+  --r: 16px; --r-sm: 12px; --scheme: dark;
+}
+
+:root[data-theme="solar-flare"] {
+  --bg: #140A02; --panel: #241203; --panel-2: #2E1805; --raise: #3A1F07;
+  --ink: #FBF1E6; --ink-2: #C9A67F; --ink-3: #98795A;
+  --primary: #FF7A18; --secondary: #FFD028;
+  --positive: #7FD858; --warning: #FFD028; --negative: #FF4530;
+  --r: 10px; --r-sm: 8px; --scheme: dark;
+}
+
+:root[data-theme="terminal"] {
+  --bg: #000000; --panel: #0A140A; --panel-2: #0E1C0E; --raise: #132413;
+  --ink: #E8FFEC; --ink-2: #7FB88A; --ink-3: #4E7A57;
+  --primary: #33FF66; --secondary: #FFB000;
+  --positive: #33FF66; --warning: #FFB000; --negative: #FF3B30;
+  --r: 16px; --r-sm: 12px; --scheme: dark;
+}
+
+:root[data-theme="bubblegum"] {
+  --bg: #FFF0F6; --panel: #FFFFFF; --panel-2: #FFF7FA; --raise: #FFFFFF;
+  --ink: #2A1622; --ink-2: #7A5E6C; --ink-3: #B08AA0;
+  --primary: #E5399B; --secondary: #7C4DFF;
+  --positive: #00B37E; --warning: #E5399B; --negative: #F43F5E;
+  --r: 22px; --r-sm: 16px; --scheme: light;
+}
+
+:root[data-theme="blueprint"] {
+  --bg: #E9EDF1; --panel: #FFFFFF; --panel-2: #F5F7F9; --raise: #FFFFFF;
+  --ink: #16222E; --ink-2: #5A6B78; --ink-3: #8A9AA6;
+  --primary: #0F6D7E; --secondary: #1B4D8F;
+  --positive: #2F7D32; --warning: #9A5B00; --negative: #C0392B;
+  --r: 14px; --r-sm: 11px; --scheme: light;
+}
+
+:root[data-theme="field"] {
+  --bg: #16181C; --panel: #202429; --panel-2: #262B31; --raise: #2E343B;
+  --ink: #F3F5F7; --ink-2: #A8B0B8; --ink-3: #79828B;
+  --primary: #FFB020; --secondary: #FF6A3D;
+  --positive: #5FD08A; --warning: #FFB020; --negative: #FF6B6B;
+  --r: 8px; --r-sm: 6px; --scheme: dark;
+}
+
+/* ---- Mode-dependent neutrals. Overlays must invert with the ground, or a
+       white sheen disappears on a light skin and a black one muddies a dark. ---- */
+:root,
+:root[data-theme="cupertino"],
+:root[data-theme="bubblegum"],
+:root[data-theme="blueprint"] {
+  --line: rgba(0, 0, 0, 0.09);
+  --line-2: rgba(0, 0, 0, 0.14);
+  --wash-1: rgba(0, 0, 0, 0.025);
+  --wash-2: rgba(0, 0, 0, 0.05);
+  --wash-3: rgba(0, 0, 0, 0.07);
+  --wash-4: rgba(0, 0, 0, 0.10);
+  --scrim: rgba(0, 0, 0, 0.06);
+  --overlay: rgba(20, 20, 25, 0.35);
+  --shade-sm: 0 8px 24px rgba(0, 0, 0, 0.10);
+  --shade-md: 0 20px 50px rgba(0, 0, 0, 0.13);
+  --shade-lg: 0 24px 60px rgba(0, 0, 0, 0.17);
+}
+
+:root[data-theme="neon-nights"],
+:root[data-theme="miami"],
+:root[data-theme="ultraviolet"],
+:root[data-theme="solar-flare"],
+:root[data-theme="terminal"],
+:root[data-theme="field"] {
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.13);
+  --wash-1: rgba(255, 255, 255, 0.025);
+  --wash-2: rgba(255, 255, 255, 0.05);
+  --wash-3: rgba(255, 255, 255, 0.08);
+  --wash-4: rgba(255, 255, 255, 0.12);
+  --scrim: rgba(0, 0, 0, 0.30);
+  --overlay: rgba(0, 0, 0, 0.62);
+  --shade-sm: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shade-md: 0 20px 50px rgba(0, 0, 0, 0.5);
+  --shade-lg: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* Derived once so every skin gets a matching tint without restating it. */
+:root { --primary-dim: color-mix(in srgb, var(--primary) 14%, transparent); }
+
+/* Ink for text sitting on a solid --primary fill. White is right for the blues
+   and pinks, but unreadable on lime, phosphor green and amber, so those flip to
+   dark. Attribute selectors outrank the bare :root default, so order is safe. */
+:root { --on-primary: #FFFFFF; }
+:root[data-theme="ultraviolet"],
+:root[data-theme="terminal"],
+:root[data-theme="field"],
+:root[data-theme="solar-flare"] { --on-primary: #12140A; }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { color-scheme: dark; }
+html { color-scheme: var(--scheme); }
 
 body {
   background: var(--bg);
@@ -46,11 +159,11 @@ svg { display: block; }
 
 .brand-mark {
   display: grid; place-items: center;
-  color: #fff;
-  background: linear-gradient(150deg, #8098FF, #4F63D9);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
   border-radius: 13px;
   width: 50px; height: 50px;
-  box-shadow: 0 8px 28px rgba(110, 134, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--primary) 45%, transparent);
 }
 .brand-mark svg { width: 26px; height: 26px; }
 .brand-mark.sm { width: 32px; height: 32px; border-radius: 9px; box-shadow: none; }
@@ -63,7 +176,7 @@ svg { display: block; }
   display: grid; place-items: center;
   padding: 32px 20px;
   background:
-    radial-gradient(680px 420px at 50% -5%, rgba(110, 134, 255, 0.15), transparent 60%),
+    radial-gradient(680px 420px at 50% -5%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 60%),
     var(--bg);
 }
 .auth-inner { width: 100%; max-width: 384px; }
@@ -78,12 +191,12 @@ svg { display: block; }
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shade-md);
 }
 
 .seg {
   display: flex;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--scrim);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   padding: 3px;
@@ -119,7 +232,7 @@ svg { display: block; }
 
 input, select, textarea {
   width: 100%; height: 38px; padding: 0 11px;
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--scrim);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--ink); font: inherit; font-size: 13.5px;
@@ -128,12 +241,12 @@ input, select, textarea {
 input::placeholder { color: var(--ink-3); }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--primary);
-  background: rgba(110, 134, 255, 0.05);
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
 }
 
 .btn-primary {
   height: 40px; border: 0; border-radius: var(--r-sm);
-  background: var(--primary); color: #fff;
+  background: var(--primary); color: var(--on-primary);
   font: inherit; font-size: 13.5px; font-weight: 650;
   cursor: pointer; transition: filter 0.15s, transform 0.08s;
 }
@@ -153,15 +266,15 @@ input:focus, select:focus, textarea:focus {
   height: 27px; padding: 0 10px;
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid transparent; border-radius: 7px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-2);
   color: var(--ink-2);
   font: inherit; font-size: 12px; font-weight: 600;
   cursor: pointer; white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
-.btn-small:hover { background: rgba(255, 255, 255, 0.09); color: var(--ink); }
+.btn-small:hover { background: var(--wash-4); color: var(--ink); }
 .btn-small.accent { background: var(--primary-dim); color: var(--primary); }
-.btn-small.accent:hover { background: rgba(110, 134, 255, 0.22); }
+.btn-small.accent:hover { background: color-mix(in srgb, var(--primary) 22%, transparent); }
 .btn-small.danger { color: var(--negative); }
 .btn-small.danger:hover { background: rgba(255, 92, 107, 0.12); }
 .btn-small svg { width: 13px; height: 13px; }
@@ -173,7 +286,7 @@ input:focus, select:focus, textarea:focus {
   color: var(--ink-3); cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.icon-btn:hover { background: rgba(255, 255, 255, 0.07); color: var(--ink); }
+.icon-btn:hover { background: var(--wash-3); color: var(--ink); }
 .icon-btn svg { width: 16px; height: 16px; }
 
 /* ============================================================ shell */
@@ -205,7 +318,7 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer; transition: background 0.13s, color 0.13s;
 }
 .nav button svg { width: 17px; height: 17px; opacity: 0.8; flex-shrink: 0; }
-.nav button:hover { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+.nav button:hover { background: var(--wash-1); color: var(--ink); }
 .nav button.active { background: var(--primary-dim); color: var(--primary); }
 .nav button.active svg { opacity: 1; }
 .nav .count {
@@ -223,7 +336,7 @@ input:focus, select:focus, textarea:focus {
 .avatar {
   width: 30px; height: 30px; flex-shrink: 0;
   border-radius: 8px; display: grid; place-items: center;
-  background: linear-gradient(150deg, rgba(110, 134, 255, 0.4), rgba(76, 201, 240, 0.22));
+  background: linear-gradient(150deg, color-mix(in srgb, var(--primary) 40%, transparent), color-mix(in srgb, var(--secondary) 22%, transparent));
   border: 1px solid var(--line-2);
   font-size: 11px; font-weight: 700; color: var(--ink);
 }
@@ -254,7 +367,7 @@ input:focus, select:focus, textarea:focus {
 .dash-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 
 .panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 40%), var(--panel);
+  background: linear-gradient(180deg, var(--wash-1), transparent 40%), var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r);
 }
@@ -272,7 +385,7 @@ input:focus, select:focus, textarea:focus {
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .stat {
   padding: 11px 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 55%), var(--panel);
+  background: linear-gradient(180deg, var(--wash-1), transparent 55%), var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r);
   display: flex; flex-direction: column; gap: 7px;
@@ -299,14 +412,14 @@ input:focus, select:focus, textarea:focus {
   display: inline-block; margin-right: 5px; vertical-align: -1px;
 }
 .chart svg { width: 100%; height: auto; overflow: visible; }
-.chart .grid-line { stroke: rgba(255, 255, 255, 0.05); stroke-width: 1; }
+.chart .grid-line { stroke: var(--line); stroke-width: 1; }
 .chart .axis-text { fill: var(--ink-3); font-size: 9px; font-weight: 600; }
 .chart .bar { transition: opacity 0.12s; }
 .chart .bar-hit { fill: transparent; cursor: pointer; }
 .chart .bar-hit:hover ~ .bar,
 .chart g.col:hover .bar { opacity: 1; }
 .chart g.col .bar { opacity: 0.92; }
-.chart g.col:hover .band { fill: rgba(255, 255, 255, 0.035); }
+.chart g.col:hover .band { fill: var(--wash-1); }
 .chart .band { fill: transparent; }
 
 .tooltip {
@@ -316,7 +429,7 @@ input:focus, select:focus, textarea:focus {
   border-radius: 8px;
   padding: 7px 9px;
   font-size: 11.5px; line-height: 1.5;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shade-sm);
   white-space: nowrap; z-index: 5;
   transform: translate(-50%, -100%);
 }
@@ -336,7 +449,7 @@ input:focus, select:focus, textarea:focus {
   transition: background 0.13s;
 }
 .row.click { cursor: pointer; }
-.row.click:hover { background: rgba(255, 255, 255, 0.035); }
+.row.click:hover { background: var(--wash-1); }
 .row-main { flex: 1; min-width: 0; }
 .row-title {
   font-size: 13px; font-weight: 600;
@@ -375,7 +488,7 @@ input:focus, select:focus, textarea:focus {
 .delta.neg { color: var(--secondary); }
 
 /* meter — level against minimum */
-.meter { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; margin-top: 6px; }
+.meter { height: 4px; border-radius: 2px; background: var(--wash-3); overflow: hidden; margin-top: 6px; }
 .meter i { display: block; height: 100%; border-radius: 2px; }
 
 /* badges — never colour alone: each carries a dot plus its label */
@@ -388,10 +501,10 @@ input:focus, select:focus, textarea:focus {
 }
 .badge .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .badge.owner { background: var(--primary-dim); color: var(--primary); }
-.badge.manager { background: rgba(76, 201, 240, 0.13); color: var(--secondary); }
-.badge.worker { background: rgba(255, 255, 255, 0.06); color: var(--ink-2); }
+.badge.manager { background: color-mix(in srgb, var(--secondary) 13%, transparent); color: var(--secondary); }
+.badge.worker { background: var(--wash-2); color: var(--ink-2); }
 .badge.s-design { background: rgba(255, 196, 61, 0.12); color: var(--warning); }
-.badge.s-progress { background: rgba(76, 201, 240, 0.12); color: var(--secondary); }
+.badge.s-progress { background: color-mix(in srgb, var(--secondary) 12%, transparent); color: var(--secondary); }
 .badge.s-done { background: rgba(53, 225, 119, 0.12); color: var(--positive); }
 
 /* ============================================================ toolbar */
@@ -413,7 +526,7 @@ input:focus, select:focus, textarea:focus {
   border: 1px dashed var(--line-2);
   border-radius: var(--r);
 }
-.empty .chip-icon { width: 34px; height: 34px; background: rgba(255, 255, 255, 0.04); color: var(--ink-3); }
+.empty .chip-icon { width: 34px; height: 34px; background: var(--wash-1); color: var(--ink-3); }
 .empty p { color: var(--ink-3); font-size: 12.5px; max-width: 300px; line-height: 1.55; }
 .empty.mini { padding: 20px 16px; }
 
@@ -421,7 +534,7 @@ input:focus, select:focus, textarea:focus {
 
 .invite-link {
   margin-top: 9px; padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--scrim);
   border: 1px solid var(--line);
   border-radius: 8px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -433,7 +546,7 @@ input:focus, select:focus, textarea:focus {
 
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   display: grid; place-items: center; padding: 20px; z-index: 50;
   animation: fade 0.16s ease;
@@ -443,7 +556,7 @@ input:focus, select:focus, textarea:focus {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--line-2);
   border-radius: 15px; padding: 18px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shade-lg);
   display: flex; flex-direction: column; gap: 13px;
   animation: rise 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
@@ -479,3 +592,63 @@ input:focus, select:focus, textarea:focus {
   .content { padding: 16px 14px 44px; }
   .view-head h2 { font-size: 18px; }
 }
+
+/* ============================================================ skin picker */
+
+.skin {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+}
+.skin-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-3);
+  white-space: nowrap;
+}
+.skin select {
+  flex: 1; min-width: 0;
+  appearance: none;
+  background: var(--wash-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 7px 26px 7px 9px;
+  cursor: pointer;
+  /* Chevron drawn in CSS so the portal keeps its zero-asset footprint. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+                    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.skin select:hover { border-color: var(--line-2); }
+
+/* ============================================================ roles + costs */
+
+.badge.owner         { background: var(--primary-dim); color: var(--primary); }
+.badge.manager       { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.badge.staff-manager { background: color-mix(in srgb, var(--secondary) 14%, transparent); color: var(--secondary); }
+.badge.qa            { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+.badge.staff         { background: var(--wash-3); color: var(--ink-2); }
+
+.role-select {
+  appearance: none;
+  background: var(--wash-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.role-select:hover { border-color: var(--line-2); color: var(--ink); }
+
+/* Money is manager-visible data; label it so it reads as a restricted section. */
+.money-head {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-3);
+  margin: 18px 0 8px;
+}
+.money-col { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.money-col .num.muted { color: var(--ink-3); font-weight: 500; }

@@ -3,9 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#050607">
+  <meta name="theme-color" content="#F2F2F7">
   <title>PanelVault Cloud</title>
   <link rel="stylesheet" href="/style.css">
+  <script>
+    /* Applied before first paint, so choosing a dark skin does not flash a
+       light page on every load. */
+    (function () {
+      try {
+        var saved = localStorage.getItem("panelvault.skin");
+        if (saved) document.documentElement.dataset.theme = saved;
+      } catch (error) {
+        /* Private mode or blocked storage: fall back to the default skin. */
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="app">
@@ -15,7 +27,7 @@
       <div class="auth-inner">
         <div class="auth-brand">
           <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18"/><path d="M9 4v6"/><path d="M12 14h6"/><path d="M12 17h4"/><circle cx="7.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
           </div>
           <h1>PanelVault <span>Cloud</span></h1>
           <p>The company warehouse, from anywhere.</p>
@@ -81,7 +93,7 @@
       <aside class="sidebar">
         <div class="sidebar-brand">
           <div class="brand-mark sm" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18"/><path d="M9 4v6"/><path d="M12 14h6"/><path d="M12 17h4"/><circle cx="7.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
           </div>
           <div class="sidebar-brand-text">
             <strong id="company-name"></strong>
@@ -92,6 +104,20 @@
         <nav class="nav" id="nav"></nav>
 
         <div class="sidebar-foot">
+          <div class="skin">
+            <span class="skin-label" id="skin-label">Skin</span>
+            <select id="skin-select" aria-labelledby="skin-label">
+              <option value="cupertino">Cupertino</option>
+              <option value="neon-nights">Neon Nights</option>
+              <option value="miami">Miami</option>
+              <option value="ultraviolet">Ultraviolet</option>
+              <option value="solar-flare">Solar Flare</option>
+              <option value="terminal">Terminal</option>
+              <option value="bubblegum">Bubblegum</option>
+              <option value="blueprint">Blueprint</option>
+              <option value="field">Field</option>
+            </select>
+          </div>
           <div class="user-chip">
             <div class="avatar" id="me-avatar"></div>
             <div class="user-chip-text">
@@ -115,6 +141,37 @@
   </div>
 
   <div id="modal-root"></div>
+  <script>
+    /* Skin picker. Kept out of app.js so the chrome keeps working even if the
+       portal bundle fails to load. */
+    (function () {
+      var KEY = "panelvault.skin";
+      var select = document.getElementById("skin-select");
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (!select) return;
+
+      function syncBrowserChrome() {
+        if (!meta) return;
+        var ground = getComputedStyle(document.documentElement)
+          .getPropertyValue("--bg")
+          .trim();
+        if (ground) meta.setAttribute("content", ground);
+      }
+
+      select.value = document.documentElement.dataset.theme || "cupertino";
+      syncBrowserChrome();
+
+      select.addEventListener("change", function () {
+        document.documentElement.dataset.theme = select.value;
+        try {
+          localStorage.setItem(KEY, select.value);
+        } catch (error) {
+          /* Not persisting is survivable; the skin still applies this session. */
+        }
+        syncBrowserChrome();
+      });
+    })();
+  </script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
