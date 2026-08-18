@@ -102,6 +102,26 @@ struct CloudPartsResponse: Decodable {
   let customParts: [CatalogPart]
 }
 
+struct WarehouseCloudInvite {
+  let companyCode: String
+  let inviteCode: String
+
+  static func parse(companyCode rawCompany: String, invite rawInvite: String) throws -> WarehouseCloudInvite {
+    let fallbackCompany = rawCompany.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let inviteText = rawInvite.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let url = URL(string: inviteText), let fragment = url.fragment {
+      let parts = fragment.split(separator: "/").map(String.init)
+      if parts.count >= 3, parts[0].lowercased() == "join" {
+        return WarehouseCloudInvite(companyCode: parts[1].uppercased(), inviteCode: parts[2].uppercased())
+      }
+    }
+    guard !fallbackCompany.isEmpty, !inviteText.isEmpty else {
+      throw WarehouseCloudError.server("Paste the invite link, or enter both company and invite codes.")
+    }
+    return WarehouseCloudInvite(companyCode: fallbackCompany, inviteCode: inviteText.uppercased())
+  }
+}
+
 enum WarehouseCloudError: LocalizedError {
   case invalidServer
   case server(String)
@@ -132,8 +152,50 @@ struct WarehouseCloudClient {
       body: payload,
       token: nil
     )
-    return WarehouseCloudAccount(
-      baseURL: normalized.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+    return account(from: response, baseURL: normalized)
+  }
+
+  func createCompany(baseURL: String, companyName: String, name: String, password: String) async throws -> WarehouseCloudAccount {
+    let normalized = try normalizedBaseURL(baseURL)
+    let payload = ["companyName": companyName, "name": name, "password": password]
+    let response: CloudLoginResponse = try await request(
+      baseURL: normalized,
+      path: "/api/mobile/company",
+      method: "POST",
+      body: payload,
+      token: nil
+    )
+    return account(from: response, baseURL: normalized)
+  }
+
+  func joinCompany(
+    baseURL: String,
+    companyCode: String,
+    inviteCode: String,
+    name: String,
+    password: String
+  ) async throws -> WarehouseCloudAccount {
+    let normalized = try normalizedBaseURL(baseURL)
+    let invite = try WarehouseCloudInvite.parse(companyCode: companyCode, invite: inviteCode)
+    let payload = [
+      "companyCode": invite.companyCode,
+      "inviteCode": invite.inviteCode,
+      "name": name,
+      "password": password,
+    ]
+    let response: CloudLoginResponse = try await request(
+      baseURL: normalized,
+      path: "/api/mobile/join",
+      method: "POST",
+      body: payload,
+      token: nil
+    )
+    return account(from: response, baseURL: normalized)
+  }
+
+  private func account(from response: CloudLoginResponse, baseURL: URL) -> WarehouseCloudAccount {
+    WarehouseCloudAccount(
+      baseURL: baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
       token: response.token,
       expiresAt: response.expiresAt,
       companyCode: response.company.code,
@@ -196,7 +258,21 @@ struct WarehouseCloudClient {
     guard let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
       throw WarehouseCloudError.invalidServer
     }
+    if url.scheme?.lowercased() == "http", !Self.isPrivateDevelopmentHost(url.host ?? "") {
+      throw WarehouseCloudError.invalidServer
+    }
     return url
+  }
+
+  private static func isPrivateDevelopmentHost(_ rawHost: String) -> Bool {
+    let host = rawHost.lowercased()
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local") {
+      return true
+    }
+    let octets = host.split(separator: ".").compactMap { Int($0) }
+    guard octets.count == 4 else { return false }
+    if octets[0] == 10 || (octets[0] == 192 && octets[1] == 168) { return true }
+    return octets[0] == 172 && (16...31).contains(octets[1])
   }
 
   private func request<Response: Decodable, Body: Encodable>(

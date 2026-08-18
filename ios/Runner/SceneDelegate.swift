@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import PhotosUI
+import Security
 import UniformTypeIdentifiers
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -51,6 +52,7 @@ struct PanelVaultAppView: View {
   @AppStorage("panelvault.profileImageToken") private var profileImageToken = ""
   @State private var loadedSnapshot = false
   @State private var pendingPersistWorkItem: DispatchWorkItem?
+  @State private var cloudAccount = PanelCloudAccountKeychain.load()
 
   private var selectedTheme: PanelTheme {
     PanelTheme.all.first { $0.id == selectedThemeID } ?? .cupertino
@@ -84,7 +86,7 @@ struct PanelVaultAppView: View {
     }
     .onChange(of: scenePhase) { phase in
       if phase != .active {
-        persistSnapshot()
+        persistSnapshot(synchronously: true)
       }
     }
     .onChange(of: projectPersistenceSignature) { _ in
@@ -103,6 +105,9 @@ struct PanelVaultAppView: View {
       schedulePersistSnapshot()
     }
     .onChange(of: manufacturerPersistenceSignature) { _ in
+      schedulePersistSnapshot()
+    }
+    .onChange(of: boardTypePersistenceSignature) { _ in
       schedulePersistSnapshot()
     }
   }
@@ -212,7 +217,8 @@ struct PanelVaultAppView: View {
         profilePhone: $profilePhone,
         profileImageToken: $profileImageToken,
         activeCompany: activeCompany,
-        companies: $contractorCompanies
+        companies: $contractorCompanies,
+        cloudAccount: $cloudAccount
       )
     }
   }
@@ -240,6 +246,11 @@ struct PanelVaultAppView: View {
     }
     if let savedManufacturers = snapshot.manufacturers {
       manufacturers = savedManufacturers.map(\.manufacturer)
+    }
+    if let savedBoardTypes = snapshot.boardTypes {
+      let custom = savedBoardTypes.map(\.boardType)
+      let names = Set(custom.map { $0.name.lowercased() })
+      boardTypes = custom + BoardType.samples.filter { !names.contains($0.name.lowercased()) }
     }
     applyCustomerColors()
 
@@ -290,12 +301,15 @@ struct PanelVaultAppView: View {
     }
   }
 
-  private func persistSnapshot() {
+  private func persistSnapshot(synchronously: Bool = false) {
     pendingPersistWorkItem?.cancel()
     pendingPersistWorkItem = nil
-    ArchiveStore.saveSnapshot(
-      PanelVaultSnapshot(projects: projects, boards: createdBoards, customers: customers, companies: contractorCompanies, manufacturers: manufacturers).encoded()
-    )
+    let encoded = PanelVaultSnapshot(projects: projects, boards: createdBoards, customers: customers, companies: contractorCompanies, manufacturers: manufacturers, boardTypes: boardTypes).encoded()
+    if synchronously {
+      ArchiveStore.saveSnapshotSynchronously(encoded)
+    } else {
+      ArchiveStore.saveSnapshot(encoded)
+    }
   }
 
   private func schedulePersistSnapshot() {
@@ -326,6 +340,10 @@ struct PanelVaultAppView: View {
 
   private var manufacturerPersistenceSignature: String {
     manufacturers.map(\.persistenceSignature).joined(separator: "||")
+  }
+
+  private var boardTypePersistenceSignature: String {
+    boardTypes.map { "\($0.id)|\($0.name)|\($0.subtitle)|\($0.emoji ?? "")" }.joined(separator: "||")
   }
 }
 
@@ -7529,6 +7547,7 @@ struct MoreView: View {
   @Binding var profileImageToken: String
   @Binding var activeCompany: ContractorCompany?
   @Binding var companies: [ContractorCompany]
+  @Binding var cloudAccount: PanelCloudAccount?
   @State private var componentCatalogOpen = false
   @State private var moreSheet: MoreSheet?
   @State private var themePickerOpen = false
@@ -7536,6 +7555,7 @@ struct MoreView: View {
   @State private var profileOpen = false
   @State private var warehouseStockOpen = false
   @ObservedObject private var stockStore = WarehouseStockStore.shared
+  @State private var cloudAccountOpen = false
 
   private var selectedThemeOption: PanelTheme {
     PanelTheme.all.first { $0.id == selectedThemeID } ?? theme
@@ -7568,6 +7588,18 @@ struct MoreView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
           }
+
+          Button {
+            cloudAccountOpen = true
+          } label: {
+            MoreRow(
+              theme: theme,
+              symbol: cloudAccount == nil ? "person.crop.circle.badge.plus" : "checkmark.icloud.fill",
+              title: "PanelVault Cloud",
+              subtitle: cloudAccount.map { "\($0.companyName) • \($0.role.capitalized)" } ?? "Sign in, create a company or join an invite"
+            )
+          }
+          .buttonStyle(PanelPressButtonStyle())
 
           Toggle(isOn: $contractorMode) {
             HStack(spacing: 12) {
@@ -7734,8 +7766,9 @@ struct MoreView: View {
         WarehouseStockSheet(theme: theme)
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
-          .presentationDetents([.medium])
-          .presentationDragIndicator(.visible)
+      }
+      .sheet(isPresented: $cloudAccountOpen) {
+        PanelCloudAccountView(theme: theme, account: $cloudAccount)
       }
     }
   }
@@ -7752,6 +7785,418 @@ enum MoreSheet: String, Identifiable {
   case boardTypes
 
   var id: String { rawValue }
+}
+
+struct PanelCloudAccount: Codable, Equatable {
+  let baseURL: String
+  let token: String
+  let expiresAt: String
+  let companyCode: String
+  let companyName: String
+  let userID: String
+  let userName: String
+  let role: String
+}
+
+private struct PanelCloudAccountResponse: Decodable {
+  struct Company: Decodable { let code: String; let name: String }
+  struct User: Decodable { let id: String; let name: String; let role: String }
+
+  let token: String
+  let expiresAt: String
+  let company: Company
+  let user: User
+}
+
+private struct PanelCloudErrorResponse: Decodable { let error: String }
+
+private enum PanelCloudError: LocalizedError {
+  case invalidServer
+  case invalidInvite
+  case invalidResponse
+  case server(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidServer:
+      return "Enter a valid HTTPS PanelVault website address."
+    case .invalidInvite:
+      return "Paste the worker invite link, or enter both company and invite codes."
+    case .invalidResponse:
+      return "PanelVault Cloud returned an invalid response."
+    case .server(let message):
+      return message
+    }
+  }
+}
+
+private struct PanelCloudInvite {
+  let companyCode: String
+  let inviteCode: String
+
+  static func parse(companyCode rawCompany: String, invite rawInvite: String) throws -> PanelCloudInvite {
+    let company = rawCompany.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let text = rawInvite.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let url = URL(string: text), let fragment = url.fragment {
+      let parts = fragment.split(separator: "/").map(String.init)
+      if parts.count >= 3, parts[0].lowercased() == "join" {
+        return PanelCloudInvite(companyCode: parts[1].uppercased(), inviteCode: parts[2].uppercased())
+      }
+    }
+    guard !company.isEmpty, !text.isEmpty else { throw PanelCloudError.invalidInvite }
+    return PanelCloudInvite(companyCode: company, inviteCode: text.uppercased())
+  }
+}
+
+private struct PanelCloudClient {
+  func signIn(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
+    try await accountRequest(
+      baseURL: baseURL,
+      path: "/api/mobile/login",
+      body: ["companyCode": companyCode, "name": name, "password": password]
+    )
+  }
+
+  func createCompany(baseURL: String, companyName: String, name: String, password: String) async throws -> PanelCloudAccount {
+    try await accountRequest(
+      baseURL: baseURL,
+      path: "/api/mobile/company",
+      body: ["companyName": companyName, "name": name, "password": password]
+    )
+  }
+
+  func joinCompany(
+    baseURL: String,
+    companyCode: String,
+    inviteCode: String,
+    name: String,
+    password: String
+  ) async throws -> PanelCloudAccount {
+    let invite = try PanelCloudInvite.parse(companyCode: companyCode, invite: inviteCode)
+    return try await accountRequest(
+      baseURL: baseURL,
+      path: "/api/mobile/join",
+      body: [
+        "companyCode": invite.companyCode,
+        "inviteCode": invite.inviteCode,
+        "name": name,
+        "password": password,
+      ]
+    )
+  }
+
+  private func accountRequest(baseURL: String, path: String, body: [String: String]) async throws -> PanelCloudAccount {
+    let base = try normalizedBaseURL(baseURL)
+    guard let url = URL(string: path, relativeTo: base) else { throw PanelCloudError.invalidServer }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 30
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(body)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse else { throw PanelCloudError.invalidResponse }
+    guard 200..<300 ~= http.statusCode else {
+      let detail = (try? JSONDecoder().decode(PanelCloudErrorResponse.self, from: data).error)
+        ?? "PanelVault Cloud request failed (\(http.statusCode))."
+      throw PanelCloudError.server(detail)
+    }
+    guard let result = try? JSONDecoder().decode(PanelCloudAccountResponse.self, from: data) else {
+      throw PanelCloudError.invalidResponse
+    }
+    return PanelCloudAccount(
+      baseURL: base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+      token: result.token,
+      expiresAt: result.expiresAt,
+      companyCode: result.company.code,
+      companyName: result.company.name,
+      userID: result.user.id,
+      userName: result.user.name,
+      role: result.user.role
+    )
+  }
+
+  private func normalizedBaseURL(_ value: String) throws -> URL {
+    var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !text.contains("://") { text = "https://\(text)" }
+    guard let url = URL(string: text),
+          ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+          let host = url.host else { throw PanelCloudError.invalidServer }
+    if url.scheme?.lowercased() == "http", !Self.isPrivateDevelopmentHost(host) {
+      throw PanelCloudError.invalidServer
+    }
+    return url
+  }
+
+  private static func isPrivateDevelopmentHost(_ rawHost: String) -> Bool {
+    let host = rawHost.lowercased()
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local") {
+      return true
+    }
+    let octets = host.split(separator: ".").compactMap { Int($0) }
+    guard octets.count == 4 else { return false }
+    if octets[0] == 10 || (octets[0] == 192 && octets[1] == 168) { return true }
+    return octets[0] == 172 && (16...31).contains(octets[1])
+  }
+}
+
+enum PanelCloudAccountKeychain {
+  private static let service = "com.panelvault.main.cloud"
+  private static let account = "active-account"
+
+  static func load() -> PanelCloudAccount? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var result: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+          let data = result as? Data else { return nil }
+    return try? JSONDecoder().decode(PanelCloudAccount.self, from: data)
+  }
+
+  @discardableResult
+  static func save(_ value: PanelCloudAccount?) -> Bool {
+    let base: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    SecItemDelete(base as CFDictionary)
+    guard let value else { return true }
+    guard let data = try? JSONEncoder().encode(value) else { return false }
+    var insert = base
+    insert[kSecValueData as String] = data
+    insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+  }
+}
+
+struct PanelCloudAccountView: View {
+  private enum Mode: String, CaseIterable, Identifiable {
+    case signIn = "Sign In"
+    case create = "Create"
+    case join = "Join"
+    var id: String { rawValue }
+  }
+
+  let theme: PanelTheme
+  @Binding var account: PanelCloudAccount?
+  @Environment(\.dismiss) private var dismiss
+  @State private var mode: Mode = .signIn
+  @State private var server = UserDefaults.standard.string(forKey: "panelvault.cloudServer") ?? ""
+  @State private var companyCode = ""
+  @State private var companyName = ""
+  @State private var inviteCode = ""
+  @State private var name = ""
+  @State private var password = ""
+  @State private var isConnecting = false
+  @State private var message = ""
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+          if let account { connectedView(account) } else { accountForm }
+        }
+        .padding(18)
+      }
+      .scrollDismissesKeyboard(.interactively)
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("PanelVault Cloud")
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+      }
+    }
+    .tint(theme.primary)
+    .preferredColorScheme(theme.colorScheme)
+  }
+
+  private var accountForm: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      GlassCard(theme: theme) {
+        Label {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("One account everywhere").font(.headline.bold())
+            Text("Use the same company and worker accounts as the website.")
+              .font(.subheadline).foregroundStyle(.secondary)
+          }
+        } icon: {
+          Image(systemName: "person.2.badge.gearshape.fill")
+            .font(.title2).foregroundStyle(theme.secondary)
+        }
+      }
+
+      Picker("Account action", selection: $mode) {
+        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+      }
+      .pickerStyle(.segmented)
+
+      VStack(spacing: 1) {
+        field("Website address", text: $server, symbol: "network")
+          .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+        switch mode {
+        case .signIn:
+          field("Company code", text: $companyCode, symbol: "building.2.fill")
+            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+        case .create:
+          field("Company name", text: $companyName, symbol: "building.2.crop.circle.fill")
+            .textContentType(.organizationName)
+        case .join:
+          field("Company code (optional with full link)", text: $companyCode, symbol: "building.2.fill")
+            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+          field("Paste worker invite link or code", text: $inviteCode, symbol: "link")
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+        }
+        field("Your name", text: $name, symbol: "person.fill").textContentType(.username)
+        secureField("Password", text: $password, symbol: "lock.fill").textContentType(.password)
+      }
+      .clipShape(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: theme.radiusCard, style: .continuous).stroke(theme.cardBorder))
+
+      if !message.isEmpty {
+        Label(message, systemImage: "exclamationmark.circle.fill")
+          .font(.footnote.bold()).foregroundStyle(theme.danger)
+      }
+
+      Button(action: submit) {
+        HStack(spacing: 9) {
+          if isConnecting { ProgressView().tint(.white) }
+          Text(isConnecting ? "Connecting" : submitTitle)
+          if !isConnecting { Image(systemName: "arrow.right") }
+        }
+        .font(.headline.bold()).frame(maxWidth: .infinity).frame(height: 50)
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(!canSubmit || isConnecting)
+    }
+  }
+
+  private func connectedView(_ account: PanelCloudAccount) -> some View {
+    VStack(alignment: .leading, spacing: 18) {
+      GlassCard(theme: theme) {
+        HStack(spacing: 14) {
+          Image(systemName: "checkmark.icloud.fill")
+            .font(.system(size: 28, weight: .semibold)).foregroundStyle(theme.success)
+            .frame(width: 50, height: 50).background(theme.success.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+          VStack(alignment: .leading, spacing: 4) {
+            Text(account.companyName).font(.title3.bold())
+            Text("\(account.userName)  •  \(account.role.capitalized)")
+              .font(.subheadline).foregroundStyle(.secondary)
+          }
+        }
+      }
+      GlassCard(theme: theme) {
+        VStack(spacing: 12) {
+          detailRow("Company code", account.companyCode)
+          Divider()
+          detailRow("Website", account.baseURL)
+        }
+      }
+      Text("This account is shared with the website and Warehouse app. The login token is stored in this iPhone's Keychain.")
+        .font(.footnote).foregroundStyle(.secondary)
+      Button(role: .destructive) {
+        PanelCloudAccountKeychain.save(nil)
+        self.account = nil
+      } label: {
+        Text("Disconnect This iPhone").font(.headline.bold()).frame(maxWidth: .infinity).frame(height: 46)
+      }
+      .buttonStyle(.bordered)
+    }
+  }
+
+  private func field(_ prompt: String, text: Binding<String>, symbol: String) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: symbol).foregroundStyle(theme.secondary).frame(width: 22)
+      TextField(prompt, text: text)
+    }
+    .padding(.horizontal, 15).frame(height: 54).background(theme.surface)
+  }
+
+  private func secureField(_ prompt: String, text: Binding<String>, symbol: String) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: symbol).foregroundStyle(theme.secondary).frame(width: 22)
+      SecureField(prompt, text: text)
+    }
+    .padding(.horizontal, 15).frame(height: 54).background(theme.surface)
+  }
+
+  private func detailRow(_ label: String, _ value: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Text(label).foregroundStyle(.secondary)
+      Spacer()
+      Text(value).fontWeight(.semibold).multilineTextAlignment(.trailing)
+    }
+  }
+
+  private var canSubmit: Bool {
+    let common = !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && password.count >= 6
+    switch mode {
+    case .signIn: return common && !companyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    case .create: return common && !companyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    case .join: return common && !inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
+
+  private var submitTitle: String {
+    switch mode {
+    case .signIn: return "Sign In"
+    case .create: return "Create Company"
+    case .join: return "Join Company"
+    }
+  }
+
+  private func submit() {
+    message = ""
+    isConnecting = true
+    let address = server.trimmingCharacters(in: .whitespacesAndNewlines)
+    UserDefaults.standard.set(address, forKey: "panelvault.cloudServer")
+    Task {
+      do {
+        let client = PanelCloudClient()
+        let result: PanelCloudAccount
+        switch mode {
+        case .signIn:
+          result = try await client.signIn(
+            baseURL: address,
+            companyCode: companyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        case .create:
+          result = try await client.createCompany(
+            baseURL: address,
+            companyName: companyName.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        case .join:
+          result = try await client.joinCompany(
+            baseURL: address,
+            companyCode: companyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            inviteCode: inviteCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        }
+        guard PanelCloudAccountKeychain.save(result) else {
+          throw PanelCloudError.server("The account connected, but its secure login could not be saved on this iPhone.")
+        }
+        account = result
+        password = ""
+      } catch {
+        message = error.localizedDescription
+      }
+      isConnecting = false
+    }
+  }
 }
 
 /// Circular profile picture. Shows the stored photo, or the person's initials,
@@ -8854,6 +9299,9 @@ struct ComponentDetailSheet: View {
               InfoLine(title: "Type", value: component.type)
               InfoLine(title: "Rating", value: component.rating)
               InfoLine(title: "Poles / Phase", value: component.poles)
+              if !component.serialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                InfoLine(title: "Serial Number", value: component.serialNumber)
+              }
               if !component.curve.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 InfoLine(title: "Curve / Notes", value: component.curve)
               }
@@ -9898,6 +10346,7 @@ struct ComponentRatingSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var rating: String
   @State private var poles: String
+  @State private var serialNumber: String
 
   init(theme: PanelTheme, component: PanelComponent, onAdd: @escaping (PanelComponent) -> Void) {
     self.theme = theme
@@ -9905,6 +10354,7 @@ struct ComponentRatingSheet: View {
     self.onAdd = onAdd
     _rating = State(initialValue: component.rating)
     _poles = State(initialValue: component.poles)
+    _serialNumber = State(initialValue: component.serialNumber)
   }
 
   var body: some View {
@@ -9918,6 +10368,15 @@ struct ComponentRatingSheet: View {
               InfoLine(title: "Model", value: component.model)
             }
           }
+
+          CreationTextInput(
+            theme: theme,
+            title: "Serial number",
+            placeholder: "Optional",
+            symbol: "number",
+            text: $serialNumber,
+            capitalization: .characters
+          )
 
           RatingChipSection(
             theme: theme,
@@ -9954,7 +10413,8 @@ struct ComponentRatingSheet: View {
                 poles: poles,
                 curve: component.curve,
                 sourceID: component.imageStorageID,
-                about: component.about
+                about: component.about,
+                serialNumber: serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
               )
             )
             dismiss()
@@ -10052,6 +10512,7 @@ struct AddComponentSheet: View {
   @State private var rating = "63A"
   @State private var poles = "3P"
   @State private var curve = "C Curve"
+  @State private var serialNumber = ""
 
   private var canAdd: Bool {
     !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -10095,6 +10556,7 @@ struct AddComponentSheet: View {
             .padding(.top, 4)
 
           CreationTextInput(theme: theme, title: "Model", placeholder: "Model", symbol: "tag.fill", text: $model, capitalization: .characters)
+          CreationTextInput(theme: theme, title: "Serial number", placeholder: "Optional", symbol: "number", text: $serialNumber, capitalization: .characters)
           CreationTextInput(theme: theme, title: "Ampere / rating", placeholder: "Rating", symbol: "bolt.fill", text: $rating, keyboardType: .numberPad)
           CreationMenuInput(theme: theme, title: "Poles", symbol: "square.grid.2x2.fill", value: poles, options: PoleRating.all, selection: $poles)
           if isMCBType {
@@ -10122,7 +10584,8 @@ struct AddComponentSheet: View {
                 model: model,
                 rating: normalizedRating,
                 poles: poles,
-                curve: isMCBType ? curve : ""
+                curve: isMCBType ? curve : "",
+                serialNumber: serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
               )
             )
             dismiss()
@@ -11406,6 +11869,8 @@ struct PanelComponent: Identifiable {
   /// Empty for user-created components, which fall back to the generic
   /// per-type text in `ComponentIcon.description(for:)`.
   var about: String = ""
+  /// Unique identifier printed on this physical component, when available.
+  var serialNumber: String = ""
 
   var imageStorageID: String {
     sourceID.isEmpty ? id : sourceID
@@ -11428,13 +11893,14 @@ struct PanelComponent: Identifiable {
   }
 
   var detailLine: String {
-    [model, poles, curve]
+    [model, poles, curve, serialNumber.isEmpty ? nil : "SN: \(serialNumber)"]
+      .compactMap { $0 }
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
       .joined(separator: " • ")
   }
 
   var searchText: String {
-    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve)"
+    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve) \(serialNumber)"
   }
 }
 
@@ -11636,13 +12102,17 @@ struct PanelVaultSnapshot: Codable {
   let customers: [CustomerRecord]
   let companies: [CompanyRecord]?
   let manufacturers: [ManufacturerRecord]?
+  let boardTypes: [BoardTypeRecord]?
 
-  init(projects: [ProjectItem], boards: [BoardDraft], customers: [CustomerItem], companies: [ContractorCompany], manufacturers: [ManufacturerItem]) {
+  init(projects: [ProjectItem], boards: [BoardDraft], customers: [CustomerItem], companies: [ContractorCompany], manufacturers: [ManufacturerItem], boardTypes: [BoardType]) {
     self.projects = projects.map(ProjectRecord.init(project:))
     self.boards = boards.map(BoardRecord.init(board:))
     self.customers = customers.map(CustomerRecord.init(customer:))
     self.companies = companies.map(CompanyRecord.init(company:))
     self.manufacturers = manufacturers.map(ManufacturerRecord.init(manufacturer:))
+    self.boardTypes = boardTypes
+      .filter { $0.id.hasPrefix("custom-") }
+      .map(BoardTypeRecord.init(boardType:))
   }
 
   func encoded() -> String {
@@ -11653,6 +12123,53 @@ struct PanelVaultSnapshot: Codable {
   static func decode(_ rawValue: String) -> PanelVaultSnapshot? {
     guard let data = rawValue.data(using: .utf8), !data.isEmpty else { return nil }
     return try? JSONDecoder().decode(PanelVaultSnapshot.self, from: data)
+  }
+}
+
+struct BoardTypeRecord: Codable {
+  let id: String
+  let name: String
+  let subtitle: String
+  let symbol: String
+  let colorHex: UInt32
+  let emoji: String?
+  let localName: String?
+  let overview: String?
+  let typicalUses: [String]
+  let typicalComponents: [String]
+  let designChecks: [String]
+  let notes: [String]
+
+  init(boardType: BoardType) {
+    id = boardType.id
+    name = boardType.name
+    subtitle = boardType.subtitle
+    symbol = boardType.symbol
+    colorHex = boardType.color.archiveHex
+    emoji = boardType.emoji
+    localName = boardType.localName
+    overview = boardType.overview
+    typicalUses = boardType.typicalUses
+    typicalComponents = boardType.typicalComponents
+    designChecks = boardType.designChecks
+    notes = boardType.notes
+  }
+
+  var boardType: BoardType {
+    BoardType(
+      id: id,
+      name: name,
+      subtitle: subtitle,
+      symbol: symbol,
+      color: Color(hex: colorHex),
+      emoji: emoji,
+      localName: localName,
+      overview: overview,
+      typicalUses: typicalUses,
+      typicalComponents: typicalComponents,
+      designChecks: designChecks,
+      notes: notes
+    )
   }
 }
 
@@ -11964,6 +12481,7 @@ final class ImageStore {
 /// silently stops saving once it gets large. A plain file has no such ceiling.
 enum ArchiveStore {
   private static let legacySnapshotKey = "panelvault.savedSnapshot"
+  private static let writeQueue = DispatchQueue(label: "com.panelvault.archive-writes", qos: .utility)
 
   static var directory: URL {
     let manager = FileManager.default
@@ -11994,6 +12512,12 @@ enum ArchiveStore {
     write(json, to: snapshotURL)
   }
 
+  static func saveSnapshotSynchronously(_ json: String) {
+    writeQueue.sync {
+      writeSynchronously(json, to: snapshotURL)
+    }
+  }
+
   private static func migrateLegacySnapshot() -> String? {
     let defaults = UserDefaults.standard
     guard let legacy = defaults.string(forKey: legacySnapshotKey),
@@ -12001,7 +12525,7 @@ enum ArchiveStore {
 
     // Write the old payload across before dropping it, so an interrupted
     // migration cannot lose the archive.
-    try? Data(legacy.utf8).write(to: snapshotURL, options: .atomic)
+    guard writeSynchronously(legacy, to: snapshotURL) else { return legacy }
     defaults.removeObject(forKey: legacySnapshotKey)
     return legacy
   }
@@ -12010,8 +12534,18 @@ enum ArchiveStore {
   /// images), but it is still written on every edit.
   static func write(_ json: String, to url: URL) {
     let data = Data(json.utf8)
-    DispatchQueue.global(qos: .utility).async {
+    writeQueue.async {
       try? data.write(to: url, options: .atomic)
+    }
+  }
+
+  @discardableResult
+  static func writeSynchronously(_ json: String, to url: URL) -> Bool {
+    do {
+      try Data(json.utf8).write(to: url, options: .atomic)
+      return true
+    } catch {
+      return false
     }
   }
 }
@@ -12048,7 +12582,11 @@ enum ComponentImageStore {
     else { return nil }
 
     let tokens = encoded.compactMapValues { ImageStore.shared.adopt($0) }
-    save(tokens)
+    guard let migratedData = try? JSONEncoder().encode(tokens),
+          let migratedJSON = String(data: migratedData, encoding: .utf8),
+          ArchiveStore.writeSynchronously(migratedJSON, to: fileURL) else {
+      return tokens
+    }
     defaults.removeObject(forKey: legacyKey)
     return tokens
   }

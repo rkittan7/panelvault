@@ -6,13 +6,23 @@ struct AccountView: View {
 
   @State private var server = UserDefaults.standard.string(forKey: "warehouse.cloudServer") ?? ""
   @State private var companyCode = ""
+  @State private var companyName = ""
+  @State private var inviteCode = ""
   @State private var name = ""
   @State private var password = ""
   @State private var isConnecting = false
   @State private var message = ""
   @FocusState private var focusedField: Field?
 
-  private enum Field { case server, company, name, password }
+  @State private var mode: AccountMode = .signIn
+
+  private enum Field { case server, company, companyName, invite, name, password }
+  private enum AccountMode: String, CaseIterable, Identifiable {
+    case signIn = "Sign In"
+    case create = "Create"
+    case join = "Join"
+    var id: String { rawValue }
+  }
 
   var body: some View {
     NavigationStack {
@@ -52,15 +62,35 @@ struct AccountView: View {
         }
       }
 
+      Picker("Account action", selection: $mode) {
+        ForEach(AccountMode.allCases) { option in
+          Text(option.rawValue).tag(option)
+        }
+      }
+      .pickerStyle(.segmented)
+
       SectionHeading(title: "Workspace")
       VStack(spacing: 1) {
         cloudField("Server address", text: $server, symbol: "network", field: .server)
           .textInputAutocapitalization(.never)
           .keyboardType(.URL)
           .autocorrectionDisabled()
-        cloudField("Company code", text: $companyCode, symbol: "building.2.fill", field: .company)
-          .textInputAutocapitalization(.characters)
-          .autocorrectionDisabled()
+        switch mode {
+        case .signIn:
+          cloudField("Company code", text: $companyCode, symbol: "building.2.fill", field: .company)
+            .textInputAutocapitalization(.characters)
+            .autocorrectionDisabled()
+        case .create:
+          cloudField("Company name", text: $companyName, symbol: "building.2.crop.circle.fill", field: .companyName)
+            .textContentType(.organizationName)
+        case .join:
+          cloudField("Company code (optional with full link)", text: $companyCode, symbol: "building.2.fill", field: .company)
+            .textInputAutocapitalization(.characters)
+            .autocorrectionDisabled()
+          cloudField("Paste invite link or code", text: $inviteCode, symbol: "link", field: .invite)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        }
         cloudField("Your name", text: $name, symbol: "person.fill", field: .name)
           .textContentType(.username)
         cloudField("Password", text: $password, symbol: "lock.fill", field: .password, secure: true)
@@ -75,10 +105,10 @@ struct AccountView: View {
           .foregroundStyle(theme.negative)
       }
 
-      Button(action: connect) {
+      Button(action: submit) {
         HStack(spacing: 9) {
           if isConnecting { ProgressView().tint(.white) }
-          Text(isConnecting ? "Connecting" : "Connect")
+          Text(isConnecting ? "Connecting" : submitTitle)
           if !isConnecting { Image(systemName: "arrow.right") }
         }
         .font(.headline.weight(.bold))
@@ -87,7 +117,7 @@ struct AccountView: View {
       }
       .buttonStyle(.borderedProminent)
       .tint(theme.primary)
-      .disabled(!canConnect || isConnecting)
+      .disabled(!canSubmit || isConnecting)
     }
   }
 
@@ -190,11 +220,26 @@ struct AccountView: View {
     .background(theme.surface)
   }
 
-  private var canConnect: Bool {
-    !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      && !companyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  private var canSubmit: Bool {
+    let common = !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      && !password.isEmpty
+      && password.count >= 6
+    switch mode {
+    case .signIn:
+      return common && !companyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    case .create:
+      return common && !companyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    case .join:
+      return common && !inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
+
+  private var submitTitle: String {
+    switch mode {
+    case .signIn: return "Sign In"
+    case .create: return "Create Company"
+    case .join: return "Join Company"
+    }
   }
 
   private var syncSymbol: String {
@@ -215,7 +260,7 @@ struct AccountView: View {
     }
   }
 
-  private func connect() {
+  private func submit() {
     focusedField = nil
     message = ""
     isConnecting = true
@@ -223,12 +268,30 @@ struct AccountView: View {
     UserDefaults.standard.set(address, forKey: "warehouse.cloudServer")
     Task {
       do {
-        try await store.signIn(
-          baseURL: address,
-          companyCode: companyCode.trimmingCharacters(in: .whitespacesAndNewlines),
-          name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-          password: password
-        )
+        switch mode {
+        case .signIn:
+          try await store.signIn(
+            baseURL: address,
+            companyCode: companyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        case .create:
+          try await store.createCompany(
+            baseURL: address,
+            companyName: companyName.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        case .join:
+          try await store.joinCompany(
+            baseURL: address,
+            companyCode: companyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            inviteCode: inviteCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password
+          )
+        }
         password = ""
       } catch {
         message = error.localizedDescription

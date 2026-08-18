@@ -213,7 +213,8 @@ maintaining separate versions of a project or board.
 ## Phase 7: Production readiness
 
 - Deploy the server behind HTTPS.
-- Move production data from one JSON file to a transactional database.
+- Replace the first Supabase JSON persistence boundary with normalized,
+  transactionally updated tables before horizontal scaling.
 - Keep movement UUIDs and API behavior stable during the migration.
 - Add automated encrypted backups and restore testing.
 - Add rate limiting, session expiry, password-reset flows, and audit logs.

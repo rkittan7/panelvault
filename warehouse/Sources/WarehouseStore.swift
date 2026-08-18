@@ -55,7 +55,8 @@ final class WarehouseStore: ObservableObject {
     model: String,
     rating: String,
     poles: String,
-    notes: String
+    notes: String,
+    serialNumber: String
   ) -> CatalogPart {
     let part = CatalogPart(
       id: "custom-\(UUID().uuidString)",
@@ -65,7 +66,8 @@ final class WarehouseStore: ObservableObject {
       rating: rating,
       poles: poles,
       curve: "",
-      about: notes
+      about: notes,
+      serialNumber: serialNumber.isEmpty ? nil : serialNumber
     )
     customParts.append(part)
     persist(customParts, to: WarehouseStore.customPartsURL)
@@ -191,11 +193,41 @@ final class WarehouseStore: ObservableObject {
       name: name,
       password: password
     )
-    if !syncMetadata.companyCode.isEmpty,
-       syncMetadata.companyCode != signedIn.companyCode,
-       !movements.isEmpty {
-      throw WarehouseCloudError.companyConflict(syncMetadata.companyCode)
-    }
+    try await activate(signedIn)
+  }
+
+  func createCompany(baseURL: String, companyName: String, name: String, password: String) async throws {
+    try preventCreatingCompanyWithLinkedData()
+    let signedIn = try await cloud.createCompany(
+      baseURL: baseURL,
+      companyName: companyName,
+      name: name,
+      password: password
+    )
+    try await activate(signedIn)
+  }
+
+  func joinCompany(
+    baseURL: String,
+    companyCode: String,
+    inviteCode: String,
+    name: String,
+    password: String
+  ) async throws {
+    let invite = try WarehouseCloudInvite.parse(companyCode: companyCode, invite: inviteCode)
+    try preventCompanyChange(to: invite.companyCode)
+    let signedIn = try await cloud.joinCompany(
+      baseURL: baseURL,
+      companyCode: invite.companyCode,
+      inviteCode: invite.inviteCode,
+      name: name,
+      password: password
+    )
+    try await activate(signedIn)
+  }
+
+  private func activate(_ signedIn: WarehouseCloudAccount) async throws {
+    try preventCompanyChange(to: signedIn.companyCode)
     if syncMetadata.companyCode != signedIn.companyCode {
       syncMetadata = WarehouseSyncMetadata(companyCode: signedIn.companyCode)
       persistSyncMetadata()
@@ -204,6 +236,24 @@ final class WarehouseStore: ObservableObject {
     WarehouseAccountKeychain.save(signedIn)
     syncPhase = .idle
     await sync()
+  }
+
+  private var hasLocalCompanyData: Bool {
+    !movements.isEmpty || !customParts.isEmpty || !barcodeMappings.isEmpty || !settings.isEmpty
+  }
+
+  private func preventCompanyChange(to companyCode: String) throws {
+    if !syncMetadata.companyCode.isEmpty,
+       syncMetadata.companyCode != companyCode,
+       hasLocalCompanyData {
+      throw WarehouseCloudError.companyConflict(syncMetadata.companyCode)
+    }
+  }
+
+  private func preventCreatingCompanyWithLinkedData() throws {
+    if !syncMetadata.companyCode.isEmpty, hasLocalCompanyData {
+      throw WarehouseCloudError.companyConflict(syncMetadata.companyCode)
+    }
   }
 
   func signOut() {
@@ -225,7 +275,8 @@ final class WarehouseStore: ObservableObject {
         let response = try await cloud.uploadCustomParts(customParts, account: account)
         mergeCustomParts(response.customParts)
       }
-      if !barcodeMappings.isEmpty {
+      let canManageCatalog = account.role == "owner" || account.role == "manager"
+      if canManageCatalog && !barcodeMappings.isEmpty {
         let response = try await cloud.uploadBarcodeMappings(barcodeMappings, account: account)
         mergeBarcodeMappings(response.barcodeMappings)
       }

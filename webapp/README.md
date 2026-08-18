@@ -15,7 +15,46 @@ node server.js
 ```
 
 That's it: zero dependencies, Node 18+. Serves the web app and API on
-port 8090 (override with `PORT=...`).
+port 8090 (override with `PORT=...`). Local development stores data in
+`webapp/data/companies.json`.
+
+## Supabase persistence
+
+The hosted server can persist the same validated PanelVault state in Supabase
+without changing the browser or iPhone APIs:
+
+1. Create a Supabase project.
+2. Run `supabase/migrations/202608180001_panelvault_state.sql` in its SQL editor.
+3. Add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and a stable
+   `SESSION_SECRET` to the hosting service, following `.env.example`.
+4. Start the server normally. Its startup line will say `(Supabase)`.
+
+The service-role key is a server secret. Never place it in `public/`, either
+iPhone app, Git, or any environment whose values are sent to the browser. RLS
+is enabled and client roles are denied table access; authorization continues
+to pass through PanelVault's API.
+
+Supabase-backed sessions always use Secure cookies. The server rate-limits
+public account and sign-in endpoints. Set `TRUST_PROXY=true` only when the
+host's trusted proxy overwrites `X-Forwarded-For`; otherwise rate limiting uses
+the direct socket address.
+
+This is a first, compatibility-preserving persistence boundary. Run only one
+PanelVault server instance: state is still saved as one document and is not
+safe for concurrent writers. Split companies, users, movements, boards, and
+parts into transactionally updated relational tables before horizontal scaling.
+
+If `data/companies.json` already contains real companies, preview and apply the
+guarded import before the first Supabase-backed start:
+
+```bash
+node import-json-to-supabase.js
+node import-json-to-supabase.js --apply
+```
+
+The script prints entity counts and SHA-256 checksums, refuses to overwrite a
+non-empty remote state, creates a mode-0600 local backup, and reads Supabase
+back to verify the import.
 
 ## Accounts and roles
 
@@ -26,8 +65,8 @@ port 8090 (override with `PORT=...`).
 - **owner / manager** — change stock, add parts, create and assign boards,
   invite people. Only the owner can mint manager invites, change roles, or
   disable members.
-- **worker** — sees stock and boards, and can update the status of boards
-  assigned to them. Nothing else.
+- **worker** — sees stock and assigned boards, records receipts/consumption,
+  can add a previously unknown delivery part, and updates assigned-board status.
 
 Passwords are scrypt-hashed; browser sessions are HMAC-signed http-only
 cookies. The iPhone client uses an expiring HMAC bearer token stored in
@@ -39,8 +78,8 @@ Any host that runs Node works (a small VPS, Render, Railway, a spare machine
 with a tunnel). Two things matter in production:
 
 1. **HTTPS** — put it behind a TLS proxy (Caddy is one line of config).
-2. **Back up `data/`** — it holds every account and the whole movement log.
-   The directory is gitignored on purpose: never commit it.
+2. **Use durable storage** — configure Supabase as above, or back up `data/` if
+   the local JSON backend is used. The directory is gitignored: never commit it.
 
 ## Design notes
 
@@ -48,9 +87,9 @@ with a tunnel). Two things matter in production:
   with the same part ids (catalog.json is generated from PanelVault's
   catalog). This is what will let the phone apps sync to this server by pushing
   confirmed delivery and consumption movements.
-- Storage is one JSON file with debounced atomic writes — right-sized for a
-  company-scale team, easy to move to a database later without changing the
-  API.
+- Storage is selected at startup: atomic local JSON for development, or a
+  private version-checked Supabase row for hosted durability. Neither backend
+  changes the API contract.
 - Mobile movement uploads are validated as a complete batch before anything is
   appended. Stable movement IDs make retries idempotent.
 - Movement downloads use an increasing company sequence cursor, while stock
@@ -58,7 +97,11 @@ with a tunnel). Two things matter in production:
 
 ## Mobile sync API
 
+- `POST /api/mobile/company` creates an owner and company in the same account
+  database used by the website.
 - `POST /api/mobile/login` returns the company, user, and expiring bearer token.
+- `POST /api/mobile/join` accepts a company/invite code and creates a worker in
+  that website company.
 - `POST /api/sync/movements` validates and deduplicates up to 500 movements.
 - `GET /api/sync/movements?after=<sequence>` downloads ordered changes.
 - `POST /api/sync/parts` uploads phone-created company catalog parts first.

@@ -13,11 +13,11 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { createStorage } = require("./storage");
 
 const PORT = Number.parseInt(process.env.PORT || "8090", 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
-const DB_FILE = path.join(DATA_DIR, "companies.json");
 const SECRET_FILE = path.join(DATA_DIR, "secret");
 
 const CATALOG = JSON.parse(fs.readFileSync(path.join(__dirname, "catalog.json"), "utf8"));
@@ -29,6 +29,15 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 /** Session-cookie signing secret, generated once per installation. */
 const SECRET = (() => {
+  if (process.env.SESSION_SECRET) {
+    if (process.env.SESSION_SECRET.length < 32) {
+      throw new Error("SESSION_SECRET must contain at least 32 characters.");
+    }
+    return process.env.SESSION_SECRET;
+  }
+  if (process.env.SUPABASE_URL) {
+    throw new Error("SESSION_SECRET is required when Supabase storage is enabled.");
+  }
   try {
     return fs.readFileSync(SECRET_FILE, "utf8");
   } catch {
@@ -38,37 +47,55 @@ const SECRET = (() => {
   }
 })();
 
-/** { companies: { [code]: company } } — small enough to hold in memory. */
+/** { companies: { [code]: company } } — cached in one server process. */
 let db = { companies: {} };
-try {
-  db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-} catch {}
+const storage = createStorage({ dataDir: DATA_DIR });
 
-for (const company of Object.values(db.companies || {})) {
-  company.movements ||= [];
-  company.customParts ||= [];
-  company.partSettings ||= {};
-  company.boards ||= [];
-  company.barcodeMappings ||= [];
-  // The role set gained Staff Manager and QA, and "worker" was renamed to
-  // "staff". Migrate on load so existing sessions keep their access.
-  for (const user of company.users || []) {
-    if (user.role === "worker") user.role = "staff";
-  }
-  for (const invite of company.invites || []) {
-    if (invite.role === "worker") invite.role = "staff";
+function normalizeCompanies() {
+  for (const company of Object.values(db.companies || {})) {
+    company.movements ||= [];
+    company.customParts ||= [];
+    company.partSettings ||= {};
+    company.boards ||= [];
+    company.barcodeMappings ||= [];
+    // The role set gained Staff Manager and QA, and "worker" was renamed to
+    // "staff". Migrate on load so existing sessions keep their access.
+    for (const user of company.users || []) {
+      if (user.role === "worker") user.role = "staff";
+    }
+    for (const invite of company.invites || []) {
+      if (invite.role === "worker") invite.role = "staff";
+    }
   }
 }
 
-let saveTimer = null;
+let savePromise = Promise.resolve();
 function save() {
-  // Debounced atomic write; a burst of movements becomes one disk write.
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const tmp = DB_FILE + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, DB_FILE);
-  }, 150);
+  // Serialize durable snapshots so an older write cannot win. API handlers
+  // await this promise and never acknowledge a mutation before it is stored.
+  const snapshot = structuredClone(db);
+  savePromise = savePromise.catch(() => {}).then(() => storage.save(snapshot));
+  return savePromise.catch((error) => {
+    console.error(`PanelVault data save failed: ${error.message}`);
+    const unavailable = new Error("Could not save PanelVault data.");
+    unavailable.statusCode = 503;
+    throw unavailable;
+  });
+}
+
+let mutationQueue = Promise.resolve();
+function serializeMutation(action) {
+  const run = mutationQueue.catch(() => {}).then(async () => {
+    const snapshot = structuredClone(db);
+    try {
+      return await action();
+    } catch (error) {
+      db = snapshot;
+      throw error;
+    }
+  });
+  mutationQueue = run;
+  return run;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -302,20 +329,43 @@ function fail(res, status, message) {
 }
 
 function readBody(req) {
-  return new Promise((resolve, reject) => {
+  if (req.panelVaultBodyPromise) return req.panelVaultBodyPromise;
+  req.panelVaultBodyPromise = new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", (chunk) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      callback(value);
+    };
+    const onData = (chunk) => {
       raw += chunk;
-      if (raw.length > 1_000_000) reject(new Error("body too large"));
-    });
-    req.on("end", () => {
-      try {
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        reject(new Error("invalid json"));
+      if (raw.length > 1_000_000) {
+        req.resume();
+        finish(reject, new Error("body too large"));
       }
-    });
+    };
+    const onEnd = () => {
+      try {
+        finish(resolve, raw ? JSON.parse(raw) : {});
+      } catch {
+        finish(reject, new Error("invalid json"));
+      }
+    };
+    const onError = (error) => finish(reject, error);
+    const timer = setTimeout(() => {
+      req.resume();
+      finish(reject, new Error("request body timed out"));
+    }, 10_000);
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
   });
+  return req.panelVaultBodyPromise;
 }
 
 function sessionFrom(req) {
@@ -328,10 +378,33 @@ function sessionFrom(req) {
 }
 
 function sessionCookie(token, maxAgeSeconds) {
-  return `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  const secure = process.env.NODE_ENV === "production" || process.env.SUPABASE_URL ? "; Secure" : "";
+  return `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
 }
 
 const SESSION_DAYS = 30;
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_ATTEMPT_LIMIT = 30;
+const authAttempts = new Map();
+
+function allowAuthAttempt(req, res) {
+  const forwarded = process.env.TRUST_PROXY === "true" ? req.headers["x-forwarded-for"] : "";
+  const address = String(forwarded || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  const now = Date.now();
+  if (authAttempts.size > 10_000) {
+    for (const [key, attempts] of authAttempts) {
+      if (!attempts.some((time) => now - time < AUTH_WINDOW_MS)) authAttempts.delete(key);
+    }
+  }
+  const recent = (authAttempts.get(address) || []).filter((time) => now - time < AUTH_WINDOW_MS);
+  if (recent.length >= AUTH_ATTEMPT_LIMIT) {
+    sendJSON(res, 429, { error: "Too many sign-in attempts. Try again later." }, { "Retry-After": "900" });
+    return false;
+  }
+  recent.push(now);
+  authAttempts.set(address, recent);
+  return true;
+}
 
 function issueSession(res, companyCode, userID) {
   const expires = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
@@ -343,6 +416,83 @@ function publicUser(u) {
   return { id: u.id, name: u.name, role: u.role, active: u.active, createdAt: u.createdAt };
 }
 
+function accountError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function mobileAuthBody(company, user) {
+  return {
+    ...createSession(company.code, user.id),
+    company: { code: company.code, name: company.name },
+    user: publicUser(user),
+  };
+}
+
+async function createCompanyAccount({ companyName, name, password }) {
+  if (!companyName?.trim() || !name?.trim() || (password || "").length < 6) {
+    throw accountError("Company, your name, and a password of 6+ characters are required.");
+  }
+  let code;
+  do {
+    code = shortCode(6);
+  } while (db.companies[code]);
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const owner = {
+    id: id("user"),
+    name: name.trim(),
+    role: "owner",
+    salt,
+    passHash: hashPassword(password, salt),
+    active: true,
+    createdAt: new Date().toISOString(),
+  };
+  const company = {
+    code,
+    name: companyName.trim(),
+    createdAt: new Date().toISOString(),
+    users: [owner],
+    invites: [],
+    movements: [],
+    customParts: [],
+    partSettings: {},
+    boards: [],
+    barcodeMappings: [],
+  };
+  db.companies[code] = company;
+  await save();
+  return { company, user: owner };
+}
+
+async function joinCompanyAccount({ companyCode, inviteCode, name, password }) {
+  const company = db.companies[(companyCode || "").trim().toUpperCase()];
+  const invite = company?.invites.find(
+    (item) => item.code === (inviteCode || "").trim().toUpperCase() && item.active
+  );
+  if (!invite) throw accountError("This invite link is not valid any more.");
+  if (!name?.trim() || (password || "").length < 6) {
+    throw accountError("Your name and a password of 6+ characters are required.");
+  }
+  if (company.users.some((item) => item.name.toLowerCase() === name.trim().toLowerCase())) {
+    throw accountError("Someone with that name already exists — add a last initial.");
+  }
+  const salt = crypto.randomBytes(16).toString("hex");
+  const user = {
+    id: id("user"),
+    name: name.trim(),
+    role: invite.role,
+    salt,
+    passHash: hashPassword(password, salt),
+    active: true,
+    createdAt: new Date().toISOString(),
+  };
+  company.users.push(user);
+  await save();
+  return { company, user };
+}
+
 // ---------------------------------------------------------------- API
 
 const routes = {
@@ -350,39 +500,13 @@ const routes = {
 
   /** Owner registers the company and becomes its first admin. */
   "POST /api/company": async (req, res) => {
-    const { companyName, name, password } = await readBody(req);
-    if (!companyName?.trim() || !name?.trim() || (password || "").length < 6) {
-      return fail(res, 400, "Company, your name, and a password of 6+ characters are required.");
-    }
-    let code;
-    do {
-      code = shortCode(6);
-    } while (db.companies[code]);
+    const { company, user } = await createCompanyAccount(await readBody(req));
+    sendJSON(res, 200, { companyCode: company.code }, issueSession(res, company.code, user.id));
+  },
 
-    const salt = crypto.randomBytes(16).toString("hex");
-    const owner = {
-      id: id("user"),
-      name: name.trim(),
-      role: "owner",
-      salt,
-      passHash: hashPassword(password, salt),
-      active: true,
-      createdAt: new Date().toISOString(),
-    };
-    db.companies[code] = {
-      code,
-      name: companyName.trim(),
-      createdAt: new Date().toISOString(),
-      users: [owner],
-      invites: [],
-      movements: [],
-      customParts: [],
-      partSettings: {},
-      boards: [],
-      barcodeMappings: [],
-    };
-    save();
-    sendJSON(res, 200, { companyCode: code }, issueSession(res, code, owner.id));
+  "POST /api/mobile/company": async (req, res) => {
+    const { company, user } = await createCompanyAccount(await readBody(req));
+    sendJSON(res, 200, mobileAuthBody(company, user));
   },
 
   "POST /api/login": async (req, res) => {
@@ -406,12 +530,7 @@ const routes = {
     if (!user || hashPassword(password || "", user.salt) !== user.passHash) {
       return fail(res, 401, "Wrong company code, name or password.");
     }
-    const session = createSession(company.code, user.id);
-    sendJSON(res, 200, {
-      ...session,
-      company: { code: company.code, name: company.name },
-      user: publicUser(user),
-    });
+    sendJSON(res, 200, mobileAuthBody(company, user));
   },
 
   "POST /api/logout": async (req, res) => {
@@ -420,31 +539,13 @@ const routes = {
 
   /** Worker or manager joins through an invite link. */
   "POST /api/join": async (req, res) => {
-    const { companyCode, inviteCode, name, password } = await readBody(req);
-    const company = db.companies[(companyCode || "").trim().toUpperCase()];
-    const invite = company?.invites.find(
-      (i) => i.code === (inviteCode || "").trim().toUpperCase() && i.active
-    );
-    if (!invite) return fail(res, 400, "This invite link is not valid any more.");
-    if (!name?.trim() || (password || "").length < 6) {
-      return fail(res, 400, "Your name and a password of 6+ characters are required.");
-    }
-    if (company.users.some((u) => u.name.toLowerCase() === name.trim().toLowerCase())) {
-      return fail(res, 400, "Someone with that name already exists — add a last initial.");
-    }
-    const salt = crypto.randomBytes(16).toString("hex");
-    const user = {
-      id: id("user"),
-      name: name.trim(),
-      role: invite.role,
-      salt,
-      passHash: hashPassword(password, salt),
-      active: true,
-      createdAt: new Date().toISOString(),
-    };
-    company.users.push(user);
-    save();
+    const { company, user } = await joinCompanyAccount(await readBody(req));
     sendJSON(res, 200, { ok: true }, issueSession(res, company.code, user.id));
+  },
+
+  "POST /api/mobile/join": async (req, res) => {
+    const { company, user } = await joinCompanyAccount(await readBody(req));
+    sendJSON(res, 200, mobileAuthBody(company, user));
   },
 
   // --- state -------------------------------------------------------------
@@ -534,7 +635,7 @@ const routes = {
       date: new Date().toISOString(),
       userID: user.id,
     });
-    save();
+    await save();
     sendJSON(res, 200, { ok: true });
   },
 
@@ -596,7 +697,7 @@ const routes = {
       acceptedIDs.push(movement.id);
     }
 
-    if (acceptedIDs.length) save();
+    if (acceptedIDs.length) await save();
     sendJSON(res, 200, {
       acceptedIDs,
       duplicateIDs,
@@ -667,13 +768,12 @@ const routes = {
         changed = true;
       }
     }
-    if (changed) save();
+    if (changed) await save();
     sendJSON(res, 200, { barcodeMappings: company.barcodeMappings });
   },
 
   "POST /api/sync/parts": async (req, res, session) => {
-    const { company, user } = session;
-    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add company parts.");
+    const { company } = session;
     const { customParts } = await readBody(req);
     if (!Array.isArray(customParts) || customParts.length > 500) {
       return fail(res, 400, "Send an array of at most 500 custom parts.");
@@ -699,12 +799,13 @@ const routes = {
         poles: String(incoming.poles || "").trim().slice(0, 60),
         curve: String(incoming.curve || "").trim().slice(0, 80),
         about: String(incoming.about || "").trim().slice(0, 500),
+        serialNumber: String(incoming.serialNumber || "").trim().slice(0, 160),
       });
       existingIDs.add(partID);
     }
     if (validated.length) {
       company.customParts.push(...validated);
-      save();
+      await save();
     }
     sendJSON(res, 200, { customParts: company.customParts });
   },
@@ -712,7 +813,7 @@ const routes = {
   "POST /api/parts": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add parts.");
-    const { manufacturer, type, model, rating, poles, about } = await readBody(req);
+    const { manufacturer, type, model, rating, poles, about, serialNumber } = await readBody(req);
     if (!model?.trim() || !type?.trim()) return fail(res, 400, "Model and type are required.");
     const part = {
       id: id("custom"),
@@ -723,9 +824,10 @@ const routes = {
       poles: (poles || "").trim(),
       curve: "",
       about: (about || "").trim(),
+      serialNumber: String(serialNumber || "").trim().slice(0, 160),
     };
     company.customParts.push(part);
-    save();
+    await save();
     sendJSON(res, 200, { part });
   },
 
@@ -750,7 +852,7 @@ const routes = {
       location: (location || "").trim(),
       unitCostMinor,
     };
-    save();
+    await save();
     sendJSON(res, 200, { ok: true });
   },
 
@@ -775,7 +877,7 @@ const routes = {
       updatedAt: new Date().toISOString(),
     };
     company.boards.push(board);
-    save();
+    await save();
     sendJSON(res, 200, { board });
   },
 
@@ -787,20 +889,22 @@ const routes = {
 
     // Workers may update the status of their own board; only admins reassign.
     const mayEditStatus = isAdmin(user) || board.assignedTo === user.id;
-    if (status !== undefined) {
-      if (!mayEditStatus) return fail(res, 403, "This board is not assigned to you.");
-      if (!["Design", "In Progress", "Completed"].includes(status)) return fail(res, 400, "Bad status.");
-      board.status = status;
+    if (status !== undefined && !mayEditStatus) return fail(res, 403, "This board is not assigned to you.");
+    if (status !== undefined && !["Design", "In Progress", "Completed"].includes(status)) {
+      return fail(res, 400, "Bad status.");
     }
     if (assignedTo !== undefined) {
       if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can reassign boards.");
       if (assignedTo && !company.users.some((u) => u.id === assignedTo && u.active)) {
         return fail(res, 400, "Unknown assignee.");
       }
+    }
+    if (status !== undefined) board.status = status;
+    if (assignedTo !== undefined) {
       board.assignedTo = assignedTo || null;
     }
     board.updatedAt = new Date().toISOString();
-    save();
+    await save();
     sendJSON(res, 200, { ok: true });
   },
 
@@ -824,7 +928,7 @@ const routes = {
       createdAt: new Date().toISOString(),
     };
     company.invites.push(invite);
-    save();
+    await save();
     sendJSON(res, 200, { invite });
   },
 
@@ -834,7 +938,7 @@ const routes = {
     const { code } = await readBody(req);
     const invite = company.invites.find((i) => i.code === code);
     if (invite) invite.active = false;
-    save();
+    await save();
     sendJSON(res, 200, { ok: true });
   },
 
@@ -850,7 +954,7 @@ const routes = {
       if (!ROLES.includes(role) || role === "owner") return fail(res, 400, "Bad role.");
       member.role = role;
     }
-    save();
+    await save();
     sendJSON(res, 200, { ok: true });
   },
 };
@@ -860,6 +964,8 @@ const OPEN_ROUTES = new Set([
   "POST /api/company",
   "POST /api/login",
   "POST /api/mobile/login",
+  "POST /api/mobile/company",
+  "POST /api/mobile/join",
   "POST /api/join",
 ]);
 
@@ -895,20 +1001,52 @@ const server = http.createServer(async (req, res) => {
   try {
     const handler = routes[key];
     if (handler) {
-      if (OPEN_ROUTES.has(key)) return await handler(req, res);
-      const session = sessionFrom(req);
-      if (!session) return fail(res, 401, "Please sign in.");
-      return await handler(req, res, session);
+      const invoke = async () => {
+        if (OPEN_ROUTES.has(key)) return await handler(req, res);
+        const session = sessionFrom(req);
+        if (!session) return fail(res, 401, "Please sign in.");
+        return await handler(req, res, session);
+      };
+      if (req.method === "POST") {
+        if (OPEN_ROUTES.has(key) && !allowAuthAttempt(req, res)) return;
+        await readBody(req);
+        return await serializeMutation(invoke);
+      }
+      await mutationQueue.catch(() => {});
+      return await invoke();
     }
     if (url.pathname.startsWith("/api/")) return fail(res, 404, "No such endpoint.");
     return serveStatic(req, res, url.pathname);
   } catch (error) {
-    return fail(res, 400, error.message || "Bad request.");
+    return fail(res, error.statusCode || 400, error.message || "Bad request.");
   }
 });
 
-server.listen(PORT, () => {
-  const address = server.address();
-  const activePort = typeof address === "object" && address ? address.port : PORT;
-  console.log(`PanelVault Cloud listening on http://localhost:${activePort}`);
+async function start() {
+  db = await storage.load();
+  if (storage.kind === "supabase" && Object.keys(db.companies).length === 0) {
+    const localFile = path.join(DATA_DIR, "companies.json");
+    try {
+      const local = JSON.parse(fs.readFileSync(localFile, "utf8"));
+      if (Object.keys(local.companies || {}).length > 0) {
+        throw new Error(
+          "Supabase is empty but local company data exists. Run import-json-to-supabase.js first."
+        );
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  normalizeCompanies();
+  server.listen(PORT, () => {
+    const address = server.address();
+    const activePort = typeof address === "object" && address ? address.port : PORT;
+    const backend = process.env.SUPABASE_URL ? "Supabase" : "local JSON";
+    console.log(`PanelVault Cloud listening on http://localhost:${activePort} (${backend})`);
+  });
+}
+
+start().catch((error) => {
+  console.error(`PanelVault Cloud could not start: ${error.message}`);
+  process.exitCode = 1;
 });

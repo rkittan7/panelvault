@@ -88,6 +88,7 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
     poles: "1P",
     curve: "",
     about: "Test custom stock item",
+    serialNumber: "SN-WORKER-0042",
   };
   const customUpload = await json(baseURL, "/api/sync/parts", {
     method: "POST",
@@ -96,6 +97,20 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   });
   assert.equal(customUpload.response.status, 200);
   assert.equal(customUpload.body.customParts[0].id, customPart.id);
+  assert.equal(customUpload.body.customParts[0].serialNumber, customPart.serialNumber);
+  const websitePart = await json(baseURL, "/api/parts", {
+    method: "POST",
+    headers: authorization,
+    body: JSON.stringify({
+      manufacturer: "ABB",
+      type: "Contactor",
+      model: "AF30",
+      rating: "30A",
+      serialNumber: "SN-WEB-0099",
+    }),
+  });
+  assert.equal(websitePart.response.status, 200);
+  assert.equal(websitePart.body.part.serialNumber, "SN-WEB-0099");
   const barcode = {
     code: "7612270934765",
     symbology: "EAN-13",
@@ -159,6 +174,70 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   const state = await json(baseURL, "/api/state", { headers: authorization });
   assert.equal(state.body.stock[0].onHand, 12);
   assert.equal(state.body.movements[0].userName, "Rawe");
+  } finally {
+    server.stop();
+  }
+});
+
+test("mobile company creation and invite join share the website account database", async () => {
+  const server = await startServer();
+  const { baseURL } = server;
+  try {
+    const owner = await json(baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Panel Builders", name: "Owner", password: "owner-secret" }),
+    });
+    assert.equal(owner.response.status, 200);
+    assert.equal(owner.body.user.role, "owner");
+    assert.equal(owner.body.company.name, "Panel Builders");
+    const ownerAuthorization = { Authorization: `Bearer ${owner.body.token}` };
+
+    const invitation = await json(baseURL, "/api/invites", {
+      method: "POST",
+      headers: ownerAuthorization,
+      body: JSON.stringify({ role: "worker" }),
+    });
+    assert.equal(invitation.response.status, 200);
+
+    const worker = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: owner.body.company.code,
+        inviteCode: invitation.body.invite.code,
+        name: "Workshop Worker",
+        password: "worker-secret",
+      }),
+    });
+    assert.equal(worker.response.status, 200);
+    assert.equal(worker.body.user.role, "worker");
+    assert.equal(worker.body.company.code, owner.body.company.code);
+
+    const workerLogin = await json(baseURL, "/api/mobile/login", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: owner.body.company.code,
+        name: "Workshop Worker",
+        password: "worker-secret",
+      }),
+    });
+    assert.equal(workerLogin.response.status, 200);
+    assert.equal(workerLogin.body.user.id, worker.body.user.id);
+    assert.equal(workerLogin.body.company.code, owner.body.company.code);
+
+    const websiteState = await json(baseURL, "/api/state", { headers: ownerAuthorization });
+    assert.equal(websiteState.response.status, 200);
+    assert.deepEqual(websiteState.body.members.map((member) => member.name), ["Owner", "Workshop Worker"]);
+
+    const duplicate = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: owner.body.company.code,
+        inviteCode: invitation.body.invite.code,
+        name: "Workshop Worker",
+        password: "worker-secret",
+      }),
+    });
+    assert.equal(duplicate.response.status, 400);
   } finally {
     server.stop();
   }

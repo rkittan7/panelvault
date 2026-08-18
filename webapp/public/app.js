@@ -438,7 +438,7 @@ function renderStock() {
     list.replaceChildren();
     const q = search.value.trim().toLowerCase();
     const rows = state.stock.filter((s) =>
-      !q || `${s.part.manufacturer} ${s.part.model} ${s.part.type} ${s.location}`.toLowerCase().includes(q));
+      !q || `${s.part.manufacturer} ${s.part.model} ${s.part.type} ${s.part.serialNumber || ""} ${s.location}`.toLowerCase().includes(q));
     if (!rows.length) {
       list.append(emptyState("box", state.stock.length
         ? "Nothing matches that search."
@@ -452,7 +452,7 @@ function renderStock() {
       row.append(chipIcon("box", colorForType(s.part.type)));
       const main = el("div", "row-main");
       main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
-      const bits = [s.part.type, s.part.rating, s.location].filter(Boolean).join(" · ");
+      const bits = [s.part.type, s.part.rating, s.part.serialNumber && `Serial: ${s.part.serialNumber}`, s.location].filter(Boolean).join(" · ");
       main.append(el("div", "row-sub", bits));
       row.append(main);
 
@@ -774,14 +774,14 @@ async function openPartPicker() {
       list.replaceChildren();
       const q = search.value.trim().toLowerCase();
       catalog
-        .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type}`.toLowerCase().includes(q))
+        .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type} ${p.serialNumber || ""}`.toLowerCase().includes(q))
         .slice(0, 40)
         .forEach((p) => {
           const row = el("div", "row click");
           row.append(chipIcon("box", colorForType(p.type)));
           const main = el("div", "row-main");
           main.append(el("div", "row-title", `${p.manufacturer} ${p.model}`));
-          main.append(el("div", "row-sub", [p.type, p.rating].filter(Boolean).join(" · ")));
+          main.append(el("div", "row-sub", [p.type, p.rating, p.serialNumber && `Serial: ${p.serialNumber}`].filter(Boolean).join(" · ")));
           row.append(main);
           row.addEventListener("click", async () => {
             await api("/api/part-settings", { partID: p.id, minimumLevel: null, location: "" });
@@ -805,7 +805,8 @@ function openNewPartModal() {
     const manufacturer = field("Manufacturer", "optional");
     const type = field("Type", "e.g. Cable Tray");
     const rating = field("Rating", "optional");
-    modal.append(model.label, manufacturer.label, type.label, rating.label);
+    const serialNumber = field("Serial number", "optional");
+    modal.append(model.label, manufacturer.label, type.label, rating.label, serialNumber.label);
     modal.append(modalActions(close, "Add part", async () => {
       if (!model.input.value.trim() || !type.input.value.trim()) return;
       const { part } = await api("/api/parts", {
@@ -813,6 +814,7 @@ function openNewPartModal() {
         manufacturer: manufacturer.input.value,
         type: type.input.value,
         rating: rating.input.value,
+        serialNumber: serialNumber.input.value,
       });
       await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
       catalog = null;
