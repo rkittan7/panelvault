@@ -12899,18 +12899,6 @@ extension Color {
 // straight on the catalog. Stock is always replayed from the append-only
 // movement log; this client never invents or edits a total.
 
-/// Credentials and identity for a PanelVault Cloud session. Mirrors the
-/// warehouse app's `WarehouseCloudAccount` so both clients speak one contract.
-struct PanelCloudAccount: Codable, Equatable {
-  let baseURL: String
-  let token: String
-  let expiresAt: String
-  let companyCode: String
-  let companyName: String
-  let userName: String
-  let role: String
-}
-
 struct PanelCloudLoginResponse: Decodable {
   struct Company: Decodable { let code: String; let name: String }
   struct User: Decodable { let id: String; let name: String; let role: String }
@@ -12946,7 +12934,7 @@ struct PanelCloudDownloadResponse: Decodable {
   let hasMore: Bool
 }
 
-enum PanelCloudError: LocalizedError {
+enum WarehouseStockCloudError: LocalizedError {
   case invalidServer
   case server(String)
   case invalidResponse
@@ -12960,9 +12948,9 @@ enum PanelCloudError: LocalizedError {
   }
 }
 
-struct PanelCloudClient {
+struct WarehouseStockCloudClient {
   func login(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
-    let normalized = try PanelCloudClient.normalizedBaseURL(baseURL)
+    let normalized = try WarehouseStockCloudClient.normalizedBaseURL(baseURL)
     let response: PanelCloudLoginResponse = try await request(
       baseURL: normalized,
       path: "/api/mobile/login",
@@ -12976,6 +12964,7 @@ struct PanelCloudClient {
       expiresAt: response.expiresAt,
       companyCode: response.company.code,
       companyName: response.company.name,
+      userID: response.user.id,
       userName: response.user.name,
       role: response.user.role
     )
@@ -12983,7 +12972,7 @@ struct PanelCloudClient {
 
   func download(after sequence: Int, account: PanelCloudAccount) async throws -> PanelCloudDownloadResponse {
     try await request(
-      baseURL: try PanelCloudClient.normalizedBaseURL(account.baseURL),
+      baseURL: try WarehouseStockCloudClient.normalizedBaseURL(account.baseURL),
       path: "/api/sync/movements?after=\(sequence)",
       method: "GET",
       body: Optional<[String: String]>.none,
@@ -12996,7 +12985,7 @@ struct PanelCloudClient {
     if !text.contains("://") { text = "https://\(text)" }
     guard let url = URL(string: text),
           ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-          url.host != nil else { throw PanelCloudError.invalidServer }
+          url.host != nil else { throw WarehouseStockCloudError.invalidServer }
     return url
   }
 
@@ -13007,7 +12996,7 @@ struct PanelCloudClient {
     body: Body?,
     token: String?
   ) async throws -> Response {
-    guard let url = URL(string: path, relativeTo: baseURL) else { throw PanelCloudError.invalidServer }
+    guard let url = URL(string: path, relativeTo: baseURL) else { throw WarehouseStockCloudError.invalidServer }
     var request = URLRequest(url: url)
     request.httpMethod = method
     request.timeoutInterval = 30
@@ -13019,14 +13008,14 @@ struct PanelCloudClient {
     }
 
     let (data, response) = try await URLSession.shared.data(for: request)
-    guard let http = response as? HTTPURLResponse else { throw PanelCloudError.invalidResponse }
+    guard let http = response as? HTTPURLResponse else { throw WarehouseStockCloudError.invalidResponse }
     guard 200..<300 ~= http.statusCode else {
       let message = (try? JSONDecoder().decode(PanelCloudErrorBody.self, from: data).error)
         ?? "PanelVault Cloud request failed (\(http.statusCode))."
-      throw PanelCloudError.server(message)
+      throw WarehouseStockCloudError.server(message)
     }
     guard let decoded = try? JSONDecoder().decode(Response.self, from: data) else {
-      throw PanelCloudError.invalidResponse
+      throw WarehouseStockCloudError.invalidResponse
     }
     return decoded
   }
@@ -13085,7 +13074,7 @@ final class WarehouseStockStore: ObservableObject {
   @Published var errorMessage: String?
 
   private var lastSequence = 0
-  private let client = PanelCloudClient()
+  private let client = WarehouseStockCloudClient()
 
   var isConnected: Bool { account != nil }
 

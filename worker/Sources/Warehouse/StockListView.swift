@@ -48,7 +48,7 @@ struct StockListView: View {
       }
       .background(theme.background.ignoresSafeArea())
       .navigationTitle("Stock")
-      .searchable(text: $query, prompt: "Search model, type, manufacturer")
+      .searchable(text: $query, prompt: "Search model, serial, type, manufacturer")
       .toolbar {
         if canRunStocktake {
           ToolbarItem(placement: .topBarTrailing) {
@@ -99,6 +99,12 @@ struct StockRow: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(theme.mutedText)
             .lineLimit(1)
+          if let serialNumber = entry.part.serialNumber, !serialNumber.isEmpty {
+            Text("Serial: \(serialNumber)")
+              .font(.caption2.weight(.bold))
+              .foregroundStyle(theme.primary)
+              .lineLimit(1)
+          }
           if !entry.settings.location.isEmpty {
             Text(entry.settings.location)
               .font(.caption2.weight(.bold))
@@ -222,6 +228,7 @@ struct NewPartSheet: View {
   @State private var type = ""
   @State private var rating = ""
   @State private var poles = ""
+  @State private var serialNumber = ""
   @State private var notes = ""
 
   private var canSave: Bool {
@@ -250,6 +257,9 @@ struct NewPartSheet: View {
         Section("Details (optional)") {
           TextField("Rating (e.g. 160A)", text: $rating)
           TextField("Poles / phase", text: $poles)
+          TextField("Serial number", text: $serialNumber)
+            .textInputAutocapitalization(.characters)
+            .autocorrectionDisabled()
           TextField("Notes — what is it for?", text: $notes, axis: .vertical)
             .lineLimit(3...6)
         }
@@ -273,7 +283,8 @@ struct NewPartSheet: View {
               model: model.trimmingCharacters(in: .whitespaces),
               rating: rating.trimmingCharacters(in: .whitespaces),
               poles: poles.trimmingCharacters(in: .whitespaces),
-              notes: notes.trimmingCharacters(in: .whitespaces)
+              notes: notes.trimmingCharacters(in: .whitespaces),
+              serialNumber: serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             onCreate(part)
             dismiss()

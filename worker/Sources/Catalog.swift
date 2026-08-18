@@ -507,6 +507,7 @@ struct ComponentRatingSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var rating: String
   @State private var poles: String
+  @State private var serialNumber: String
 
   init(theme: PanelTheme, component: PanelComponent, onAdd: @escaping (PanelComponent) -> Void) {
     self.theme = theme
@@ -514,6 +515,7 @@ struct ComponentRatingSheet: View {
     self.onAdd = onAdd
     _rating = State(initialValue: component.rating)
     _poles = State(initialValue: component.poles)
+    _serialNumber = State(initialValue: component.serialNumber)
   }
 
   var body: some View {
@@ -527,6 +529,15 @@ struct ComponentRatingSheet: View {
               InfoLine(title: "Model", value: component.model)
             }
           }
+
+          CreationTextInput(
+            theme: theme,
+            title: "Serial number",
+            placeholder: "Optional",
+            symbol: "number",
+            text: $serialNumber,
+            capitalization: .characters
+          )
 
           RatingChipSection(
             theme: theme,
@@ -563,7 +574,8 @@ struct ComponentRatingSheet: View {
                 poles: poles,
                 curve: component.curve,
                 sourceID: component.imageStorageID,
-                about: component.about
+                about: component.about,
+                serialNumber: serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
               )
             )
             dismiss()
@@ -706,6 +718,9 @@ struct ComponentDetailSheet: View {
               InfoLine(title: "Type", value: component.type)
               InfoLine(title: "Rating", value: component.rating)
               InfoLine(title: "Poles / Phase", value: component.poles)
+              if !component.serialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                InfoLine(title: "Serial Number", value: component.serialNumber)
+              }
               if !component.curve.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 InfoLine(title: "Curve / Notes", value: component.curve)
               }

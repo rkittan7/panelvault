@@ -68,7 +68,8 @@ final class WarehouseStore: ObservableObject {
     model: String,
     rating: String,
     poles: String,
-    notes: String
+    notes: String,
+    serialNumber: String
   ) -> CatalogPart {
     let part = CatalogPart(
       id: "custom-\(UUID().uuidString)",
@@ -78,7 +79,8 @@ final class WarehouseStore: ObservableObject {
       rating: rating,
       poles: poles,
       curve: "",
-      about: notes
+      about: notes,
+      serialNumber: serialNumber.isEmpty ? nil : serialNumber
     )
     customParts.append(part)
     persist(customParts, to: WarehouseStore.customPartsURL)

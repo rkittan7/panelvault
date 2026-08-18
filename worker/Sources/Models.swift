@@ -605,6 +605,8 @@ struct PanelComponent: Identifiable {
   /// Empty for user-created components, which fall back to the generic
   /// per-type text in `ComponentIcon.description(for:)`.
   var about: String = ""
+  /// Unique identifier printed on this physical component, when available.
+  var serialNumber: String = ""
 
   var imageStorageID: String {
     sourceID.isEmpty ? id : sourceID
@@ -627,13 +629,14 @@ struct PanelComponent: Identifiable {
   }
 
   var detailLine: String {
-    [model, poles, curve]
+    [model, poles, curve, serialNumber.isEmpty ? nil : "SN: \(serialNumber)"]
+      .compactMap { $0 }
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
       .joined(separator: " • ")
   }
 
   var searchText: String {
-    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve)"
+    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve) \(serialNumber)"
   }
 }
 

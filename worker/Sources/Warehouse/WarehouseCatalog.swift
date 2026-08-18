@@ -19,13 +19,16 @@ struct CatalogPart: Identifiable, Hashable, Codable {
   let poles: String
   let curve: String
   let about: String
+  /// Optional manufacturer serial number for a specific/custom component.
+  /// Catalog families leave this nil because they describe a product line.
+  var serialNumber: String? = nil
 
   var displayName: String {
     "\(manufacturer) \(model)"
   }
 
   var searchText: String {
-    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve)".lowercased()
+    "\(manufacturer) \(type) \(model) \(rating) \(poles) \(curve) \(serialNumber ?? "")".lowercased()
   }
 }
 

@@ -195,7 +195,7 @@ test("mobile company creation and invite join share the website account database
     const invitation = await json(baseURL, "/api/invites", {
       method: "POST",
       headers: ownerAuthorization,
-      body: JSON.stringify({ role: "worker" }),
+      body: JSON.stringify({ role: "staff" }),
     });
     assert.equal(invitation.response.status, 200);
 
@@ -209,7 +209,7 @@ test("mobile company creation and invite join share the website account database
       }),
     });
     assert.equal(worker.response.status, 200);
-    assert.equal(worker.body.user.role, "worker");
+    assert.equal(worker.body.user.role, "staff");
     assert.equal(worker.body.company.code, owner.body.company.code);
 
     const workerLogin = await json(baseURL, "/api/mobile/login", {
