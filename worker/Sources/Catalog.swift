@@ -84,12 +84,7 @@ struct ComponentCatalogView: View {
       },
       showDetails: {
         componentToDescribe = item
-      },
-      deleteComponent: group.id == "custom-components" ? {
-        customComponents.removeAll { $0.id == item.id }
-        addedComponentIDs.remove(item.id)
-        photoComponentIDs.remove(item.id)
-      } : nil
+      }
     )
   }
 
@@ -389,7 +384,6 @@ struct ComponentRow: View {
   let togglePhoto: () -> Void
   let savePhoto: (UIImage) -> Void
   let showDetails: () -> Void
-  var deleteComponent: (() -> Void)? = nil
   @State private var selectedPhotoItem: PhotosPickerItem?
   @ObservedObject private var stockStore = WarehouseStore.shared
 
@@ -468,9 +462,6 @@ struct ComponentRow: View {
         }
         .buttonStyle(.plain)
         Spacer()
-        if let deleteComponent {
-          DeleteIconButton(theme: theme, action: deleteComponent)
-        }
         Button(action: showDetails) {
           Image(systemName: "info.circle.fill")
             .foregroundStyle(manufacturerColor)

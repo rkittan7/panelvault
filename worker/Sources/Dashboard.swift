@@ -232,22 +232,6 @@ struct DashboardView: View {
     recentVisits = Array(recentVisits.prefix(12))
   }
 
-  private func deleteProject(_ project: ProjectItem) {
-    projects.removeAll { $0.id == project.id }
-    for index in boards.indices where boards[index].project == project.name {
-      boards[index].project = "No Project"
-    }
-    recentVisits.removeAll { $0.kind == .project && $0.itemID == project.id }
-    ImageStore.shared.delete(project.imageTokens)
-  }
-
-  private func deleteBoard(id: String) {
-    let tokens = boards.first { $0.id == id }?.imageTokens ?? []
-    boards.removeAll { $0.id == id }
-    recentVisits.removeAll { $0.kind == .board && $0.itemID == id }
-    ImageStore.shared.delete(tokens)
-  }
-
   private var selectedBoardBinding: Binding<RecentBoardSelection?> {
     Binding {
       selectedBoardID.map(RecentBoardSelection.init(id:))
@@ -623,7 +607,6 @@ struct ProjectDashboardRow: View {
   let project: ProjectItem
   var boardCount: Int? = nil
   var displayedStatus: String? = nil
-  var onDelete: (() -> Void)? = nil
   var glow = false
 
   private var detailText: String {
@@ -690,9 +673,6 @@ struct ProjectDashboardRow: View {
         Spacer()
 
         HStack(spacing: 6) {
-          if let onDelete {
-            DeleteIconButton(theme: theme, action: onDelete)
-          }
           Image(systemName: "chevron.right")
             .foregroundStyle(.secondary)
         }
@@ -1016,8 +996,6 @@ struct BoardGalleryRow: View {
   let boardTypes: [BoardType]
   let manufacturers: [ManufacturerItem]
   var onOpen: () -> Void = {}
-  /// Optional: the worker app opens boards but does not delete them.
-  var onDelete: (() -> Void)? = nil
 
   private var boardType: BoardType {
     boardTypes.first { $0.name == board.type } ?? .fallback
@@ -1064,9 +1042,6 @@ struct BoardGalleryRow: View {
 
           VStack(alignment: .trailing, spacing: 6) {
             BoardProgressStatusBadge(board: board)
-            if let onDelete {
-              DeleteIconButton(theme: theme, action: onDelete)
-            }
           }
         }
 

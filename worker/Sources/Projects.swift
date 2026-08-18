@@ -364,19 +364,6 @@ struct ProjectsView: View {
     pendingProjectOpenID = nil
   }
 
-  private func deleteProject(_ project: ProjectItem) {
-    projects.removeAll { $0.id == project.id }
-    for index in boards.indices where boards[index].project == project.name {
-      boards[index].project = "No Project"
-    }
-    ImageStore.shared.delete(project.imageTokens)
-  }
-
-  private func deleteBoard(_ board: BoardDraft) {
-    boards.removeAll { $0.id == board.id }
-    ImageStore.shared.delete(board.imageTokens)
-  }
-
   private func remember(_ kind: RecentVisit.Kind, id: String) {
     recentVisits.removeAll { $0.kind == kind && $0.itemID == id }
     recentVisits.insert(RecentVisit(kind: kind, id: id), at: 0)
@@ -674,7 +661,6 @@ struct ProjectDetailSheet: View {
   let manufacturers: [ManufacturerItem]
   var onVisitBoard: (BoardDraft) -> Void = { _ in }
   var onUpdateProject: ((ProjectItem, String) -> Void)? = nil
-  var onDeleteProject: (() -> Void)? = nil
   @Environment(\.dismiss) private var dismiss
   @State private var selectedBoard: BoardDraft?
   @State private var projectName: String
@@ -696,8 +682,7 @@ struct ProjectDetailSheet: View {
     boardTypes: [BoardType],
     manufacturers: [ManufacturerItem],
     onVisitBoard: @escaping (BoardDraft) -> Void = { _ in },
-    onUpdateProject: ((ProjectItem, String) -> Void)? = nil,
-    onDeleteProject: (() -> Void)? = nil
+    onUpdateProject: ((ProjectItem, String) -> Void)? = nil
   ) {
     self.theme = theme
     self.project = project
@@ -706,7 +691,6 @@ struct ProjectDetailSheet: View {
     self.manufacturers = manufacturers
     self.onVisitBoard = onVisitBoard
     self.onUpdateProject = onUpdateProject
-    self.onDeleteProject = onDeleteProject
     _projectName = State(initialValue: project.name)
     _lastSavedName = State(initialValue: project.name)
     _customer = State(initialValue: project.customer)
