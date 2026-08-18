@@ -1,0 +1,13 @@
+{
+  "name": "panelvault-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PanelVault website, mobile API, and Supabase persistence bridge",
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test server.test.js storage.test.js"
+  }
+}

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: panelvault-cloud
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: webapp
+    buildCommand: ""
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

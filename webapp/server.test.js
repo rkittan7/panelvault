@@ -57,6 +57,10 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   const server = await startServer();
   const { baseURL } = server;
   try {
+  const health = await json(baseURL, "/api/health");
+  assert.equal(health.response.status, 200);
+  assert.deepEqual(health.body, { ok: true, storage: "local" });
+
   const registered = await json(baseURL, "/api/company", {
     method: "POST",
     body: JSON.stringify({ companyName: "Kittan Electric", name: "Rawe", password: "secret12" }),

@@ -379,6 +379,10 @@ async function joinCompanyAccount({ companyCode, inviteCode, name, password }) {
 const routes = {
   // --- account & company -------------------------------------------------
 
+  "GET /api/health": async (_req, res) => {
+    sendJSON(res, 200, { ok: true, storage: storage.kind });
+  },
+
   /** Owner registers the company and becomes its first admin. */
   "POST /api/company": async (req, res) => {
     const { company, user } = await createCompanyAccount(await readBody(req));
@@ -795,6 +799,7 @@ const routes = {
 
 // Routes that must work without a session.
 const OPEN_ROUTES = new Set([
+  "GET /api/health",
   "POST /api/company",
   "POST /api/login",
   "POST /api/mobile/login",
