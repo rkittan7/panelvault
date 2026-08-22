@@ -29,6 +29,7 @@ const SECRET_FILE = path.join(DATA_DIR, "secret");
 
 /** Base64 inflates by a third; this leaves room for an 8 MB scheme PDF. */
 const MAX_DOCUMENT_BODY = 12_000_000;
+const MAX_ATTACHMENT_BYTES = 6_000_000;
 
 /** Shared with the iPhone apps — see assets/catalog/README.md. */
 const CATALOG_IMAGE_DIR = path.resolve(__dirname, "..", "assets", "catalog");
@@ -87,12 +88,15 @@ function normalizeCompanies() {
     }
     for (const board of company.boards) {
       board.cabinetChecklists = normalizedBoardChecklists(board);
+      board.components = Array.isArray(board.components) ? board.components : [];
+      board.attachments = Array.isArray(board.attachments) ? board.attachments : [];
       board.qaAssignedTo ||= null;
       board.qaStatus = ["pending", "ready", "changes_requested", "approved"].includes(board.qaStatus)
         ? board.qaStatus
         : "pending";
       board.qaNote ||= "";
       board.qaReadyVersion = Number.isInteger(board.qaReadyVersion) ? board.qaReadyVersion : 0;
+      board.productionStage = normalizedProductionStage(board);
       board.status = boardStatus(board);
     }
   }
@@ -228,6 +232,19 @@ function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
 }
 
+function canUpdateBoard(user, board) {
+  return isAdmin(user) || board.assignedTo === user.id;
+}
+
+function safeAttachmentName(value) {
+  const clean = String(value || "attachment").trim().slice(0, 140);
+  return clean.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "attachment";
+}
+
+const ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic",
+]);
+
 function bumpWorkspace(company) {
   company.workspaceVersion = (Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0) + 1;
   return company.workspaceVersion;
@@ -274,7 +291,7 @@ function normalizedBoardChecklists(board) {
   });
 }
 
-function boardProgress(board) {
+function legacyChecklistProgress(board) {
   const checklist = checklistFor(board);
   const totalWeight = Math.max(1, checklist.reduce((sum, [, weight]) => sum + weight, 0));
   const lists = normalizedBoardChecklists(board);
@@ -297,59 +314,31 @@ const BOARD_STAGE_LABELS = [
   ["complete", "Complete"],
 ];
 
-function productionStageItems(board) {
-  const multi = Math.max(1, Math.trunc(Number(board.cabinetCount)) || 1) > 1;
-  return multi
-    ? {
-        mechanical: ["Building - Busbars", "Building - DIN and cable holders"],
-        components: ["Building - Components"],
-        wiring: ["Wiring", "N + PE bars"],
-        finishing: ["Naming and finishing", "Stickers", "Scheme holder"],
-      }
-    : {
-        mechanical: ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"],
-        components: ["Components"],
-        wiring: ["Wiring", "N + PE bars"],
-        finishing: ["Ground door", "Naming", "Scheme holder"],
-      };
+const BOARD_STAGE_IDS = BOARD_STAGE_LABELS.map(([stageID]) => stageID);
+const MANAGER_STAGE_IDS = new Set(BOARD_STAGE_IDS.slice(0, -1));
+
+function normalizedProductionStage(board) {
+  if (BOARD_STAGE_IDS.includes(board.productionStage)) return board.productionStage;
+  if (board.qaStatus === "approved") return "complete";
+  if (board.qaStatus === "changes_requested") return "finishing";
+  if (legacyChecklistProgress(board) >= 100 || board.qaStatus === "ready") return "qa";
+  if (board.assignedTo || legacyChecklistProgress(board) > 0) return "mechanical";
+  return "design";
 }
 
-function productionStageProgress(board, itemIDs) {
-  const weights = new Map(checklistFor(board));
-  const total = Math.max(1, itemIDs.reduce((sum, itemID) => sum + (weights.get(itemID) || 0), 0));
-  const lists = normalizedBoardChecklists(board);
-  const fraction = lists.reduce((sum, items) => {
-    const checked = new Set(items);
-    const completed = itemIDs.reduce((weight, itemID) =>
-      weight + (checked.has(itemID) ? (weights.get(itemID) || 0) : 0), 0);
-    return sum + completed / total;
-  }, 0) / Math.max(lists.length, 1);
-  return Math.round(fraction * 100);
+function boardProgress(board) {
+  const stageID = normalizedProductionStage(board);
+  return ({ design: 0, mechanical: 20, components: 40, wiring: 60, finishing: 80, qa: 100, complete: 100 })[stageID];
 }
 
 function boardStagePayload(board) {
-  const production = productionStageItems(board);
-  const productionProgress = {
-    mechanical: productionStageProgress(board, production.mechanical),
-    components: productionStageProgress(board, production.components),
-    wiring: productionStageProgress(board, production.wiring),
-    finishing: productionStageProgress(board, production.finishing),
-  };
-  let currentStageID = "design";
-  if (board.assignedTo || boardProgress(board) > 0) {
-    currentStageID = ["mechanical", "components", "wiring", "finishing"]
-      .find((stageID) => productionProgress[stageID] < 100) || "qa";
-  }
+  let currentStageID = normalizedProductionStage(board);
   if (board.qaStatus === "changes_requested") currentStageID = "finishing";
   if (board.qaStatus === "approved") currentStageID = "complete";
 
   const currentIndex = BOARD_STAGE_LABELS.findIndex(([id]) => id === currentStageID);
   const stages = BOARD_STAGE_LABELS.map(([id, label], index) => {
-    let progress = 0;
-    if (id === "design") progress = currentStageID === "design" ? 0 : 100;
-    else if (productionProgress[id] !== undefined) progress = productionProgress[id];
-    else if (id === "qa") progress = board.qaStatus === "approved" ? 100 : 0;
-    else if (id === "complete") progress = board.qaStatus === "approved" ? 100 : 0;
+    const progress = index < currentIndex || (id === "complete" && board.qaStatus === "approved") ? 100 : 0;
     let state = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
     if (id === "finishing" && board.qaStatus === "changes_requested") state = "attention";
     if (id === "qa" && currentStageID === "qa") state = "ready";
@@ -358,6 +347,7 @@ function boardStagePayload(board) {
   return {
     stages,
     currentStage: stages.find((stage) => stage.id === currentStageID),
+    productionStage: currentStageID,
     qaStatus: board.qaStatus || "pending",
   };
 }
@@ -384,28 +374,12 @@ function queueQAReadyNotification(company, board) {
 }
 
 function reconcileBoardQA(company, board, previous = {}) {
-  const productionComplete = boardProgress(board) >= 100;
-  const changedChecklist = previous.checklistSignature !== undefined
-    && previous.checklistSignature !== checklistSignature(board);
-  if (changedChecklist && board.qaStatus === "approved") {
-    board.qaStatus = productionComplete ? "ready" : "pending";
-    board.qaApprovedAt = null;
-    board.qaApprovedBy = null;
-  }
-  if (!productionComplete && board.qaStatus === "ready") board.qaStatus = "pending";
-  if (board.qaStatus === "changes_requested" && changedChecklist && !productionComplete) {
-    board.qaReworkStarted = true;
-  }
-  const becameReady = productionComplete
-    && board.qaStatus !== "approved"
-    && board.qaStatus !== "ready"
-    && (board.qaStatus !== "changes_requested" || board.qaReworkStarted);
-  if (becameReady) {
+  if (normalizedProductionStage(board) === "qa" && board.qaStatus !== "approved") {
     board.qaStatus = "ready";
-    board.qaReadyAt = new Date().toISOString();
-    board.qaReworkStarted = false;
-    queueQAReadyNotification(company, board);
-  } else if (productionComplete && board.qaStatus === "ready"
+    if (!board.qaReadyAt) board.qaReadyAt = new Date().toISOString();
+  }
+  if (normalizedProductionStage(board) !== "qa" && board.qaStatus === "ready") board.qaStatus = "pending";
+  if (normalizedProductionStage(board) === "qa" && board.qaStatus === "ready"
       && previous.qaAssignedTo !== board.qaAssignedTo && board.qaAssignedTo) {
     queueQAReadyNotification(company, board);
   }
@@ -413,11 +387,10 @@ function reconcileBoardQA(company, board, previous = {}) {
 }
 
 function boardStatus(board) {
-  const completion = boardProgress(board);
   if (board.qaStatus === "approved") return "Completed";
   if (board.qaStatus === "changes_requested") return "QA Changes";
-  if (completion >= 100) return "QA Ready";
-  if (!board.assignedTo && completion === 0) return "Design";
+  if (normalizedProductionStage(board) === "qa") return "QA Ready";
+  if (normalizedProductionStage(board) === "design") return "Design";
   return "In Progress";
 }
 
@@ -535,6 +508,8 @@ function normalizeCloudBoard(incoming, existing, projects) {
     componentTypes: Array.isArray(incoming.componentTypes)
       ? incoming.componentTypes.map(String).map((item) => item.trim().slice(0, 100)).filter(Boolean).slice(0, 100)
       : [],
+    components: existing?.components || (Array.isArray(incoming.components) ? incoming.components : []),
+    attachments: existing?.attachments || [],
     colorHex: cloudColor(incoming.colorHex),
     assignedTo: existing?.assignedTo || incoming.assignedTo || null,
     qaAssignedTo: existing?.qaAssignedTo || incoming.qaAssignedTo || null,
@@ -546,6 +521,9 @@ function normalizeCloudBoard(incoming, existing, projects) {
     qaApprovedAt: existing?.qaApprovedAt || incoming.qaApprovedAt || null,
     qaApprovedBy: existing?.qaApprovedBy || incoming.qaApprovedBy || null,
     qaReadyVersion: Number.isInteger(existing?.qaReadyVersion) ? existing.qaReadyVersion : 0,
+    productionStage: existing?.productionStage || (BOARD_STAGE_IDS.includes(incoming.productionStage)
+      ? incoming.productionStage
+      : undefined),
     personalChecklistItems: Array.isArray(incoming.personalChecklistItems)
       ? incoming.personalChecklistItems.slice(0, 100).map((item) => ({
           id: cloudID(item.id, "A personal checklist item"),
@@ -558,6 +536,7 @@ function normalizeCloudBoard(incoming, existing, projects) {
     updatedAt: new Date().toISOString(),
   };
   board.cabinetChecklists = normalizedBoardChecklists(board);
+  board.productionStage = normalizedProductionStage(board);
   board.status = boardStatus(board);
   return board;
 }
@@ -1750,6 +1729,9 @@ const routes = {
       qaStatus: "pending",
       qaNote: "",
       qaReadyVersion: 0,
+      productionStage: "design",
+      components: [],
+      attachments: [],
       cabinetChecklists: Array.from({ length: cabinetCount }, () => []),
       status: assignedTo ? "In Progress" : "Design",
       createdAt: new Date().toISOString(),
@@ -1817,17 +1799,176 @@ const routes = {
     if (checked === true) selected.add(itemID);
     else if (checked === false) selected.delete(itemID);
     else return fail(res, 400, "Checked must be true or false.");
-    const previous = {
-      checklistSignature: checklistSignature(board),
-      qaAssignedTo: board.qaAssignedTo,
-    };
     lists[index] = [...selected];
     board.cabinetChecklists = lists;
-    reconcileBoardQA(company, board, previous);
     board.updatedAt = new Date().toISOString();
     bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { ok: true, ...boardProgressPayload(board) });
+  },
+
+  "POST /api/board-stage": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, stageID } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!canUpdateBoard(user, board)) {
+      return fail(res, 403, "Only the assigned builder or a manager can update this board stage.");
+    }
+    if (!MANAGER_STAGE_IDS.has(stageID)) {
+      return fail(res, 400, stageID === "complete"
+        ? "Complete is set only when QA approves the board."
+        : "Unknown board stage.");
+    }
+    if (board.qaStatus === "approved" && !isAdmin(user)) {
+      return fail(res, 403, "Only a manager can reopen a completed board.");
+    }
+    const previousStage = normalizedProductionStage(board);
+    board.productionStage = stageID;
+    board.qaApprovedAt = null;
+    board.qaApprovedBy = null;
+    if (stageID === "qa") {
+      const shouldNotify = previousStage !== "qa" || board.qaStatus !== "ready";
+      board.qaStatus = "ready";
+      board.qaReadyAt = new Date().toISOString();
+      board.qaReworkStarted = false;
+      if (shouldNotify) queueQAReadyNotification(company, board);
+    } else {
+      board.qaStatus = "pending";
+      board.qaReadyAt = null;
+    }
+    board.status = boardStatus(board);
+    board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
+    await save();
+    const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
+    sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
+  },
+
+  "POST /api/board-components": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, action, componentID, partID, quantity, reference } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!canUpdateBoard(user, board)) {
+      return fail(res, 403, "Only the assigned builder or a manager can update board components.");
+    }
+    board.components = Array.isArray(board.components) ? board.components : [];
+    if (action === "remove") {
+      const removed = board.components.find((item) => item.id === componentID);
+      board.components = board.components.filter((item) => item.id !== componentID);
+      if (!removed) return fail(res, 404, "Component not found.");
+      if (!board.components.some((item) => item.type === removed.type)) {
+        board.componentTypes = (board.componentTypes || []).filter((type) => type !== removed.type);
+      }
+    } else if (action === "add") {
+      const part = partFor(company, partID);
+      if (!part) return fail(res, 400, "Choose a known component.");
+      const count = Math.trunc(Number(quantity));
+      if (!Number.isInteger(count) || count < 1 || count > 9999) return fail(res, 400, "Enter a quantity from 1 to 9,999.");
+      board.components.push({
+        id: id("component"),
+        partID: part.id,
+        manufacturer: part.manufacturer,
+        model: part.model,
+        type: part.type,
+        rating: part.rating || "",
+        poles: part.poles || "",
+        curve: part.curve || "",
+        quantity: count,
+        reference: String(reference || "").trim().slice(0, 80),
+        createdAt: new Date().toISOString(),
+        addedBy: user.id,
+      });
+      board.componentTypes = [...new Set([...(board.componentTypes || []), part.type].filter(Boolean))];
+    } else {
+      return fail(res, 400, "Choose add or remove.");
+    }
+    board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
+    await save();
+    sendJSON(res, 200, { ok: true, board: workspacePayload(company).boards.find((item) => item.id === board.id) });
+  },
+
+  "POST /api/board-attachment": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, kind, fileName, mimeType, data } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!canUpdateBoard(user, board)) {
+      return fail(res, 403, "Only the assigned builder or a manager can add board files.");
+    }
+    if (!['scheme', 'photo'].includes(kind)) return fail(res, 400, "Choose scheme or photo.");
+    if (!ATTACHMENT_MIME_TYPES.has(mimeType) || (kind === "photo" && mimeType === "application/pdf")) {
+      return fail(res, 400, "Upload a PDF or supported image.");
+    }
+    let bytes;
+    if (!/^[a-z0-9+/]*={0,2}$/i.test(String(data || ""))) {
+      return fail(res, 400, "The uploaded file is invalid.");
+    }
+    try {
+      bytes = Buffer.from(String(data || ""), "base64");
+    } catch {
+      return fail(res, 400, "The uploaded file is invalid.");
+    }
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Files must be 6 MB or smaller.");
+    const attachmentID = id("attachment");
+    const objectPath = `${company.code}/${board.id}/${kind}/${attachmentID}-${safeAttachmentName(fileName)}`;
+    const attachment = {
+      id: attachmentID,
+      kind,
+      name: String(fileName || "attachment").trim().slice(0, 140),
+      mimeType,
+      size: bytes.length,
+      objectPath,
+      createdAt: new Date().toISOString(),
+      uploadedBy: user.id,
+    };
+    await storage.uploadAttachment(objectPath, bytes, mimeType);
+    try {
+      board.attachments = [...(board.attachments || []), attachment];
+      board.updatedAt = new Date().toISOString();
+      bumpWorkspace(company);
+      await save();
+    } catch (error) {
+      await storage.deleteAttachment(objectPath).catch(() => {});
+      throw error;
+    }
+    sendJSON(res, 200, { ok: true, attachment, board: workspacePayload(company).boards.find((item) => item.id === board.id) });
+  },
+
+  "GET /api/board-attachment": async (req, res, session) => {
+    const attachmentID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("id");
+    const board = session.company.boards.find((item) => (item.attachments || []).some((file) => file.id === attachmentID));
+    const attachment = board?.attachments.find((file) => file.id === attachmentID);
+    if (!attachment) return fail(res, 404, "Attachment not found.");
+    const bytes = await storage.downloadAttachment(attachment.objectPath);
+    const disposition = attachment.kind === "scheme" ? "inline" : "inline";
+    res.writeHead(200, {
+      "Content-Type": attachment.mimeType,
+      "Content-Length": bytes.length,
+      "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
+      "Cache-Control": "private, max-age=300",
+    });
+    res.end(bytes);
+  },
+
+  "POST /api/board-attachment-delete": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, attachmentID } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!canUpdateBoard(user, board)) return fail(res, 403, "Only the assigned builder or a manager can remove board files.");
+    const attachment = (board.attachments || []).find((item) => item.id === attachmentID);
+    if (!attachment) return fail(res, 404, "Attachment not found.");
+    board.attachments = board.attachments.filter((item) => item.id !== attachmentID);
+    board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
+    await save();
+    await storage.deleteAttachment(attachment.objectPath).catch((error) => {
+      console.error(`PanelVault attachment cleanup failed: ${error.message}`);
+    });
+    sendJSON(res, 200, { ok: true, board: workspacePayload(company).boards.find((item) => item.id === board.id) });
   },
 
   "POST /api/board-qa": async (req, res, session) => {
@@ -1843,18 +1984,20 @@ const routes = {
       return fail(res, 403, "A manager must assign this board to QA first.");
     }
     if (!["approve", "request_changes"].includes(action)) return fail(res, 400, "Choose approve or request changes.");
-    if (boardProgress(board) < 100) return fail(res, 400, "Finish every production stage before QA sign-off.");
+    if (normalizedProductionStage(board) !== "qa") return fail(res, 400, "Move the board to QA before sign-off.");
     board.qaNote = String(note || "").trim().slice(0, 1000);
     if (action === "approve") {
       board.qaStatus = "approved";
       board.qaApprovedAt = new Date().toISOString();
       board.qaApprovedBy = user.id;
       board.qaReworkStarted = false;
+      board.productionStage = "complete";
     } else {
       board.qaStatus = "changes_requested";
       board.qaApprovedAt = null;
       board.qaApprovedBy = null;
       board.qaReworkStarted = false;
+      board.productionStage = "finishing";
     }
     board.status = boardStatus(board);
     board.updatedAt = new Date().toISOString();
@@ -1936,7 +2079,7 @@ const READ_ONLY_POST_ROUTES = new Set([
 ]);
 
 /** POST routes allowed to carry a base64 document. */
-const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme"]);
+const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme", "POST /api/board-attachment"]);
 
 const OPEN_ROUTES = new Set([
   "GET /api/health",

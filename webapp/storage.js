@@ -53,6 +53,33 @@ class LocalJSONStorage {
     fs.writeFileSync(temporary, JSON.stringify(normalizeState(state)), { mode: 0o600 });
     fs.renameSync(temporary, this.file);
   }
+
+  attachmentFile(objectPath) {
+    const root = path.join(this.dataDir, "attachments");
+    const file = path.resolve(root, objectPath);
+    if (file !== root && !file.startsWith(`${root}${path.sep}`)) {
+      throw new Error("Invalid attachment path.");
+    }
+    return file;
+  }
+
+  async uploadAttachment(objectPath, bytes) {
+    const file = this.attachmentFile(objectPath);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, bytes, { mode: 0o600, flag: "wx" });
+  }
+
+  async downloadAttachment(objectPath) {
+    return fs.readFileSync(this.attachmentFile(objectPath));
+  }
+
+  async deleteAttachment(objectPath) {
+    try {
+      fs.unlinkSync(this.attachmentFile(objectPath));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
 }
 
 class SupabaseStorage {
@@ -70,6 +97,8 @@ class SupabaseStorage {
     this.serviceRoleKey = serviceRoleKey;
     this.fetch = fetchImplementation;
     this.endpoint = `${this.url}/rest/v1/panelvault_state`;
+    this.attachmentBucket = "panelvault-attachments";
+    this.attachmentBucketReady = false;
     this.version = null;
   }
 
@@ -130,6 +159,67 @@ class SupabaseStorage {
     const nextVersion = await response.json();
     if (!Number.isInteger(nextVersion)) throw new Error("Supabase returned an invalid state version.");
     this.version = nextVersion;
+  }
+
+  storageObjectURL(objectPath, authenticated = false) {
+    const encoded = objectPath.split("/").map(encodeURIComponent).join("/");
+    const access = authenticated ? "/authenticated" : "";
+    return `${this.url}/storage/v1/object${access}/${this.attachmentBucket}/${encoded}`;
+  }
+
+  async ensureAttachmentBucket() {
+    if (this.attachmentBucketReady) return;
+    const response = await this.fetch(`${this.url}/storage/v1/bucket/${this.attachmentBucket}`, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    if (response.status === 404) {
+      await this.request(`${this.url}/storage/v1/bucket`, {
+        method: "POST",
+        body: JSON.stringify({
+          id: this.attachmentBucket,
+          name: this.attachmentBucket,
+          public: false,
+          file_size_limit: 6_000_000,
+          allowed_mime_types: ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"],
+        }),
+      });
+    } else if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Supabase returned ${response.status}${detail ? `: ${detail}` : ""}`);
+    }
+    this.attachmentBucketReady = true;
+  }
+
+  async uploadAttachment(objectPath, bytes, mimeType) {
+    await this.ensureAttachmentBucket();
+    const response = await this.fetch(this.storageObjectURL(objectPath), {
+      method: "POST",
+      headers: this.headers({ "Content-Type": mimeType, "x-upsert": "false" }),
+      body: bytes,
+    });
+    if (!response.ok) throw new Error(`Could not upload attachment: ${(await response.text()).slice(0, 500)}`);
+  }
+
+  async downloadAttachment(objectPath) {
+    await this.ensureAttachmentBucket();
+    const response = await this.fetch(this.storageObjectURL(objectPath, true), {
+      method: "GET",
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new Error(`Could not download attachment: ${(await response.text()).slice(0, 500)}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  async deleteAttachment(objectPath) {
+    await this.ensureAttachmentBucket();
+    const response = await this.fetch(this.storageObjectURL(objectPath), {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Could not delete attachment: ${(await response.text()).slice(0, 500)}`);
+    }
   }
 }
 

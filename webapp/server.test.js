@@ -254,7 +254,7 @@ test("projects and boards use the same creation contract as the app", async () =
       body: JSON.stringify({ boardID: createdBoard.body.board.id, assignedTo: registered.body.user.id }),
     });
     assert.equal(assigned.response.status, 200);
-    assert.equal(assigned.body.status, "In Progress");
+    assert.equal(assigned.body.status, "Design");
     const unassigned = await json(server.baseURL, "/api/board-update", {
       method: "POST", headers,
       body: JSON.stringify({ boardID: createdBoard.body.board.id, assignedTo: null }),
@@ -278,19 +278,43 @@ test("projects and boards use the same creation contract as the app", async () =
       }),
     });
     assert.equal(firstCheck.response.status, 200);
-    assert.equal(firstCheck.body.status, "In Progress");
-    assert.ok(firstCheck.body.completion > 0);
+    assert.equal(firstCheck.body.status, "Design");
+    assert.equal(firstCheck.body.completion, 0);
 
-    for (let cabinetIndex = 0; cabinetIndex < 3; cabinetIndex += 1) {
-      for (const item of createdBoard.body.board.checklist) {
-        if (cabinetIndex === 0 && item.id === createdBoard.body.board.checklist[0].id) continue;
-        const checked = await json(server.baseURL, "/api/board-checklist", {
-          method: "POST", headers,
-          body: JSON.stringify({ boardID: createdBoard.body.board.id, cabinetIndex, itemID: item.id, checked: true }),
-        });
-        assert.equal(checked.response.status, 200);
-      }
+    for (const stageID of ["mechanical", "components", "wiring", "finishing", "qa"]) {
+      const staged = await json(server.baseURL, "/api/board-stage", {
+        method: "POST", headers,
+        body: JSON.stringify({ boardID: createdBoard.body.board.id, stageID }),
+      });
+      assert.equal(staged.response.status, 200);
     }
+
+    const directComplete = await json(server.baseURL, "/api/board-stage", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, stageID: "complete" }),
+    });
+    assert.equal(directComplete.response.status, 400);
+
+    const component = await json(server.baseURL, "/api/board-components", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id, action: "add", partID: "abb-s201-1p", quantity: 12, reference: "QF1-QF12",
+      }),
+    });
+    assert.equal(component.response.status, 200);
+    assert.equal(component.body.board.components[0].quantity, 12);
+
+    const uploaded = await json(server.baseURL, "/api/board-attachment", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id, kind: "scheme", fileName: "main.pdf",
+        mimeType: "application/pdf", data: Buffer.from("test-pdf").toString("base64"),
+      }),
+    });
+    assert.equal(uploaded.response.status, 200);
+    const downloaded = await fetch(`${server.baseURL}/api/board-attachment?id=${uploaded.body.attachment.id}`, { headers });
+    assert.equal(downloaded.status, 200);
+    assert.equal(await downloaded.text(), "test-pdf");
 
     const state = await json(server.baseURL, "/api/state", { headers });
     assert.equal(state.body.projects.length, 1);
@@ -315,6 +339,11 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(approved.body.status, "Completed");
     assert.equal(approved.body.currentStage.id, "complete");
 
+    const reopened = await json(server.baseURL, "/api/board-stage", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, stageID: "qa" }),
+    });
+    assert.equal(reopened.response.status, 200);
     const corrections = await json(server.baseURL, "/api/board-qa", {
       method: "POST", headers,
       body: JSON.stringify({ boardID: createdBoard.body.board.id, action: "request_changes", note: "Replace one label" }),
@@ -323,24 +352,13 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(corrections.body.status, "QA Changes");
     assert.equal(corrections.body.currentStage.id, "finishing");
 
-    const finishingItem = createdBoard.body.board.checklist.find((item) => item.id === "Scheme holder");
-    assert.ok(finishingItem);
-    const rework = await json(server.baseURL, "/api/board-checklist", {
+    const resubmitted = await json(server.baseURL, "/api/board-stage", {
       method: "POST", headers,
-      body: JSON.stringify({
-        boardID: createdBoard.body.board.id, cabinetIndex: 0, itemID: finishingItem.id, checked: false,
-      }),
-    });
-    assert.equal(rework.body.status, "QA Changes");
-    const resubmitted = await json(server.baseURL, "/api/board-checklist", {
-      method: "POST", headers,
-      body: JSON.stringify({
-        boardID: createdBoard.body.board.id, cabinetIndex: 0, itemID: finishingItem.id, checked: true,
-      }),
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, stageID: "qa" }),
     });
     assert.equal(resubmitted.body.status, "QA Ready");
     const resubmissionNotifications = await json(server.baseURL, "/api/notifications", { headers });
-    assert.equal(resubmissionNotifications.body.notifications.length, 2);
+    assert.equal(resubmissionNotifications.body.notifications.length, 3);
 
     const reapproved = await json(server.baseURL, "/api/board-qa", {
       method: "POST", headers,
@@ -375,9 +393,9 @@ test("projects and boards use the same creation contract as the app", async () =
     });
     assert.equal(phoneProgress.response.status, 200);
     assert.equal(phoneProgress.body.version, synced.body.version + 1);
-    assert.equal(phoneProgress.body.boards[0].completion, 0);
-    assert.equal(phoneProgress.body.boards[0].status, "Design");
-    assert.equal(phoneProgress.body.boards[0].qaStatus, "pending");
+    assert.equal(phoneProgress.body.boards[0].completion, 100);
+    assert.equal(phoneProgress.body.boards[0].status, "Completed");
+    assert.equal(phoneProgress.body.boards[0].qaStatus, "approved");
     assert.equal(phoneProgress.body.boards[0].personalChecklistItems[0].title, "Phone QA");
   } finally {
     server.stop();
@@ -561,12 +579,19 @@ test("mobile company creation and invite join share the website account database
       }),
     });
     assert.equal(workerProgress.response.status, 200);
-    assert.ok(workerProgress.body.boards[0].completion > 0);
+    assert.equal(workerProgress.body.boards[0].completion, 0);
+    const workerStage = await json(baseURL, "/api/board-stage", {
+      method: "POST",
+      headers: workerAuthorization,
+      body: JSON.stringify({ boardID: assignedBoard.body.board.id, stageID: "mechanical" }),
+    });
+    assert.equal(workerStage.response.status, 200);
+    assert.equal(workerStage.body.board.completion, 20);
     const forbiddenFullSync = await json(baseURL, "/api/sync/workspace", {
       method: "POST",
       headers: workerAuthorization,
       body: JSON.stringify({
-        expectedVersion: workerProgress.body.version,
+        expectedVersion: workerProgress.body.version + 1,
         projects: workerProgress.body.projects,
         boards: workerProgress.body.boards,
       }),

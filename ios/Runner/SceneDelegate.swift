@@ -1182,7 +1182,7 @@ struct DashboardView: View {
   var activeBoardsList: some View {
     VStack(spacing: 10) {
       if activeBoards.isEmpty {
-        EmptyStateCard(theme: theme, title: "No in-progress boards", subtitle: "Boards with open checklist items will show here.")
+        EmptyStateCard(theme: theme, title: "No in-progress boards", subtitle: "Boards in active production stages will show here.")
       }
       ForEach(Array(activeBoards.prefix(3).enumerated()), id: \.element.id) { _, board in
         Button {
@@ -5677,6 +5677,7 @@ struct NewBoardStepIndicator: View {
 struct BoardProductionStageTracker: View {
   let theme: PanelTheme
   let board: BoardDraft
+  let onSelect: (String) -> Void
 
   private func color(for stage: BoardProductionStage) -> Color {
     switch stage.state {
@@ -5754,6 +5755,13 @@ struct BoardProductionStageTracker: View {
                 }
               }
               .frame(width: 84, alignment: .top)
+              .contentShape(Rectangle())
+              .onTapGesture {
+                guard stage.id != "complete", stage.id != board.currentProductionStage.id else { return }
+                onSelect(stage.id)
+              }
+              .accessibilityAddTraits(stage.id == board.currentProductionStage.id ? .isSelected : .isButton)
+              .accessibilityHint(stage.id == "complete" ? "Unlocked by QA approval" : "Sets the board stage")
             }
           }
           .padding(.horizontal, 4)
@@ -5787,6 +5795,7 @@ struct CreatedBoardScreen: View {
   @State private var qaNote = ""
   @State private var qaSubmitting = false
   @State private var qaError = ""
+  @State private var stageSubmitting = false
 
   private var displayBoard: BoardDraft {
     var copy = board
@@ -5885,20 +5894,19 @@ struct CreatedBoardScreen: View {
           editOpen = true
         }
 
-        BoardProductionStageTracker(theme: theme, board: displayBoard)
+        BoardProductionStageTracker(theme: theme, board: displayBoard) { stageID in
+          Task { await submitStage(stageID) }
+        }
+        .allowsHitTesting(!stageSubmitting)
         qaReviewSection
 
-        cabinetChecklistSection
-          .onChange(of: board.cabinetCount) { _ in
-            normalizeLocalCabinets()
-          }
+        componentsSection
+        SchemeAttachmentSection(theme: theme, attachments: $board.schemeAttachments)
+        PhotoPickerSection(theme: theme, title: "Board Photos", photoTokens: $board.photoTokens, coverImage: $board.coverImage)
         PersonalChecklistSection(theme: theme, items: $personalChecklistItems)
           .onChange(of: personalChecklistItems) { _ in
             scheduleBoardSync()
           }
-        SchemeAttachmentSection(theme: theme, attachments: $board.schemeAttachments)
-        PhotoPickerSection(theme: theme, title: "Board Photos", photoTokens: $board.photoTokens, coverImage: $board.coverImage)
-        componentsSection
 
         if showsCreationFlow {
           Button(action: createAnother) {
@@ -6138,6 +6146,27 @@ struct CreatedBoardScreen: View {
   }
 
   @MainActor
+  private func submitStage(_ stageID: String) async {
+    guard stageID != "complete", stageID != board.productionStage else { return }
+    stageSubmitting = true
+    qaError = ""
+    if let account = cloudAccount {
+      do {
+        let remote = try await PanelCloudClient().submitStage(account: account, boardID: board.id, stageID: stageID)
+        board = remote.board(preserving: board)
+      } catch {
+        qaError = error.localizedDescription
+      }
+    } else {
+      board.productionStage = stageID
+      board.qaStatus = stageID == "qa" ? "ready" : "pending"
+      board.qaApprovedAt = nil
+      if stageID != "qa" { board.qaReadyAt = nil }
+    }
+    stageSubmitting = false
+  }
+
+  @MainActor
   private func submitQA(action: String) async {
     guard let account = cloudAccount else { return }
     qaSubmitting = true
@@ -6156,6 +6185,7 @@ struct CreatedBoardScreen: View {
       board.qaNote = synced.qaNote
       board.qaReadyAt = synced.qaReadyAt
       board.qaApprovedAt = synced.qaApprovedAt
+      board.productionStage = synced.productionStage
       qaNote = synced.qaNote
     } catch {
       qaError = error.localizedDescription
@@ -8597,11 +8627,13 @@ private struct PanelCloudBoardProgressUpload: Encodable {
 
 private struct PanelCloudBoardProgress: Encodable {
   let id: String
+  let productionStage: String
   let cabinetChecklists: [[String]]
   let personalChecklistItems: [PanelCloudPersonalChecklistItem]
 
   init(board: BoardDraft) {
     id = board.id
+    productionStage = board.productionStage
     cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0).sorted() }
     personalChecklistItems = board.personalChecklistItems.map(PanelCloudPersonalChecklistItem.init(item:))
   }
@@ -8689,6 +8721,7 @@ private struct PanelCloudBoard: Codable {
   let qaNote: String?
   let qaReadyAt: String?
   let qaApprovedAt: String?
+  let productionStage: String?
   let cabinetChecklists: [[String]]?
   let personalChecklistItems: [PanelCloudPersonalChecklistItem]?
   let createdAt: String?
@@ -8724,6 +8757,7 @@ private struct PanelCloudBoard: Codable {
     qaNote = board.qaNote
     qaReadyAt = PanelCloudDate.encode(board.qaReadyAt)
     qaApprovedAt = PanelCloudDate.encode(board.qaApprovedAt)
+    productionStage = board.productionStage
     cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0).sorted() }
     personalChecklistItems = board.personalChecklistItems.map(PanelCloudPersonalChecklistItem.init(item:))
     createdAt = nil
@@ -8768,7 +8802,8 @@ private struct PanelCloudBoard: Codable {
       qaStatus: qaStatus ?? "pending",
       qaNote: qaNote ?? "",
       qaReadyAt: PanelCloudDate.decode(qaReadyAt),
-      qaApprovedAt: PanelCloudDate.decode(qaApprovedAt)
+      qaApprovedAt: PanelCloudDate.decode(qaApprovedAt),
+      productionStage: productionStage ?? (qaStatus == "approved" ? "complete" : "design")
     )
   }
 }
@@ -8781,6 +8816,11 @@ private struct PanelCloudQARequest: Encodable {
 
 private struct PanelCloudQAResponse: Decodable {
   let board: PanelCloudBoard
+}
+
+private struct PanelCloudStageRequest: Encodable {
+  let boardID: String
+  let stageID: String
 }
 
 private struct PanelCloudClient {
@@ -8866,6 +8906,17 @@ private struct PanelCloudClient {
     let response: PanelCloudQAResponse = try await authenticatedRequest(
       account: account,
       path: "/api/board-qa",
+      method: "POST",
+      body: try JSONEncoder().encode(payload)
+    )
+    return response.board
+  }
+
+  func submitStage(account: PanelCloudAccount, boardID: String, stageID: String) async throws -> PanelCloudBoard {
+    let payload = PanelCloudStageRequest(boardID: boardID, stageID: stageID)
+    let response: PanelCloudQAResponse = try await authenticatedRequest(
+      account: account,
+      path: "/api/board-stage",
       method: "POST",
       body: try JSONEncoder().encode(payload)
     )
@@ -12987,7 +13038,7 @@ struct BoardDraft: Identifiable {
   /// is built and tracked on its own; the board's completion averages them.
   var cabinetChecklists: [Set<String>] = []
   /// Cloud assignment is shared with the manager website. Local-only boards
-  /// leave this nil and stay in Design until checklist work begins.
+  /// leave this nil; stage movement is tracked independently.
   var assignedTo: String? = nil
   var assignedName: String = ""
   /// QA is deliberately separate from finishing: production can be ready while
@@ -12998,6 +13049,8 @@ struct BoardDraft: Identifiable {
   var qaNote: String = ""
   var qaReadyAt: Date? = nil
   var qaApprovedAt: Date? = nil
+  /// Authoritative workflow stage shared with the manager website.
+  var productionStage: String = "design"
 
   var coverImage: UIImage? {
     get { ImageStore.shared.image(for: coverToken) }
@@ -13061,7 +13114,7 @@ struct BoardDraft: Identifiable {
       normalizedCabinetChecklists.map { $0.sorted().joined(separator: ",") }.joined(separator: ";"),
       personalChecklistItems.map { "\($0.id):\($0.title):\($0.isDone)" }.joined(separator: ","),
       assignedTo ?? "", assignedName, qaAssignedTo ?? "", qaAssignedName,
-      qaStatus, qaNote, "\(qaReadyAt?.timeIntervalSince1970 ?? 0)",
+      qaStatus, qaNote, productionStage, "\(qaReadyAt?.timeIntervalSince1970 ?? 0)",
       "\(qaApprovedAt?.timeIntervalSince1970 ?? 0)"
     ].joined(separator: "||")
   }
@@ -13073,64 +13126,23 @@ struct BoardDraft: Identifiable {
       .joined(separator: " • ")
   }
 
-  /// Board completion is the average of each cabinet's checklist completion.
+  /// Dashboard progress follows the manager-controlled production stage.
   var completion: Int {
-    let checklist = ChecklistTemplate.items(for: cabinetCount)
-    let totalWeight = max(checklist.map(\.weight).reduce(0, +), 1)
-    let lists = normalizedCabinetChecklists
-    guard !lists.isEmpty else { return 0 }
-    let averageFraction = lists.map { checked in
-      let done = checklist.filter { checked.contains($0.id) }.map(\.weight).reduce(0, +)
-      return Double(done) / Double(totalWeight)
-    }.reduce(0, +) / Double(lists.count)
-    return Int((averageFraction * 100).rounded())
-  }
-
-  private var productionStageItemIDs: [(String, String, [String])] {
-    if cabinetCountValue > 1 {
-      return [
-        ("mechanical", "Mechanical Build", ["Building - Busbars", "Building - DIN and cable holders"]),
-        ("components", "Components", ["Building - Components"]),
-        ("wiring", "Wiring", ["Wiring", "N + PE bars"]),
-        ("finishing", "Finishing", ["Naming and finishing", "Stickers", "Scheme holder"]),
-      ]
-    }
-    return [
-      ("mechanical", "Mechanical Build", ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"]),
-      ("components", "Components", ["Components"]),
-      ("wiring", "Wiring", ["Wiring", "N + PE bars"]),
-      ("finishing", "Finishing", ["Ground door", "Naming", "Scheme holder"]),
-    ]
-  }
-
-  private func productionStageProgress(itemIDs: [String]) -> Int {
-    let checklist = ChecklistTemplate.items(for: cabinetCount)
-    let weights = Dictionary(uniqueKeysWithValues: checklist.map { ($0.id, $0.weight) })
-    let total = max(itemIDs.map { weights[$0] ?? 0 }.reduce(0, +), 1)
-    let lists = normalizedCabinetChecklists
-    guard !lists.isEmpty else { return 0 }
-    let fraction = lists.map { checked in
-      Double(itemIDs.filter { checked.contains($0) }.map { weights[$0] ?? 0 }.reduce(0, +)) / Double(total)
-    }.reduce(0, +) / Double(lists.count)
-    return Int((fraction * 100).rounded())
+    ["design": 0, "mechanical": 20, "components": 40, "wiring": 60,
+     "finishing": 80, "qa": 100, "complete": 100][productionStage] ?? 0
   }
 
   var productionStages: [BoardProductionStage] {
-    let production = productionStageItemIDs.map { (id: $0.0, title: $0.1, progress: productionStageProgress(itemIDs: $0.2)) }
-    var currentID = "design"
-    if assignedTo != nil || completion > 0 {
-      currentID = production.first { $0.progress < 100 }?.id ?? "qa"
-    }
+    var currentID = productionStage
     if qaStatus == "changes_requested" { currentID = "finishing" }
     if qaStatus == "approved" { currentID = "complete" }
-    let definitions = [("design", "Design")] + production.map { ($0.id, $0.title) } + [("qa", "QA"), ("complete", "Complete")]
+    let definitions = [("design", "Design"), ("mechanical", "Mechanical Build"),
+      ("components", "Components"), ("wiring", "Wiring"), ("finishing", "Finishing"),
+      ("qa", "QA"), ("complete", "Complete")]
     let currentIndex = definitions.firstIndex { $0.0 == currentID } ?? 0
     return definitions.enumerated().map { index, definition in
       let id = definition.0
-      let progress: Int
-      if id == "design" { progress = currentID == "design" ? 0 : 100 }
-      else if let stage = production.first(where: { $0.id == id }) { progress = stage.progress }
-      else { progress = qaStatus == "approved" ? 100 : 0 }
+      let progress = index < currentIndex || (id == "complete" && qaStatus == "approved") ? 100 : 0
       var state = index < currentIndex ? "done" : (index == currentIndex ? "current" : "upcoming")
       if id == "finishing" && qaStatus == "changes_requested" { state = "attention" }
       if id == "qa" && currentID == "qa" { state = "ready" }
@@ -13150,8 +13162,8 @@ struct BoardDraft: Identifiable {
   var statusTitle: String {
     if isCompleted { return "Finished" }
     if qaStatus == "changes_requested" { return "QA Changes" }
-    if completion >= 100 { return "QA Ready" }
-    if assignedTo == nil && completion == 0 { return "Design" }
+    if productionStage == "qa" { return "QA Ready" }
+    if productionStage == "design" { return "Design" }
     return "In Progress"
   }
 }
@@ -13969,6 +13981,7 @@ struct BoardRecord: Codable {
   let qaNote: String?
   let qaReadyAt: Date?
   let qaApprovedAt: Date?
+  let productionStage: String?
 
   init(board: BoardDraft) {
     id = board.id
@@ -14007,6 +14020,7 @@ struct BoardRecord: Codable {
     qaNote = board.qaNote
     qaReadyAt = board.qaReadyAt
     qaApprovedAt = board.qaApprovedAt
+    productionStage = board.productionStage
   }
 
   var board: BoardDraft {
@@ -14046,7 +14060,11 @@ struct BoardRecord: Codable {
       qaStatus: qaStatus ?? "pending",
       qaNote: qaNote ?? "",
       qaReadyAt: qaReadyAt,
-      qaApprovedAt: qaApprovedAt
+      qaApprovedAt: qaApprovedAt,
+      productionStage: productionStage ?? (qaStatus == "approved" ? "complete"
+        : qaStatus == "ready" ? "qa"
+        : qaStatus == "changes_requested" ? "finishing"
+        : assignedTo == nil ? "design" : "mechanical")
     )
   }
 }

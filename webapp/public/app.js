@@ -12,6 +12,7 @@ let boardChecklistSyncing = false;
 let boardChecklistRevision = 0;
 let boardChecklistQueue = Promise.resolve();
 let boardChecklistAnimation = null;
+const boardArchiveFilters = { query: "", type: "All", status: "All" };
 
 // Kept in the same order as AmpereRating and PoleRating in the iPhone app.
 const AMPERE_RATINGS = [
@@ -48,6 +49,7 @@ const ICON_PATHS = {
   arrowOut: '<path d="M12 20V8"/><path d="M7 13l5-5 5 5"/><path d="M5 4h14"/>',
   sliders: '<path d="M4 7h10"/><circle cx="17" cy="7" r="2.5"/><path d="M20 16H10"/><circle cx="7" cy="16" r="2.5"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l2.5 2.5L16.5 9"/>',
   x: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   link: '<path d="M10 14a4 4 0 0 0 6 .5l3-3a4 4 0 0 0-5.5-5.5l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-6-.5l-3 3a4 4 0 0 0 5.5 5.5l1.5-1.5"/>',
@@ -633,7 +635,7 @@ function renderDashboard() {
   view.append(kpis);
 
   const inProgressBoards = state.boards
-    .filter((board) => board.status === "In Progress")
+    .filter((board) => board.status !== "Completed")
     .sort((a, b) => (b.completion || 0) - (a.completion || 0));
   const productionPanel = panel(
     "In progress boards",
@@ -647,7 +649,7 @@ function renderDashboard() {
   } else {
     const table = el("div", "production-board-table");
     const tableHead = el("div", "production-board-head");
-    ["Board", "Project", "Assigned to", "Progress", "Status"].forEach((label) => tableHead.append(el("span", null, label)));
+    ["Board", "Project", "Assigned to", "Stage", "Completion"].forEach((label) => tableHead.append(el("span", null, label)));
     table.append(tableHead);
     inProgressBoards.slice(0, 8).forEach((board) => {
       const row = el("button", "production-board-row");
@@ -675,16 +677,11 @@ function renderDashboard() {
         .split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
       owner.append(el("i", null, ownerInitials || "?"), el("span", null, board.assignedName || "Unassigned"));
 
-      const progress = el("span", "production-board-progress");
-      const progressCopy = el("span");
-      progressCopy.append(el("span", null, "Build completion"), el("strong", null, `${board.completion || 0}%`));
-      const track = el("span", "manager-meter");
-      const fill = el("i");
-      fill.style.width = `${board.completion || 0}%`;
-      track.append(fill);
-      progress.append(progressCopy, track);
+      const stage = el("span", "production-board-stage");
+      stage.append(el("i"), el("span", null, board.currentStage?.label || board.status || "Design"));
+      const completion = el("strong", "production-board-percent", `${board.completion || 0}%`);
 
-      row.append(identity, project, owner, progress, statusBadge(board.status), icon("chevron", 15));
+      row.append(identity, project, owner, stage, completion, icon("chevron", 15));
       row.addEventListener("click", () => openBoardDetail(board.id));
       table.append(row);
     });
@@ -1078,16 +1075,110 @@ function renderBoards() {
   if (isAdmin()) actions.push(smallBtn("New board", "accent", "plus", openNewBoardModal));
   view.append(viewHead("Boards", ...actions));
 
-  if (!state.boards.length) {
-    view.append(emptyState("board", isAdmin()
-      ? "No boards yet. Create one and assign it to whoever builds it."
-      : "No boards yet."));
-    return;
+  const isFinished = (board) => board.status === "Completed";
+  const boardTypes = [...new Set(state.boards.map((board) => board.type).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (boardArchiveFilters.type !== "All" && !boardTypes.includes(boardArchiveFilters.type)) {
+    boardArchiveFilters.type = "All";
   }
 
-  const mine = state.boards.filter((b) => b.assignedTo === state.me.id);
-  const others = state.boards.filter((b) => b.assignedTo !== state.me.id);
-  const listFor = () => { const l = el("div", "list"); view.append(l); return l; };
+  const typeFiltered = state.boards.filter((board) =>
+    boardArchiveFilters.type === "All" || board.type === boardArchiveFilters.type);
+  const searchableText = (board) => [
+    board.number, board.group, board.name, board.project, board.customer,
+    board.type, board.subtype, board.assignedName, board.mainBreakerType,
+    board.mainBreakerModel, board.mainBreakerAmpere, ...(board.componentTypes || []),
+  ].filter(Boolean).join(" ").toLocaleLowerCase();
+  const query = boardArchiveFilters.query.trim().toLocaleLowerCase();
+  const visibleBoards = typeFiltered.filter((board) => {
+    const statusMatches = boardArchiveFilters.status === "All"
+      || (boardArchiveFilters.status === "Finished" ? isFinished(board) : !isFinished(board));
+    return statusMatches && (!query || searchableText(board).includes(query));
+  });
+
+  const controls = el("section", "board-archive-controls");
+  const searchWrap = el("label", "board-archive-search");
+  searchWrap.append(icon("search", 17));
+  const search = el("input");
+  search.type = "search";
+  search.placeholder = "Search boards, type, ampere, project…";
+  search.value = boardArchiveFilters.query;
+  search.setAttribute("aria-label", "Search boards");
+  search.addEventListener("input", () => {
+    boardArchiveFilters.query = search.value;
+    renderBoards();
+    const nextSearch = $("#view-boards .board-archive-search input");
+    if (nextSearch) {
+      nextSearch.focus();
+      nextSearch.setSelectionRange(boardArchiveFilters.query.length, boardArchiveFilters.query.length);
+    }
+  });
+  searchWrap.append(search);
+
+  const typeWrap = el("label", "board-type-filter");
+  typeWrap.append(icon("sliders", 16));
+  const typeSelect = el("select");
+  typeSelect.setAttribute("aria-label", "Board type");
+  ["All", ...boardTypes].forEach((type) => {
+    const option = el("option", null, type === "All" ? "All board types" : type);
+    option.value = type;
+    option.selected = type === boardArchiveFilters.type;
+    typeSelect.append(option);
+  });
+  typeSelect.addEventListener("change", () => {
+    boardArchiveFilters.type = typeSelect.value;
+    renderBoards();
+  });
+  typeWrap.append(typeSelect);
+  controls.append(searchWrap, typeWrap);
+
+  if (boardArchiveFilters.query || boardArchiveFilters.type !== "All" || boardArchiveFilters.status !== "All") {
+    controls.append(smallBtn("Clear filters", "", "x", () => {
+      boardArchiveFilters.query = "";
+      boardArchiveFilters.type = "All";
+      boardArchiveFilters.status = "All";
+      renderBoards();
+    }));
+  }
+  view.append(controls);
+
+  const activeCount = typeFiltered.filter((board) => !isFinished(board)).length;
+  const finishedCount = typeFiltered.filter(isFinished).length;
+  const metrics = el("div", "board-archive-metrics");
+  [
+    ["In Progress", activeCount, "pulse"],
+    ["Finished", finishedCount, "check"],
+    ["All", typeFiltered.length, "board"],
+  ].forEach(([label, count, iconName]) => {
+    const metric = el("button", `board-archive-metric${boardArchiveFilters.status === label ? " active" : ""}`);
+    metric.type = "button";
+    metric.append(chipIcon(iconName, label === "Finished" ? "var(--positive)" : "var(--secondary)"));
+    const copy = el("span");
+    copy.append(el("small", null, label === "All" ? "Boards" : label), el("strong", null, String(count)));
+    metric.append(copy);
+    metric.addEventListener("click", () => {
+      boardArchiveFilters.status = label;
+      renderBoards();
+    });
+    metrics.append(metric);
+  });
+  view.append(metrics);
+
+  const statusFilters = el("div", "board-status-filters");
+  statusFilters.append(el("span", null, "Status"));
+  ["All", "In Progress", "Finished"].forEach((status) => {
+    const count = status === "All" ? typeFiltered.length
+      : status === "Finished" ? finishedCount : activeCount;
+    const button = el("button", boardArchiveFilters.status === status ? "active" : "");
+    button.type = "button";
+    button.append(document.createTextNode(status), el("span", null, String(count)));
+    button.addEventListener("click", () => {
+      boardArchiveFilters.status = status;
+      renderBoards();
+    });
+    statusFilters.append(button);
+  });
+  view.append(statusFilters);
 
   const boardRow = (b, isMine) => {
     const row = el("div", "row click board-list-row");
@@ -1132,16 +1223,56 @@ function renderBoards() {
     return row;
   };
 
-  if (mine.length) {
-    view.append(el("div", "section-label", "Your boards"));
-    const l = listFor();
-    mine.forEach((b) => l.append(boardRow(b, true)));
+  if (!visibleBoards.length) {
+    view.append(emptyState("board", !state.boards.length
+      ? (isAdmin() ? "No boards yet. Create one and assign it to whoever builds it." : "No boards yet.")
+      : query || boardArchiveFilters.type !== "All"
+        ? "No boards match this search and filter combination."
+        : "No boards are in this production stage."));
+    return;
   }
-  if (others.length) {
-    view.append(el("div", "section-label", mine.length ? "All boards" : "Boards"));
-    const l = listFor();
-    others.forEach((b) => l.append(boardRow(b, false)));
-  }
+
+  const dueTime = (board) => board.dueDate ? new Date(board.dueDate).getTime() : Number.POSITIVE_INFINITY;
+  const activeSort = (left, right) => dueTime(left) - dueTime(right)
+    || (right.completion || 0) - (left.completion || 0)
+    || (left.name || "").localeCompare(right.name || "", undefined, { numeric: true });
+  const finishedSort = (left, right) => (right.number || "").localeCompare(left.number || "", undefined, { numeric: true })
+    || (left.name || "").localeCompare(right.name || "", undefined, { numeric: true });
+  const groupFor = (board) => board.group || "Ungrouped";
+  const grouped = (boards) => {
+    const groups = new Map();
+    boards.forEach((board) => {
+      const group = groupFor(board);
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(board);
+    });
+    return [...groups.entries()].sort(([left], [right]) => {
+      if (left === "Ungrouped") return 1;
+      if (right === "Ungrouped") return -1;
+      return right.localeCompare(left, undefined, { numeric: true });
+    });
+  };
+  const appendStage = (title, boards, finished) => {
+    if (!boards.length) return;
+    const stage = el("section", "board-archive-stage");
+    const stageHead = el("div", `board-stage-divider ${finished ? "finished" : "active"}`);
+    stageHead.append(el("i"), el("h3", null, title), el("span", null, String(boards.length)));
+    stage.append(stageHead);
+    grouped(boards).forEach(([group, groupBoards]) => {
+      const section = el("div", "board-number-section");
+      const heading = el("div", "board-number-heading");
+      heading.append(el("span"), el("h4", null, group), el("small", null, `${groupBoards.length} board${groupBoards.length === 1 ? "" : "s"}`), el("span"));
+      const list = el("div", "list board-archive-list");
+      groupBoards.sort(finished ? finishedSort : activeSort)
+        .forEach((board) => list.append(boardRow(board, board.assignedTo === state.me.id)));
+      section.append(heading, list);
+      stage.append(section);
+    });
+    view.append(stage);
+  };
+
+  appendStage("In Progress", visibleBoards.filter((board) => !isFinished(board)), false);
+  appendStage("Finished", visibleBoards.filter(isFinished), true);
 }
 
 function openBoardDetail(boardID) {
@@ -1158,141 +1289,56 @@ function boardStatusNote(board) {
   if (board.status === "QA Changes") return board.qaNote
     ? `QA returned this board to Finishing: ${board.qaNote}`
     : "QA returned this board to Finishing for corrections.";
-  if (board.completion > 0) return board.assignedName
-    ? `Work is underway with ${board.assignedName}.`
-    : "Checklist work has started; this board still needs an assignee.";
-  if (board.assignedName) return `Assigned to ${board.assignedName}; ready for the first build check.`;
-  return "Unassigned with no checklist work, so it remains in Design.";
-}
-
-function boardProductionStageItems(board) {
-  return Number(board.cabinetCount) > 1
-    ? {
-        mechanical: ["Building - Busbars", "Building - DIN and cable holders"],
-        components: ["Building - Components"],
-        wiring: ["Wiring", "N + PE bars"],
-        finishing: ["Naming and finishing", "Stickers", "Scheme holder"],
-      }
-    : {
-        mechanical: ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"],
-        components: ["Components"],
-        wiring: ["Wiring", "N + PE bars"],
-        finishing: ["Ground door", "Naming", "Scheme holder"],
-      };
-}
-
-function boardStageProgress(board, itemIDs) {
-  const weights = new Map((board.checklist || []).map((item) => [item.id, Number(item.weight) || 0]));
-  const total = Math.max(1, itemIDs.reduce((sum, id) => sum + (weights.get(id) || 0), 0));
-  const lists = board.cabinetChecklists || [[]];
-  const fraction = lists.reduce((sum, list) => {
-    const checked = new Set(list);
-    return sum + itemIDs.reduce((done, id) => done + (checked.has(id) ? (weights.get(id) || 0) : 0), 0) / total;
-  }, 0) / Math.max(lists.length, 1);
-  return Math.round(fraction * 100);
-}
-
-function recalculateBoardStages(board) {
-  const items = boardProductionStageItems(board);
-  const production = Object.fromEntries(Object.entries(items).map(([id, ids]) => [id, boardStageProgress(board, ids)]));
-  let currentID = "design";
-  if (board.assignedTo || board.completion > 0) {
-    currentID = ["mechanical", "components", "wiring", "finishing"].find((id) => production[id] < 100) || "qa";
-  }
-  if (board.qaStatus === "changes_requested") currentID = "finishing";
-  if (board.qaStatus === "approved") currentID = "complete";
-  const currentIndex = BOARD_STAGES.findIndex(([id]) => id === currentID);
-  board.stages = BOARD_STAGES.map(([id, label], index) => {
-    let progress = 0;
-    if (id === "design") progress = currentID === "design" ? 0 : 100;
-    else if (production[id] !== undefined) progress = production[id];
-    else if (id === "qa" || id === "complete") progress = board.qaStatus === "approved" ? 100 : 0;
-    let stageState = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
-    if (id === "finishing" && board.qaStatus === "changes_requested") stageState = "attention";
-    if (id === "qa" && currentID === "qa") stageState = "ready";
-    return { id, label, progress, state: stageState };
-  });
-  board.currentStage = board.stages.find((stage) => stage.id === currentID);
+  if (board.currentStage?.id !== "design") return board.assignedName
+    ? `Work is underway with ${board.assignedName}. Click a stage to keep the team in sync.`
+    : "Production has started; assign a builder so ownership is clear.";
+  if (board.assignedName) return `Assigned to ${board.assignedName}. Click Mechanical Build when work begins.`;
+  return "This board remains in Design until a manager or assigned builder moves it forward.";
 }
 
 function renderStageTracker(board) {
-  if (!board.stages?.length) recalculateBoardStages(board);
   const tracker = el("div", "board-stage-tracker");
   tracker.setAttribute("role", "list");
   tracker.setAttribute("aria-label", `Current stage: ${board.currentStage?.label || "Design"}`);
+  const canChange = isAdmin() || board.assignedTo === state.me.id;
   (board.stages || []).forEach((stage, index) => {
-    const item = el("div", `board-stage stage-${stage.state}`);
+    const item = el("button", `board-stage stage-${stage.state}`);
+    item.type = "button";
     item.setAttribute("role", "listitem");
     if (["current", "ready", "attention"].includes(stage.state)) item.setAttribute("aria-current", "step");
+    item.disabled = !canChange || stage.id === "complete" || boardChecklistSyncing;
+    item.title = stage.id === "complete"
+      ? "Complete is unlocked by QA approval"
+      : canChange ? `Move board to ${stage.label}` : "Assign this board to yourself to change its stage";
     const marker = el("span", "stage-marker", stage.state === "done" ? "✓" : String(index + 1));
     const copy = el("span", "stage-copy");
     copy.append(el("strong", null, stage.label));
-    if (["mechanical", "components", "wiring", "finishing"].includes(stage.id)) {
-      copy.append(el("small", null, `${stage.progress}%`));
-    }
+    if (stage.id === "complete") copy.append(el("small", null, "QA approval"));
+    else if (stage.id !== board.currentStage?.id) copy.append(el("small", null, "Set stage"));
     item.append(marker, copy);
+    if (!item.disabled && stage.id !== board.currentStage?.id) {
+      item.addEventListener("click", () => updateBoardStage(board, stage.id));
+    }
     tracker.append(item);
   });
   return tracker;
 }
 
-function recalculateBoardProgress(board) {
-  const totalWeight = Math.max(1, (board.checklist || []).reduce((sum, item) => sum + item.weight, 0));
-  board.cabinetProgress = (board.cabinetChecklists || []).map((items) => {
-    const checked = new Set(items);
-    const done = (board.checklist || []).reduce((sum, item) => sum + (checked.has(item.id) ? item.weight : 0), 0);
-    return Math.round((done / totalWeight) * 100);
-  });
-  board.completion = board.cabinetProgress.length
-    ? Math.round(board.cabinetProgress.reduce((sum, value) => sum + value, 0) / board.cabinetProgress.length)
-    : 0;
-  if (board.qaStatus === "approved") board.qaStatus = board.completion >= 100 ? "ready" : "pending";
-  if (board.qaStatus === "changes_requested" && board.completion < 100) board.qaReworkStarted = true;
-  if (board.completion >= 100 && board.qaStatus !== "approved"
-      && (board.qaStatus !== "changes_requested" || board.qaReworkStarted)) board.qaStatus = "ready";
-  if (board.completion < 100 && board.qaStatus === "ready") board.qaStatus = "pending";
-  board.status = board.qaStatus === "approved" ? "Completed"
-    : board.qaStatus === "changes_requested" ? "QA Changes"
-      : board.completion >= 100 ? "QA Ready"
-        : (!board.assignedTo && board.completion === 0 ? "Design" : "In Progress");
-  recalculateBoardStages(board);
-}
-
-function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
-  const previousCompletion = Number(board.completion) || 0;
-  const selected = new Set(board.cabinetChecklists[cabinetIndex] || []);
-  if (checked) selected.add(itemID);
-  else selected.delete(itemID);
-  board.cabinetChecklists[cabinetIndex] = [...selected];
-  recalculateBoardProgress(board);
-  boardChecklistAnimation = {
-    boardID: board.id,
-    cabinetIndex,
-    itemID,
-    from: previousCompletion,
-  };
+async function updateBoardStage(board, stageID) {
   boardChecklistSyncing = true;
-  const revision = ++boardChecklistRevision;
+  boardChecklistAnimation = { boardID: board.id };
   renderBoardDetail();
-
-  boardChecklistQueue = boardChecklistQueue
-    .catch(() => {})
-    .then(() => api("/api/board-checklist", {
+  try {
+    const result = await api("/api/board-stage", {
       boardID: board.id,
-      cabinetIndex,
-      itemID,
-      checked,
-    }))
-    .then(async () => {
-      if (revision !== boardChecklistRevision) return;
-      boardChecklistSyncing = false;
-      await refresh();
-    })
-    .catch(async () => {
-      if (revision !== boardChecklistRevision) return;
-      boardChecklistSyncing = false;
-      await refresh();
     });
+    Object.assign(board, result.board);
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    boardChecklistSyncing = false;
+    await refresh();
+  }
 }
 
 function boardProperty(iconName, label, value) {
@@ -1302,6 +1348,155 @@ function boardProperty(iconName, label, value) {
   copy.append(el("span", null, label), el("strong", null, value || "Not set"));
   card.append(copy);
   return card;
+}
+
+async function openAddBoardComponentModal(board) {
+  if (!catalog) catalog = (await api("/api/catalog")).parts;
+  openModal((modal, close) => {
+    modal.classList.add("wide");
+    modal.append(el("h3", null, "Add board component"));
+    modal.append(el("p", "modal-sub", "Choose the exact model, amp rating, poles, and curve used on this board."));
+    const search = field("Find component", "Search model, manufacturer, amp, curve…");
+    const choiceLabel = el("label", null, "Component");
+    const choice = el("select");
+    choiceLabel.append(choice);
+    const quantity = field("Quantity", "1", "number");
+    quantity.input.min = "1";
+    quantity.input.max = "9999";
+    quantity.input.value = "1";
+    const reference = field("Board reference", "e.g. QF1 or incoming breaker");
+    const drawChoices = () => {
+      const query = search.input.value.trim().toLowerCase();
+      const matches = catalog.filter((part) => !query || [part.manufacturer, part.model, part.type,
+        part.rating, part.poles, part.curve].filter(Boolean).join(" ").toLowerCase().includes(query)).slice(0, 200);
+      choice.replaceChildren(new Option(matches.length ? "Select a component" : "No matching components", ""));
+      matches.forEach((part) => {
+        const details = [part.type, part.rating, part.poles, part.curve].filter(Boolean).join(" · ");
+        choice.append(new Option(`${part.manufacturer} ${part.model} — ${details}`, part.id));
+      });
+    };
+    drawChoices();
+    search.input.addEventListener("input", drawChoices);
+    const grid = el("div", "creation-grid");
+    grid.append(search.label, choiceLabel, quantity.label, reference.label);
+    modal.append(grid);
+    const error = el("div", "form-error hidden");
+    modal.append(error);
+    modal.append(modalActions(close, "Add component", async () => {
+      try {
+        if (!choice.value) throw new Error("Choose a component first.");
+        await api("/api/board-components", {
+          boardID: board.id,
+          action: "add",
+          partID: choice.value,
+          quantity: quantity.input.value,
+          reference: reference.input.value,
+        });
+        close();
+        await refresh();
+      } catch (caught) {
+        error.textContent = caught.message;
+        error.classList.remove("hidden");
+      }
+    }));
+  });
+}
+
+async function removeBoardComponent(board, componentID) {
+  if (!window.confirm("Remove this component from the board?")) return;
+  await api("/api/board-components", { boardID: board.id, action: "remove", componentID });
+  await refresh();
+}
+
+function uploadBoardAttachment(board, kind) {
+  const input = el("input");
+  input.type = "file";
+  input.accept = kind === "scheme" ? "application/pdf,image/jpeg,image/png,image/webp,image/heic" : "image/*";
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 6_000_000) {
+      window.alert("Files must be 6 MB or smaller.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", async () => {
+      boardChecklistSyncing = true;
+      renderBoardDetail();
+      try {
+        const encoded = String(reader.result).split(",")[1] || "";
+        await api("/api/board-attachment", {
+          boardID: board.id,
+          kind,
+          fileName: file.name,
+          mimeType: file.type || (kind === "scheme" ? "application/pdf" : "image/jpeg"),
+          data: encoded,
+        });
+      } catch (error) {
+        window.alert(error.message);
+      } finally {
+        boardChecklistSyncing = false;
+        await refresh();
+      }
+    });
+    reader.readAsDataURL(file);
+  });
+  input.click();
+}
+
+async function removeBoardAttachment(board, attachmentID) {
+  if (!window.confirm("Remove this file from the board?")) return;
+  await api("/api/board-attachment-delete", { boardID: board.id, attachmentID });
+  await refresh();
+}
+
+function boardAttachmentSection(board, kind, title, description) {
+  const section = el("section", "panel board-files-panel");
+  const head = el("div", "panel-head");
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", kind === "scheme" ? "Technical file" : "Build record"),
+    el("h3", null, title), el("p", null, description));
+  const canEdit = isAdmin() || board.assignedTo === state.me.id;
+  head.append(copy);
+  if (canEdit) head.append(smallBtn(kind === "scheme" ? "Add scheme" : "Add photos", "accent", "plus",
+    () => uploadBoardAttachment(board, kind)));
+  section.append(head);
+  const files = (board.attachments || []).filter((file) => file.kind === kind);
+  if (!files.length) {
+    const empty = el("button", "board-file-drop");
+    empty.type = "button";
+    empty.disabled = !canEdit;
+    empty.append(chipIcon(kind === "scheme" ? "note" : "board", "var(--primary)"),
+      el("strong", null, kind === "scheme" ? "Upload the electrical scheme" : "Add board photos"),
+      el("span", null, kind === "scheme" ? "PDF or image · up to 6 MB" : "JPG, PNG, WebP or HEIC · up to 6 MB"));
+    if (canEdit) empty.addEventListener("click", () => uploadBoardAttachment(board, kind));
+    section.append(empty);
+    return section;
+  }
+  const grid = el("div", "board-file-grid");
+  files.forEach((file) => {
+    const card = el("article", "board-file-card");
+    const link = el("a", "board-file-preview");
+    link.href = `/api/board-attachment?id=${encodeURIComponent(file.id)}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    if (file.mimeType.startsWith("image/")) {
+      const img = el("img");
+      img.src = link.href;
+      img.alt = file.name;
+      img.loading = "lazy";
+      link.append(img);
+    } else {
+      link.append(chipIcon("note", "var(--primary)"), el("span", null, "PDF scheme"));
+    }
+    const meta = el("div", "board-file-meta");
+    meta.append(el("strong", null, file.name), el("span", null, `${Math.max(1, Math.round(file.size / 1024))} KB`));
+    card.append(link, meta);
+    if (canEdit) card.append(smallBtn("Remove", "ghost", "x", () => removeBoardAttachment(board, file.id)));
+    grid.append(card);
+  });
+  section.append(grid);
+  return section;
 }
 
 function renderBoardDetail() {
@@ -1360,54 +1555,40 @@ function renderBoardDetail() {
   view.append(properties);
 
   const work = el("div", "board-detail-grid");
-  const checklistPanel = el("section", "panel board-checklist-panel");
-  const cabinetCount = Math.max(1, Number(board.cabinetCount) || 1);
-  const checklistHead = el("div", "panel-head");
-  const heading = el("div");
-  heading.append(el("span", "eyebrow", "Workshop progress"), el("h3", null, "Build checklist"),
-    el("p", null, "Tap a plate once—the update is instant and syncs in the background."));
-  checklistHead.append(heading, el("strong", "checklist-cabinet-label", cabinetCount > 1
-    ? `Cabinet ${selectedBoardCabinet + 1} of ${cabinetCount}`
-    : "Single cabinet"));
-  checklistPanel.append(checklistHead);
-
-  selectedBoardCabinet = Math.min(Math.max(selectedBoardCabinet, 0), cabinetCount - 1);
-  if (cabinetCount > 1) {
-    const tabs = el("div", "cabinet-tabs");
-    for (let index = 0; index < cabinetCount; index += 1) {
-      const tab = el("button", index === selectedBoardCabinet ? "active" : "");
-      tab.append(document.createTextNode(`Cabinet ${index + 1}`), el("span", null, `${board.cabinetProgress[index] || 0}%`));
-      tab.addEventListener("click", () => {
-        selectedBoardCabinet = index;
-        renderBoardDetail();
-      });
-      tabs.append(tab);
-    }
-    checklistPanel.append(tabs);
-  }
-
-  const canCheck = isAdmin() || board.assignedTo === state.me.id;
-  const checked = new Set(board.cabinetChecklists[selectedBoardCabinet] || []);
-  const checklist = el("div", "board-checklist");
-  (board.checklist || []).forEach((item) => {
-    const isChecked = checked.has(item.id);
-    const isChanging = progressAnimation
-      && progressAnimation.cabinetIndex === selectedBoardCabinet
-      && progressAnimation.itemID === item.id;
-    const button = el("button", `check-row${isChecked ? " checked" : ""}${isChanging ? " just-changed" : ""}`);
-    button.setAttribute("aria-pressed", String(isChecked));
-    button.disabled = !canCheck;
-    const mark = el("span", "check-mark", isChecked ? "✓" : "");
-    const text = el("span", "check-copy");
-    text.append(el("strong", null, item.title), el("small", null, `${item.weight}% weight`));
-    button.append(mark, text);
-    button.addEventListener("click", () => updateBoardChecklist(
-      board, selectedBoardCabinet, item.id, !isChecked));
-    checklist.append(button);
+  const componentsPanel = el("section", "panel board-components-panel");
+  const componentHead = el("div", "panel-head");
+  const componentCopy = el("div");
+  componentCopy.append(el("span", "eyebrow", "Board specification"), el("h3", null, "Components"),
+    el("p", null, "The exact parts fitted to this board, shared with the phone app."));
+  componentHead.append(componentCopy);
+  const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
+  if (canEditBoard) componentHead.append(smallBtn("Add component", "accent", "plus", () => openAddBoardComponentModal(board)));
+  componentsPanel.append(componentHead);
+  const componentList = el("div", "board-component-list");
+  (board.components || []).forEach((component) => {
+    const row = el("div", "board-component-row");
+    const identity = el("div", "board-component-identity");
+    identity.append(componentPhoto({ ...component, id: component.partID }), el("div"));
+    const text = identity.lastElementChild;
+    text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
+      el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference]
+        .filter(Boolean).join(" · ")));
+    row.append(identity, el("strong", "component-quantity", `× ${component.quantity}`));
+    if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", () => removeBoardComponent(board, component.id)));
+    componentList.append(row);
   });
-  checklistPanel.append(checklist);
-  if (!canCheck) checklistPanel.append(el("p", "board-permission-note", "Assign this board to yourself, or ask a manager, to update its checklist."));
-  work.append(checklistPanel);
+  if (!(board.components || []).length) {
+    const legacy = (board.componentTypes || []).filter(Boolean);
+    if (legacy.length) {
+      const chips = el("div", "board-component-chips");
+      legacy.forEach((type) => chips.append(el("span", null, type)));
+      componentList.append(chips, el("p", "board-permission-note", "Add exact models and quantities as the specification is confirmed."));
+    } else {
+      componentList.append(emptyState("box", "No components have been added to this board yet."));
+    }
+  }
+  componentsPanel.append(componentList);
+  work.append(componentsPanel);
 
   const linkedPanel = el("section", "panel board-linked-panel");
   const linkedHead = el("div", "panel-head");
@@ -1429,6 +1610,13 @@ function renderBoardDetail() {
   }
   work.append(linkedPanel);
   view.append(work);
+
+  const files = el("div", "board-file-sections");
+  files.append(
+    boardAttachmentSection(board, "scheme", "Schemes", "Keep the latest electrical drawing with the board."),
+    boardAttachmentSection(board, "photo", "Photos", "Document the build, wiring, labels, and finished board."),
+  );
+  view.append(files);
 
   if (progressAnimation) boardChecklistAnimation = null;
 }
