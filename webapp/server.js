@@ -74,6 +74,10 @@ function normalizeCompanies() {
     for (const invite of company.invites || []) {
       if (invite.role === "worker") invite.role = "staff";
     }
+    for (const board of company.boards) {
+      board.cabinetChecklists = normalizedBoardChecklists(board);
+      board.status = boardStatus(board);
+    }
   }
 }
 
@@ -205,6 +209,85 @@ function verifySession(token) {
 
 function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
+}
+
+// Matches ChecklistTemplate in the iPhone app. The weights are the actual
+// production progress, not an equal count of ticks.
+const SINGLE_CABINET_CHECKLIST = [
+  ["Cable holders", 5],
+  ["DIN rails", 5],
+  ["Components", 5],
+  ["Wiring", 30],
+  ["N + PE bars", 20],
+  ["Mask busbars", 5],
+  ["Ground door", 10],
+  ["Naming", 10],
+  ["Tray ears and cylinder", 5],
+  ["Scheme holder", 5],
+];
+const MULTI_CABINET_CHECKLIST = [
+  ["Building - Busbars", 10],
+  ["Building - Components", 10],
+  ["Building - DIN and cable holders", 10],
+  ["Wiring", 30],
+  ["Naming and finishing", 10],
+  ["Stickers", 5],
+  ["Scheme holder", 5],
+  ["N + PE bars", 20],
+];
+
+function checklistFor(board) {
+  return Math.max(1, Math.trunc(Number(board.cabinetCount)) || 1) > 1
+    ? MULTI_CABINET_CHECKLIST
+    : SINGLE_CABINET_CHECKLIST;
+}
+
+function normalizedBoardChecklists(board) {
+  const count = Math.max(1, Math.min(12, Math.trunc(Number(board.cabinetCount)) || 1));
+  const valid = new Set(checklistFor(board).map(([title]) => title));
+  const source = Array.isArray(board.cabinetChecklists) ? board.cabinetChecklists : [];
+  return Array.from({ length: count }, (_, index) => {
+    const items = Array.isArray(source[index]) ? source[index] : [];
+    return [...new Set(items.map(String).filter((item) => valid.has(item)))];
+  });
+}
+
+function boardProgress(board) {
+  const checklist = checklistFor(board);
+  const totalWeight = Math.max(1, checklist.reduce((sum, [, weight]) => sum + weight, 0));
+  const lists = normalizedBoardChecklists(board);
+  const average = lists.reduce((sum, completed) => {
+    const checked = new Set(completed);
+    const done = checklist.reduce((weight, [title, itemWeight]) =>
+      weight + (checked.has(title) ? itemWeight : 0), 0);
+    return sum + (done / totalWeight);
+  }, 0) / lists.length;
+  return Math.round(average * 100);
+}
+
+function boardStatus(board) {
+  const completion = boardProgress(board);
+  if (completion >= 100) return "Completed";
+  if (!board.assignedTo && completion === 0) return "Design";
+  return "In Progress";
+}
+
+function boardProgressPayload(board) {
+  const cabinetChecklists = normalizedBoardChecklists(board);
+  const checklist = checklistFor(board);
+  const totalWeight = Math.max(1, checklist.reduce((sum, [, weight]) => sum + weight, 0));
+  const cabinetProgress = cabinetChecklists.map((items) => {
+    const checked = new Set(items);
+    const done = checklist.reduce((sum, [title, weight]) => sum + (checked.has(title) ? weight : 0), 0);
+    return Math.round((done / totalWeight) * 100);
+  });
+  return {
+    status: boardStatus(board),
+    completion: boardProgress(board),
+    checklist: checklist.map(([title, weight]) => ({ id: title, title, weight })),
+    cabinetChecklists,
+    cabinetProgress,
+  };
 }
 
 /** Derived stock state, exactly like the iPhone app computes it.
@@ -707,6 +790,7 @@ const routes = {
       boards: company.boards.map((b) => {
         const board = {
           ...b,
+          ...boardProgressPayload(b),
           assignedName: company.users.find((u) => u.id === b.assignedTo)?.name || "",
         };
         if (withCosts) {
@@ -1225,13 +1309,14 @@ const routes = {
       mainBreakerModel: (body.mainBreakerModel || "").trim(),
       mainBreakerAmpere: ampere.endsWith("A") ? ampere : `${ampere}A`,
       assignedTo: assignedTo || null,
-      status: "In Progress",
+      cabinetChecklists: Array.from({ length: cabinetCount }, () => []),
+      status: assignedTo ? "In Progress" : "Design",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     company.boards.push(board);
     await save();
-    sendJSON(res, 200, { board });
+    sendJSON(res, 200, { board: { ...board, ...boardProgressPayload(board) } });
   },
 
   "POST /api/board-update": async (req, res, session) => {
@@ -1240,11 +1325,8 @@ const routes = {
     const board = company.boards.find((b) => b.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
 
-    // Workers may update the status of their own board; only admins reassign.
-    const mayEditStatus = isAdmin(user) || board.assignedTo === user.id;
-    if (status !== undefined && !mayEditStatus) return fail(res, 403, "This board is not assigned to you.");
-    if (status !== undefined && !["Design", "In Progress", "Completed"].includes(status)) {
-      return fail(res, 400, "Bad status.");
+    if (status !== undefined) {
+      return fail(res, 400, "Board status is automatic from assignment and checklist progress.");
     }
     if (assignedTo !== undefined) {
       if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can reassign boards.");
@@ -1252,13 +1334,40 @@ const routes = {
         return fail(res, 400, "Unknown assignee.");
       }
     }
-    if (status !== undefined) board.status = status;
     if (assignedTo !== undefined) {
       board.assignedTo = assignedTo || null;
     }
+    board.status = boardStatus(board);
     board.updatedAt = new Date().toISOString();
     await save();
-    sendJSON(res, 200, { ok: true });
+    sendJSON(res, 200, { ok: true, status: board.status, completion: boardProgress(board) });
+  },
+
+  "POST /api/board-checklist": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, cabinetIndex, itemID, checked } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!isAdmin(user) && board.assignedTo !== user.id) {
+      return fail(res, 403, "Only the assigned builder or a manager can update this checklist.");
+    }
+    const index = Math.trunc(Number(cabinetIndex));
+    const lists = normalizedBoardChecklists(board);
+    if (!Number.isInteger(index) || index < 0 || index >= lists.length) {
+      return fail(res, 400, "Unknown cabinet.");
+    }
+    const validItem = checklistFor(board).some(([title]) => title === itemID);
+    if (!validItem) return fail(res, 400, "Unknown checklist item.");
+    const selected = new Set(lists[index]);
+    if (checked === true) selected.add(itemID);
+    else if (checked === false) selected.delete(itemID);
+    else return fail(res, 400, "Checked must be true or false.");
+    lists[index] = [...selected];
+    board.cabinetChecklists = lists;
+    board.status = boardStatus(board);
+    board.updatedAt = new Date().toISOString();
+    await save();
+    sendJSON(res, 200, { ok: true, ...boardProgressPayload(board) });
   },
 
   // --- team (admin only) -------------------------------------------------

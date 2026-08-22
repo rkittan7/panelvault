@@ -5,6 +5,9 @@ import { renderMovementChart } from "/chart.js";
 let state = null; // last /api/state payload
 let catalog = null; // lazy-loaded parts list
 let currentView = "dashboard";
+let selectedBoardID = null;
+let selectedBoardCabinet = 0;
+let boardCreationType = null;
 
 // Kept in the same order as AmpereRating and PoleRating in the iPhone app.
 const AMPERE_RATINGS = [
@@ -343,7 +346,8 @@ function renderNav() {
     const label = el("span", "nav-label", item.label);
     btn.append(label);
     if (item.count) btn.append(el("span", "count", String(item.count())));
-    btn.classList.toggle("active", currentView === item.view);
+    const activeView = ["board-create", "board-detail"].includes(currentView) ? "boards" : currentView;
+    btn.classList.toggle("active", activeView === item.view);
     btn.addEventListener("click", () => switchView(item.view));
     nav.append(btn);
   });
@@ -357,6 +361,8 @@ function switchView(view) {
   // The catalog is the one view whose data is not in /api/state, so it loads
   // when it is first opened rather than on every refresh.
   if (view === "catalog") renderCatalog();
+  if (view === "board-create") renderBoardCreate();
+  if (view === "board-detail") renderBoardDetail();
 }
 
 async function refresh() {
@@ -378,6 +384,8 @@ async function refresh() {
   renderDeliveries();
   renderProjects();
   renderBoards();
+  if (currentView === "board-create") renderBoardCreate();
+  if (currentView === "board-detail") renderBoardDetail();
   if (isAdmin()) renderTeam();
 }
 
@@ -921,13 +929,20 @@ function renderBoards() {
   const listFor = () => { const l = el("div", "list"); view.append(l); return l; };
 
   const boardRow = (b, isMine) => {
-    const row = el("div", "row");
+    const row = el("div", "row click board-list-row");
     row.append(chipIcon("board", isMine ? "var(--primary)" : "var(--secondary)"));
     const main = el("div", "row-main");
     const title = [b.number, b.name].filter(Boolean).join(" — ");
     main.append(el("div", "row-title", title));
     main.append(el("div", "row-sub",
       [b.project !== "No Project" ? b.project : null, b.customer, b.type, b.subtype, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
+    const progress = el("div", "board-row-progress");
+    const track = el("span", "progress-track");
+    const fill = el("i");
+    fill.style.width = `${b.completion || 0}%`;
+    track.append(fill);
+    progress.append(track, el("strong", null, `${b.completion || 0}%`));
+    main.append(progress);
     row.append(main);
 
     if (canSeeCosts()) {
@@ -945,19 +960,14 @@ function renderBoards() {
     row.append(statusBadge(b.status));
 
     const rowActions = el("div", "row-actions");
-    if (isAdmin() || isMine) {
-      rowActions.append(smallBtn("Status", "", "chevron", async () => {
-        const order = ["Design", "In Progress", "Completed"];
-        const nextStatus = order[(order.indexOf(b.status) + 1) % order.length];
-        await api("/api/board-update", { boardID: b.id, status: nextStatus });
-        await refresh();
-        switchView("boards");
+    if (isAdmin()) {
+      rowActions.append(smallBtn("Assign", "", null, (event) => {
+        event.stopPropagation();
+        openAssignModal(b);
       }));
     }
-    if (isAdmin()) {
-      rowActions.append(smallBtn("Assign", "", null, () => openAssignModal(b)));
-    }
     if (rowActions.childElementCount) row.append(rowActions);
+    row.addEventListener("click", () => openBoardDetail(b.id));
     return row;
   };
 
@@ -971,6 +981,151 @@ function renderBoards() {
     const l = listFor();
     others.forEach((b) => l.append(boardRow(b, false)));
   }
+}
+
+function openBoardDetail(boardID) {
+  selectedBoardID = boardID;
+  selectedBoardCabinet = 0;
+  switchView("board-detail");
+}
+
+function boardStatusNote(board) {
+  if (board.status === "Completed") return "Every required build check is complete.";
+  if (board.completion > 0) return board.assignedName
+    ? `Work is underway with ${board.assignedName}.`
+    : "Checklist work has started; this board still needs an assignee.";
+  if (board.assignedName) return `Assigned to ${board.assignedName}; ready for the first build check.`;
+  return "Unassigned with no checklist work, so it remains in Design.";
+}
+
+function boardProperty(iconName, label, value) {
+  const card = el("div", "board-property");
+  card.append(chipIcon(iconName, "var(--primary)"));
+  const copy = el("div");
+  copy.append(el("span", null, label), el("strong", null, value || "Not set"));
+  card.append(copy);
+  return card;
+}
+
+function renderBoardDetail() {
+  const view = $("#view-board-detail");
+  if (!view) return;
+  view.replaceChildren();
+  const board = state.boards.find((item) => item.id === selectedBoardID);
+  if (!board) {
+    view.append(smallBtn("← Back to boards", "", null, () => switchView("boards")));
+    view.append(emptyState("board", "This board is no longer available."));
+    return;
+  }
+
+  const top = el("div", "board-detail-top");
+  const identity = el("div", "board-detail-identity");
+  identity.append(smallBtn("← Boards", "", null, () => switchView("boards")));
+  identity.append(el("div", "eyebrow", [board.type, board.subtype].filter(Boolean).join(" · ")));
+  identity.append(el("h2", null, board.name));
+  identity.append(el("p", "mono", board.number));
+  const actions = el("div", "board-detail-actions");
+  actions.append(statusBadge(board.status));
+  if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", null, () => openAssignModal(board)));
+  top.append(identity, actions);
+  view.append(top);
+
+  const progressCard = el("section", "board-progress-card");
+  const progressHead = el("div", "board-progress-head");
+  const progressTitle = el("div");
+  progressTitle.append(el("span", "eyebrow", "Build completion"), el("h3", null, `${board.completion || 0}% complete`));
+  progressHead.append(progressTitle, el("p", null, boardStatusNote(board)));
+  const progressTrack = el("div", "board-progress-track");
+  const progressFill = el("i");
+  progressFill.style.width = `${board.completion || 0}%`;
+  progressTrack.append(progressFill);
+  progressCard.append(progressHead, progressTrack);
+  view.append(progressCard);
+
+  const properties = el("div", "board-property-grid");
+  const outDate = board.dateOut ? new Date(board.dateOut).toLocaleDateString() : "Not set";
+  const dueDate = board.dueDate ? new Date(board.dueDate).toLocaleDateString() : "No due date";
+  properties.append(
+    boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project),
+    boardProperty("team", "Builder", board.assignedName || "Unassigned"),
+    boardProperty("cabinet", "Build", `${board.cabinetCount} cabinet${String(board.cabinetCount) === "1" ? "" : "s"} · ${board.buildFormat}`),
+    boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")),
+    boardProperty("hash", "Customer", board.customer),
+    boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
+  );
+  view.append(properties);
+
+  const work = el("div", "board-detail-grid");
+  const checklistPanel = el("section", "panel board-checklist-panel");
+  const checklistHead = el("div", "panel-head");
+  const heading = el("div");
+  heading.append(el("h3", null, "Build checklist"), el("p", null, "The same weighted checks used by the app."));
+  checklistHead.append(heading);
+  checklistPanel.append(checklistHead);
+
+  const cabinetCount = Math.max(1, Number(board.cabinetCount) || 1);
+  selectedBoardCabinet = Math.min(Math.max(selectedBoardCabinet, 0), cabinetCount - 1);
+  if (cabinetCount > 1) {
+    const tabs = el("div", "cabinet-tabs");
+    for (let index = 0; index < cabinetCount; index += 1) {
+      const tab = el("button", index === selectedBoardCabinet ? "active" : "");
+      tab.append(document.createTextNode(`Cabinet ${index + 1}`), el("span", null, `${board.cabinetProgress[index] || 0}%`));
+      tab.addEventListener("click", () => {
+        selectedBoardCabinet = index;
+        renderBoardDetail();
+      });
+      tabs.append(tab);
+    }
+    checklistPanel.append(tabs);
+  }
+
+  const canCheck = isAdmin() || board.assignedTo === state.me.id;
+  const checked = new Set(board.cabinetChecklists[selectedBoardCabinet] || []);
+  const checklist = el("div", "board-checklist");
+  (board.checklist || []).forEach((item) => {
+    const isChecked = checked.has(item.id);
+    const button = el("button", `check-row${isChecked ? " checked" : ""}`);
+    button.setAttribute("aria-pressed", String(isChecked));
+    button.disabled = !canCheck;
+    const mark = el("span", "check-mark", isChecked ? "✓" : "");
+    const text = el("span", "check-copy");
+    text.append(el("strong", null, item.title), el("small", null, `${item.weight}% weight`));
+    button.append(mark, text);
+    button.addEventListener("click", async () => {
+      await api("/api/board-checklist", {
+        boardID: board.id,
+        cabinetIndex: selectedBoardCabinet,
+        itemID: item.id,
+        checked: !isChecked,
+      });
+      await refresh();
+    });
+    checklist.append(button);
+  });
+  checklistPanel.append(checklist);
+  if (!canCheck) checklistPanel.append(el("p", "board-permission-note", "Assign this board to yourself, or ask a manager, to update its checklist."));
+  work.append(checklistPanel);
+
+  const linkedPanel = el("section", "panel board-linked-panel");
+  const linkedHead = el("div", "panel-head");
+  linkedHead.append(el("h3", null, "Linked production data"));
+  linkedPanel.append(linkedHead);
+  const linkedList = el("div", "board-linked-list");
+  linkedList.append(boardProperty("box", "Stock issues", (board.costItems || []).length
+    ? `${(board.costItems || []).length} part type${(board.costItems || []).length === 1 ? "" : "s"}`
+    : "No stock issued yet"));
+  if (canSeeCosts()) linkedList.append(boardProperty("pulse", "Parts cost", money(board.costMinor || 0)));
+  linkedList.append(boardProperty("folder", "Customer / project", [board.customer, board.project !== "No Project" ? board.project : null].filter(Boolean).join(" · ")));
+  linkedPanel.append(linkedList);
+  if ((board.costItems || []).length) {
+    const parts = el("div", "linked-parts");
+    (board.costItems || []).slice(0, 8).forEach((item) => {
+      parts.append(el("div", null, `${item.partName} × ${item.quantity}`));
+    });
+    linkedPanel.append(parts);
+  }
+  work.append(linkedPanel);
+  view.append(work);
 }
 
 // ---------------------------------------------------------------- team
@@ -1580,77 +1735,184 @@ function memberSelect(selected) {
   return select;
 }
 
+const BOARD_CREATION_TYPES = [
+  { id: "MDB", name: "Main Distribution", icon: "boltShield", note: "Primary low-voltage distribution board" },
+  { id: "SMDB", name: "Sub Distribution", icon: "board", note: "Feeds a floor, zone, or downstream area" },
+  { id: "MCC", name: "Motor Control Centre", icon: "motor", note: "Motor starters, drives, and control" },
+  { id: "ATS", name: "Automatic Transfer", icon: "toggle", note: "Automatic changeover between supplies" },
+  { id: "Lighting", name: "Lighting Board", icon: "bolt", note: "Lighting circuits and control" },
+  { id: "Power", name: "Power Board", icon: "plug", note: "Socket and general power circuits" },
+  { id: "Generator", name: "Generator Board", icon: "gauge", note: "Generator distribution and protection" },
+  { id: "Solar", name: "Solar Board", icon: "pulse", note: "PV generation and AC distribution" },
+  { id: "UPS", name: "UPS Board", icon: "shield", note: "Critical backed-up power" },
+  { id: "Fire Pump", name: "Fire Pump Panel", icon: "alert", note: "Dedicated fire-pump control and power" },
+  { id: "EV Charging", name: "EV Charging", icon: "terminal", note: "Vehicle-charging distribution" },
+];
+
 function openNewBoardModal() {
-  openModal((modal, close) => {
-    modal.classList.add("wide");
-    modal.append(el("h3", null, "New board"));
-    modal.append(el("div", "modal-sub", "Matches the app's manual board workflow."));
-    const grid = el("div", "creation-grid");
-    const number = field("Board number", "3918.24-1");
-    const group = field("Board group", "optional group");
-    const name = field("Board name", "Main LV Board");
-    const projects = ["No Project", ...state.projects.map((item) => item.name)];
-    const project = selectField("Project", projects, "No Project");
-    const customer = field("Customer name", "search or type customer");
-    const company = field("Company you are doing it for", "optional company");
-    const boardTypes = ["MDB", "SMDB", "MCC", "ATS", "Lighting", "Power", "Generator", "Solar", "UPS", "Fire Pump", "EV Charging"];
-    const type = selectField("Board type", boardTypes, "MDB");
-    const subtype = field("Subtype", "Standard");
-    subtype.input.value = "Standard";
-    const manufacturer = selectField("Board manufacturer", ["Generic", "ABB", "Schneider", "Siemens", "Eaton", "Rittal", "HAGER"], "Generic");
-    const cabinets = selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1");
-    const buildFormat = selectField("Build", ["Panels", "Plate"], "Panels");
-    const dateOut = field("Out date", "", "date");
-    dateOut.input.valueAsDate = new Date();
-    const dueDate = field("Due date/time", "optional", "datetime-local");
-    const finishDate = field("Finished date", "optional", "date");
-    const mainBreakerType = selectField("Main breaker type", ["Main Breaker", "MCB", "MCCB", "ACB", "Isolator", "Fuse Switch"], "Main Breaker");
-    const mainBreakerModel = field("Main breaker model", "ABB");
-    const mainBreakerAmpere = field("Main breaker ampere", "630A");
-    const assign = el("label", null, "Give the board to");
-    const select = memberSelect(null);
-    assign.append(select);
-    project.select.addEventListener("change", () => {
-      const selectedProject = state.projects.find((item) => item.name === project.select.value);
-      if (selectedProject) {
-        customer.input.value = selectedProject.customer;
-        customer.input.disabled = true;
-      } else {
-        customer.input.disabled = false;
-        customer.input.value = "";
-      }
+  boardCreationType = null;
+  switchView("board-create");
+}
+
+function creationSteps(activeStep) {
+  const steps = el("div", "creation-steps");
+  ["Choose type", "Board details", "Build & track"].forEach((label, index) => {
+    const step = el("div", `${index + 1 === activeStep ? "active" : ""}${index + 1 < activeStep ? " done" : ""}`);
+    step.append(el("span", null, index + 1 < activeStep ? "✓" : String(index + 1)), el("strong", null, label));
+    steps.append(step);
+  });
+  return steps;
+}
+
+function pageField(control) {
+  control.label.classList.add("page-field");
+  return control;
+}
+
+function renderBoardCreate() {
+  const view = $("#view-board-create");
+  if (!view || !isAdmin()) return;
+  view.replaceChildren();
+
+  const back = smallBtn(boardCreationType ? "← Change board type" : "← Boards", "", null, () => {
+    if (boardCreationType) {
+      boardCreationType = null;
+      renderBoardCreate();
+    } else switchView("boards");
+  });
+  view.append(back, creationSteps(boardCreationType ? 2 : 1));
+
+  if (!boardCreationType) {
+    const hero = el("div", "creation-hero");
+    hero.append(el("span", "eyebrow", "New production board"));
+    hero.append(el("h2", null, "What are you building?"));
+    hero.append(el("p", null, "Start with the board type. The next page only asks for details that matter to that build."));
+    view.append(hero);
+    const grid = el("div", "board-type-grid");
+    BOARD_CREATION_TYPES.forEach((boardType) => {
+      const button = el("button", "board-type-card");
+      button.append(chipIcon(boardType.icon, "var(--primary)"));
+      const copy = el("div");
+      copy.append(el("span", "board-type-code", boardType.id), el("h3", null, boardType.name), el("p", null, boardType.note));
+      button.append(copy, icon("chevron", 18));
+      button.addEventListener("click", () => {
+        boardCreationType = boardType.id;
+        renderBoardCreate();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+      grid.append(button);
     });
-    grid.append(number.label, group.label, name.label, project.label, customer.label, company.label,
-      type.label, subtype.label, manufacturer.label, cabinets.label, buildFormat.label, dateOut.label,
-      dueDate.label, finishDate.label, mainBreakerType.label, mainBreakerModel.label, mainBreakerAmpere.label, assign);
-    modal.append(grid);
-    modal.append(modalActions(close, "Create", async () => {
-      if (!number.input.value.trim() || !name.input.value.trim() || !customer.input.value.trim()) return;
-      await api("/api/boards", {
+    view.append(grid);
+    return;
+  }
+
+  const selectedType = BOARD_CREATION_TYPES.find((item) => item.id === boardCreationType);
+  const detailsHero = el("div", "creation-hero compact");
+  const heroType = el("div", "selected-board-type");
+  heroType.append(chipIcon(selectedType.icon, "var(--primary)"));
+  const heroCopy = el("div");
+  heroCopy.append(el("span", "eyebrow", selectedType.id), el("h2", null, selectedType.name), el("p", null, selectedType.note));
+  heroType.append(heroCopy);
+  detailsHero.append(heroType);
+  view.append(detailsHero);
+
+  const form = el("form", "board-create-form");
+  const number = pageField(field("Board number", "3918.24-1"));
+  const group = pageField(field("Board group", "optional group"));
+  const name = pageField(field("Board name", "Main LV Board"));
+  const projects = ["No Project", ...state.projects.map((item) => item.name)];
+  const project = pageField(selectField("Project", projects, "No Project"));
+  const customer = pageField(field("Customer name", "search or type customer"));
+  const company = pageField(field("Company you are doing it for", "optional company"));
+  const subtype = pageField(field("Subtype", "Standard"));
+  subtype.input.value = "Standard";
+  const manufacturer = pageField(selectField("Board manufacturer", ["Generic", "ABB", "Schneider", "Siemens", "Eaton", "Rittal", "HAGER"], "Generic"));
+  const cabinets = pageField(selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1"));
+  const buildFormat = pageField(selectField("Build format", ["Panels", "Plate"], "Panels"));
+  const dateOut = pageField(field("Out date", "", "date"));
+  dateOut.input.valueAsDate = new Date();
+  const dueDate = pageField(field("Due date/time", "optional", "datetime-local"));
+  const mainBreakerType = pageField(selectField("Main breaker type", ["Main Breaker", "MCB", "MCCB", "ACB", "Isolator", "Fuse Switch"], "Main Breaker"));
+  const mainBreakerModel = pageField(field("Main breaker model", "e.g. Tmax XT7"));
+  const mainBreakerAmpere = pageField(field("Main breaker ampere", "630A"));
+  mainBreakerAmpere.input.value = "630A";
+  const assign = el("label", "page-field", "Give the board to");
+  const assignee = memberSelect(null);
+  assign.append(assignee);
+
+  project.select.addEventListener("change", () => {
+    const selectedProject = state.projects.find((item) => item.name === project.select.value);
+    customer.input.value = selectedProject?.customer || "";
+    customer.input.disabled = Boolean(selectedProject);
+  });
+
+  const section = (title, note, ...controls) => {
+    const box = el("section", "creation-section");
+    const head = el("div", "creation-section-head");
+    head.append(el("h3", null, title), el("p", null, note));
+    const grid = el("div", "page-form-grid");
+    controls.forEach((control) => grid.append(control.label || control));
+    box.append(head, grid);
+    return box;
+  };
+  form.append(
+    section("Identity", "Name it and connect it to the right customer and project.", number, group, name, project, customer, company),
+    section("Build specification", "These fields appear on the board record and in the app.", subtype, manufacturer, cabinets, buildFormat),
+    section("Schedule & ownership", "An unassigned board with 0% progress stays in Design.", dateOut, dueDate, assign),
+    section("Main breaker", "Record the protection device at the head of the board.", mainBreakerType, mainBreakerModel, mainBreakerAmpere),
+  );
+  const error = el("div", "form-error hidden");
+  const actions = el("div", "page-form-actions");
+  const cancel = el("button", "btn-ghost", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => switchView("boards"));
+  const submit = el("button", "btn-primary", "Create board");
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(error, actions);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.classList.add("hidden");
+    if (!number.input.value.trim() || !name.input.value.trim() || !customer.input.value.trim()) {
+      error.textContent = "Board number, board name, and customer are required.";
+      error.classList.remove("hidden");
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = "Creating…";
+    try {
+      const { board } = await api("/api/boards", {
         number: number.input.value,
         group: group.input.value,
         name: name.input.value,
         customer: customer.input.value,
         company: company.input.value,
         project: project.select.value,
-        type: type.select.value,
+        type: boardCreationType,
         subtype: subtype.input.value,
         manufacturer: manufacturer.select.value,
         cabinetCount: cabinets.select.value,
         buildFormat: buildFormat.select.value,
         dateOut: dateOut.input.value,
         dueDate: dueDate.input.value || null,
-        finishDate: finishDate.input.value || null,
         mainBreakerType: mainBreakerType.select.value,
         mainBreakerModel: mainBreakerModel.input.value,
         mainBreakerAmpere: mainBreakerAmpere.input.value,
-        assignedTo: select.value || null,
+        assignedTo: assignee.value || null,
       });
-      close();
+      selectedBoardID = board.id;
+      selectedBoardCabinet = 0;
+      boardCreationType = null;
       await refresh();
-      switchView("boards");
-    }));
+      switchView("board-detail");
+    } catch (caught) {
+      error.textContent = caught.message || "Could not create this board.";
+      error.classList.remove("hidden");
+      submit.disabled = false;
+      submit.textContent = "Create board";
+    }
   });
+  view.append(form);
 }
 
 function openNewProjectModal() {
@@ -1678,6 +1940,7 @@ function openNewProjectModal() {
 }
 
 function openAssignModal(board) {
+  const returnView = currentView;
   openModal((modal, close) => {
     modal.append(el("h3", null, "Assign board"));
     modal.append(el("div", "modal-sub", [board.number, board.name].filter(Boolean).join(" — ")));
@@ -1689,7 +1952,7 @@ function openAssignModal(board) {
       await api("/api/board-update", { boardID: board.id, assignedTo: select.value || null });
       close();
       await refresh();
-      switchView("boards");
+      switchView(returnView === "board-detail" ? "board-detail" : "boards");
     }));
   });
 }

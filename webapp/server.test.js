@@ -244,11 +244,58 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.project, "Tower A");
     assert.equal(createdBoard.body.board.cabinetCount, "3");
     assert.equal(createdBoard.body.board.mainBreakerModel, "Tmax XT7");
-    assert.equal(createdBoard.body.board.status, "In Progress");
+    assert.equal(createdBoard.body.board.status, "Design");
+    assert.equal(createdBoard.body.board.completion, 0);
+    assert.equal(createdBoard.body.board.cabinetChecklists.length, 3);
+
+    const assigned = await json(server.baseURL, "/api/board-update", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, assignedTo: registered.body.user.id }),
+    });
+    assert.equal(assigned.response.status, 200);
+    assert.equal(assigned.body.status, "In Progress");
+    const unassigned = await json(server.baseURL, "/api/board-update", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, assignedTo: null }),
+    });
+    assert.equal(unassigned.response.status, 200);
+    assert.equal(unassigned.body.status, "Design");
+
+    const manualStatus = await json(server.baseURL, "/api/board-update", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, status: "Completed" }),
+    });
+    assert.equal(manualStatus.response.status, 400);
+
+    const firstCheck = await json(server.baseURL, "/api/board-checklist", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id,
+        cabinetIndex: 0,
+        itemID: createdBoard.body.board.checklist[0].id,
+        checked: true,
+      }),
+    });
+    assert.equal(firstCheck.response.status, 200);
+    assert.equal(firstCheck.body.status, "In Progress");
+    assert.ok(firstCheck.body.completion > 0);
+
+    for (let cabinetIndex = 0; cabinetIndex < 3; cabinetIndex += 1) {
+      for (const item of createdBoard.body.board.checklist) {
+        if (cabinetIndex === 0 && item.id === createdBoard.body.board.checklist[0].id) continue;
+        const checked = await json(server.baseURL, "/api/board-checklist", {
+          method: "POST", headers,
+          body: JSON.stringify({ boardID: createdBoard.body.board.id, cabinetIndex, itemID: item.id, checked: true }),
+        });
+        assert.equal(checked.response.status, 200);
+      }
+    }
 
     const state = await json(server.baseURL, "/api/state", { headers });
     assert.equal(state.body.projects.length, 1);
     assert.equal(state.body.boards[0].group, "3918.24");
+    assert.equal(state.body.boards[0].completion, 100);
+    assert.equal(state.body.boards[0].status, "Completed");
   } finally {
     server.stop();
   }
