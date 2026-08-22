@@ -183,6 +183,114 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   }
 });
 
+test("a confirmed delivery uploads once and keeps its paperwork", async () => {
+  const server = await startServer();
+  const { baseURL } = server;
+  try {
+    const owner = await json(baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Kittan Electric", name: "Rawe", password: "secret12" }),
+    });
+    const authorization = { Authorization: `Bearer ${owner.body.token}` };
+    const partID = JSON.parse(fs.readFileSync(path.join(webapp, "catalog.json"), "utf8"))[0].id;
+
+    const movement = {
+      id: "6C7B1A18-4C6E-4E56-9C6D-7C1B2A3D4E5F",
+      partID,
+      kind: "receive",
+      quantity: 24,
+      reference: "DN-5591",
+      date: "2026-08-20T08:15:00.000Z",
+      deviceID: "workshop-phone",
+    };
+    const delivery = {
+      id: "1D2C3B4A-5E6F-4A7B-8C9D-0E1F2A3B4C5D",
+      noteNumber: "DN-5591",
+      supplier: "Electrical Supply Ltd",
+      source: "scan",
+      scannedAt: "2026-08-20T08:10:00.000Z",
+      confirmedAt: "2026-08-20T08:15:00.000Z",
+      pageCount: 2,
+      deviceID: "workshop-phone",
+      lines: [
+        { rawText: "S203-C16 x24", quantity: 24, partID, included: true, movementID: movement.id },
+        { rawText: "PALLET FEE 1", quantity: 1, partID: null, included: false, movementID: null },
+      ],
+      movementIDs: [movement.id],
+    };
+
+    // The batch may reach the server before its movements do — an offline
+    // queue that had to upload in order would stall behind one failed request.
+    const early = await json(baseURL, "/api/sync/deliveries", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({ deliveries: [delivery] }),
+    });
+    assert.equal(early.response.status, 200);
+    assert.deepEqual(early.body.acceptedIDs, [delivery.id]);
+
+    const pending = await json(baseURL, "/api/delivery?id=" + delivery.id, { headers: authorization });
+    assert.equal(pending.body.delivery.missingMovements, 1);
+    assert.equal(pending.body.delivery.unitCount, 0);
+
+    await json(baseURL, "/api/sync/movements", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({ movements: [movement] }),
+    });
+
+    const detail = await json(baseURL, "/api/delivery?id=" + delivery.id, { headers: authorization });
+    assert.equal(detail.response.status, 200);
+    assert.equal(detail.body.delivery.supplier, "Electrical Supply Ltd");
+    assert.equal(detail.body.delivery.userName, "Rawe");
+    assert.equal(detail.body.delivery.missingMovements, 0);
+    assert.equal(detail.body.delivery.unitCount, 24);
+    assert.equal(detail.body.delivery.lineCount, 2);
+    assert.equal(detail.body.delivery.confirmedLineCount, 1);
+    // The rejected line is kept: the review decision is part of the evidence.
+    assert.equal(detail.body.delivery.lines[1].rawText, "PALLET FEE 1");
+    assert.equal(detail.body.delivery.lines[1].included, false);
+    assert.equal(detail.body.delivery.movements[0].quantity, 24);
+
+    // Retrying the whole confirmation cannot duplicate the paperwork or stock.
+    const retry = await json(baseURL, "/api/sync/deliveries", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({ deliveries: [{ ...delivery, supplier: "Rewritten Supplier" }] }),
+    });
+    assert.deepEqual(retry.body.acceptedIDs, []);
+    assert.deepEqual(retry.body.duplicateIDs, [delivery.id]);
+
+    const unchanged = await json(baseURL, "/api/delivery?id=" + delivery.id, { headers: authorization });
+    assert.equal(unchanged.body.delivery.supplier, "Electrical Supply Ltd");
+
+    const unknownPart = await json(baseURL, "/api/sync/deliveries", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        deliveries: [{
+          ...delivery,
+          id: "9F8E7D6C-5B4A-4392-8172-6150493827AB",
+          lines: [{ rawText: "ghost", quantity: 1, partID: "custom-not-mine", included: true }],
+        }],
+      }),
+    });
+    assert.equal(unknownPart.response.status, 400);
+
+    const state = await json(baseURL, "/api/state", { headers: authorization });
+    assert.equal(state.body.deliveries.length, 1);
+    assert.equal(state.body.deliveries[0].noteNumber, "DN-5591");
+    assert.equal(state.body.deliveries[0].unitCount, 24);
+
+    const downloaded = await json(baseURL, "/api/sync/deliveries?after=0", { headers: authorization });
+    assert.equal(downloaded.body.deliveries.length, 1);
+    assert.equal(downloaded.body.deliveries[0].sequence, 1);
+    assert.equal(downloaded.body.latestSequence, 1);
+  } finally {
+    server.stop();
+  }
+});
+
 test("mobile company creation and invite join share the website account database", async () => {
   const server = await startServer();
   const { baseURL } = server;
@@ -242,6 +350,69 @@ test("mobile company creation and invite join share the website account database
       }),
     });
     assert.equal(duplicate.response.status, 400);
+  } finally {
+    server.stop();
+  }
+});
+
+test("a worker joins from the invite code alone, with no company code", async () => {
+  const server = await startServer();
+  const { baseURL } = server;
+  try {
+    // Two companies, so resolving the invite has to pick the right one rather
+    // than just landing on the only company in the database.
+    const other = await json(baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Other Electric", name: "Other Owner", password: "owner-secret" }),
+    });
+    const owner = await json(baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Kittan Electric", name: "Owner", password: "owner-secret" }),
+    });
+    assert.notEqual(other.body.company.code, owner.body.company.code);
+
+    const invitation = await json(baseURL, "/api/invites", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${owner.body.token}` },
+      body: JSON.stringify({ role: "staff" }),
+    });
+    assert.equal(invitation.response.status, 200);
+
+    // The website's sign-up form sends the invite code on its own.
+    const worker = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({
+        inviteCode: invitation.body.invite.code,
+        name: "Cold Worker",
+        password: "worker-secret",
+      }),
+    });
+    assert.equal(worker.response.status, 200);
+    assert.equal(worker.body.user.role, "staff");
+    assert.equal(worker.body.company.code, owner.body.company.code);
+
+    // A bad code must not fall through to some other company.
+    const bogus = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({ inviteCode: "NOTACODE", name: "Nobody", password: "worker-secret" }),
+    });
+    assert.equal(bogus.response.status, 400);
+
+    // A revoked invite stops resolving too.
+    await json(baseURL, "/api/invite-revoke", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${owner.body.token}` },
+      body: JSON.stringify({ code: invitation.body.invite.code }),
+    });
+    const revoked = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({
+        inviteCode: invitation.body.invite.code,
+        name: "Late Worker",
+        password: "worker-secret",
+      }),
+    });
+    assert.equal(revoked.response.status, 400);
   } finally {
     server.stop();
   }

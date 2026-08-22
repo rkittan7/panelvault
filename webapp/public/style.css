@@ -171,49 +171,112 @@ svg { display: block; }
 
 /* ============================================================ auth */
 
+/* The one screen that is a phone screen rather than a dashboard. It drops the
+   dense portal language for the iOS grouped-list form: inset white groups on
+   the grouped ground, 44px rows, hairline separators, footnote under the group.
+   Everything here is sized in iOS points, not the portal's compact scale. */
+
 .auth {
   min-height: 100vh;
   display: grid; place-items: center;
-  padding: 32px 20px;
-  background:
-    radial-gradient(680px 420px at 50% -5%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 60%),
-    var(--bg);
+  padding: 40px 20px;
+  background: var(--bg);
 }
-.auth-inner { width: 100%; max-width: 384px; }
-.auth-brand { text-align: center; margin-bottom: 26px; }
-.auth-brand .brand-mark { margin: 0 auto 15px; }
-.auth-brand h1 { font-size: 25px; font-weight: 700; letter-spacing: -0.025em; }
+.auth-inner { width: 100%; max-width: 400px; }
+.auth-brand { text-align: center; margin-bottom: 28px; }
+.auth-brand .brand-mark { margin: 0 auto 16px; }
+.auth-brand h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; }
 .auth-brand h1 span { color: var(--primary); }
-.auth-brand p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+.auth-brand p { color: var(--ink-2); font-size: 15px; margin-top: 6px; }
 
-.auth-card {
-  background: linear-gradient(180deg, var(--panel-2), var(--panel));
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow: var(--shade-md);
-}
-
+/* iOS segmented control: recessed track, raised thumb on the live segment. */
 .seg {
   display: flex;
-  background: var(--scrim);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 3px;
-  margin-bottom: 18px;
+  background: var(--wash-3);
+  border-radius: 9px;
+  padding: 2px;
+  margin-bottom: 22px;
 }
 .seg button {
   flex: 1; border: 0; background: transparent;
-  color: var(--ink-3);
-  font: inherit; font-size: 12.5px; font-weight: 600;
-  padding: 7px 4px; border-radius: 6px; cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  color: var(--ink);
+  font: inherit; font-size: 13.5px; font-weight: 600;
+  height: 28px; border-radius: 7px; cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
 }
-.seg button:hover { color: var(--ink-2); }
-.seg button.active { background: var(--raise); color: var(--ink); }
+.seg button.active {
+  background: var(--raise);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.10), 0 1px 1px rgba(0, 0, 0, 0.05);
+}
 
-.auth-form { display: flex; flex-direction: column; gap: 13px; }
-.auth-form label,
+.auth-form { display: flex; flex-direction: column; gap: 18px; }
+
+/* ---- grouped list ---- */
+
+.ios-group {
+  background: var(--panel);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.ios-row {
+  position: relative;
+  display: flex; align-items: center; gap: 12px;
+  min-height: 44px; padding: 0 16px;
+  width: 100%; text-align: left;
+  background: transparent; border: 0;
+  font: inherit; color: var(--ink);
+}
+/* Separators start at the text inset, the way a UITableView inset separator
+   does — a full-bleed line reads as a table border instead of a row divide. */
+.ios-row + .ios-row::before {
+  content: ""; position: absolute; top: 0; left: 16px; right: 0;
+  height: 1px; background: var(--line);
+}
+.ios-row > span {
+  flex-shrink: 0; width: 104px;
+  font-size: 15px; color: var(--ink);
+}
+.ios-row input {
+  flex: 1; width: auto; min-width: 0;
+  height: 42px; padding: 0;
+  background: transparent; border: 0; border-radius: 0;
+  font-size: 15px; color: var(--ink);
+}
+.ios-row input:focus { outline: none; background: transparent; }
+.ios-row:focus-within { background: var(--wash-1); }
+
+.ios-foot {
+  margin: -8px 16px 0;
+  font-size: 13px; line-height: 1.4; color: var(--ink-3);
+}
+
+/* ---- choice rows: the sign-up branch picker ---- */
+
+.ios-row.choice { cursor: pointer; padding-top: 9px; padding-bottom: 9px; }
+.ios-row.choice:hover { background: var(--wash-1); }
+.choice-text { display: flex; flex-direction: column; gap: 1px; flex: 1; width: auto; }
+.choice-text strong { font-size: 15px; font-weight: 600; }
+.choice-text small { font-size: 13px; color: var(--ink-3); }
+.ios-row.choice .tick {
+  width: 18px; height: 18px; flex-shrink: 0;
+  color: var(--primary); opacity: 0;
+  transition: opacity 0.15s;
+}
+.ios-row.choice.active .tick { opacity: 1; }
+
+/* ---- filled iOS button ---- */
+
+.btn-ios {
+  height: 50px; width: 100%;
+  border: 0; border-radius: 12px;
+  background: var(--primary); color: var(--on-primary);
+  font: inherit; font-size: 17px; font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.08s;
+}
+.btn-ios:hover { filter: brightness(1.06); }
+.btn-ios:active { transform: scale(0.99); filter: brightness(0.94); }
+
 .modal label {
   display: flex; flex-direction: column; gap: 6px;
   font-size: 11.5px; font-weight: 600; color: var(--ink-3);
@@ -221,11 +284,10 @@ svg { display: block; }
 }
 .hint { font-size: 12px; color: var(--ink-3); line-height: 1.5; text-transform: none; letter-spacing: 0; }
 .form-error {
-  margin-top: 13px; padding: 9px 11px;
-  border-radius: var(--r-sm);
-  background: rgba(255, 92, 107, 0.09);
-  border: 1px solid rgba(255, 92, 107, 0.28);
-  color: var(--negative); font-size: 12.5px; font-weight: 600;
+  margin-top: 16px; padding: 11px 14px;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--negative) 10%, transparent);
+  color: var(--negative); font-size: 14px; font-weight: 500;
 }
 
 /* ============================================================ controls */
@@ -478,6 +540,113 @@ input:focus, select:focus, textarea:focus {
 }
 .chip-icon svg { width: 16px; height: 16px; }
 
+/* ---- catalog photos (assets/catalog, shared with the iPhone apps) ---- */
+
+/* A part photo in the chip slot. `contain` rather than `cover`: a breaker
+   photographed against a white sweep must not be cropped into an unreadable
+   detail just to fill a 30px square. */
+.chip-icon.chip-photo { background: var(--wash-1); padding: 2px; }
+.chip-icon.chip-photo img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }
+
+/* Brand logos are supplied as cut-outs on transparency, so they sit directly
+   on the row with no plate behind them. Inline rather than flex: `.row-sub`
+   ellipsises its overflow, and a flex child would break that. */
+img.brand-logo {
+  display: inline-block;
+  height: 12px; width: auto; max-width: 38px;
+  object-fit: contain;
+  vertical-align: -1px;
+  margin-right: 5px;
+}
+.brand-line { display: inline-flex; align-items: center; min-width: 0; }
+
+.part-head { display: flex; align-items: center; gap: 12px; margin-top: -9px; }
+/* Standing in for the modal's <h3> rather than sitting beneath one. */
+.part-head.lead { margin-top: 0; }
+.part-head.lead .part-head-title { font-size: 15.5px; font-weight: 680; letter-spacing: -0.015em; }
+.part-head.lead .part-photo { width: 70px; height: 70px; }
+.part-head-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.part-head .modal-sub { margin-top: 0; }
+.part-head-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.part-photo {
+  width: 62px; height: 62px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--wash-1);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px;
+}
+.part-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+/* ============================================================ catalog */
+
+/* The fifteen categories, laid out like the app's two-column grid but free to
+   use the width a browser has. */
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cat-card {
+  display: flex; flex-direction: column; gap: 9px;
+  min-height: 116px;
+  padding: 13px;
+  text-align: left;
+  background: linear-gradient(180deg, var(--wash-1), transparent 45%), var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: border-color 0.14s ease, transform 0.14s ease;
+}
+.cat-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+.cat-card:active { transform: none; }
+.cat-card-head { display: flex; align-items: center; gap: 8px; }
+.cat-card-head > svg:last-child { margin-left: auto; color: var(--ink-3); flex-shrink: 0; }
+.cat-stock {
+  font-size: 10.5px; font-weight: 650;
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 13%, transparent);
+  padding: 2px 7px; border-radius: 999px;
+  white-space: nowrap;
+}
+.cat-card-title { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; }
+.cat-card-sub { font-size: 11.5px; color: var(--ink-3); font-weight: 600; margin-top: auto; }
+
+.cat-note { font-size: 11.5px; color: var(--ink-3); font-weight: 600; margin-top: 10px; }
+
+.back-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 12px;
+  padding: 5px 9px 5px 5px;
+  font-size: 12px; font-weight: 650;
+  color: var(--ink-2);
+  background: none; border: none; border-radius: 7px;
+  cursor: pointer;
+}
+.back-link:hover { background: var(--wash-1); color: var(--ink); }
+.back-link svg { transform: rotate(180deg); }
+
+.muted-cap { color: var(--ink-3); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
+
+.part-about {
+  font-size: 12.5px; line-height: 1.6; color: var(--ink-2);
+  margin-top: -4px;
+}
+
+/* Specification table in the part modal. */
+.spec {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 5px 14px;
+  font-size: 12.5px;
+  padding: 11px 12px;
+  background: var(--wash-1);
+  border-radius: 9px;
+}
+.spec dt { color: var(--ink-3); font-weight: 600; }
+.spec dd { font-weight: 600; overflow-wrap: anywhere; }
+
 .qty-col { text-align: right; min-width: 46px; flex-shrink: 0; }
 .qty-col .num { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .qty-col .cap { font-size: 9.5px; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -565,6 +734,11 @@ input:focus, select:focus, textarea:focus {
 .modal .actions { display: flex; gap: 7px; justify-content: flex-end; margin-top: 3px; }
 .modal .actions .btn-primary { height: 34px; padding: 0 16px; }
 .list-scroll { max-height: 290px; overflow: auto; display: flex; flex-direction: column; gap: 3px; margin: 0 -4px; padding: 0 4px; }
+/* Delivery paperwork carries raw OCR text next to matched parts; 400px turns
+   every line into three wrapped rows. */
+.modal.wide { max-width: 580px; }
+.modal .section-label { margin-top: 2px; }
+.modal .list-scroll { max-height: 220px; }
 
 @keyframes fade { from { opacity: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
@@ -651,4 +825,4 @@ input:focus, select:focus, textarea:focus {
   margin: 18px 0 8px;
 }
 .money-col { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
-.money-col .num.muted { color: var(--ink-3); font-weight: 500; }
+.num.muted { color: var(--ink-3); font-weight: 500; }

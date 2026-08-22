@@ -7,7 +7,9 @@
 "rating": "Set A",
 "poles": "1P",
 "curve": "B/C/D Curve",
-"about": "Single-pole miniature circuit breaker for one final circuit, protecting against overload and short circuit. Pick the curve for the load: B for resistive and lighting, C for general mixed loads, D for high-inrush motors and transformers."
+"about": "Single-pole miniature circuit breaker for one final circuit, protecting against overload and short circuit. Pick the curve for the load: B for resistive and lighting, C for general mixed loads, D for high-inrush motors and transformers.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-s202-2p",
@@ -17,7 +19,9 @@
 "rating": "Set A",
 "poles": "2P",
 "curve": "B/C/D Curve",
-"about": "Two-pole MCB that breaks line and neutral together, common on single-phase circuits where full isolation is required for maintenance."
+"about": "Two-pole MCB that breaks line and neutral together, common on single-phase circuits where full isolation is required for maintenance.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-s203-3p",
@@ -27,7 +31,9 @@
 "rating": "Set A",
 "poles": "3P",
 "curve": "B/C/D Curve",
-"about": "Three-pole MCB for three-phase loads. All three poles trip together so a fault on one phase cannot leave a motor running single-phased."
+"about": "Three-pole MCB for three-phase loads. All three poles trip together so a fault on one phase cannot leave a motor running single-phased.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-s204-4p",
@@ -37,7 +43,9 @@
 "rating": "Set A",
 "poles": "4P",
 "curve": "B/C/D Curve",
-"about": "Four-pole MCB breaking three phases plus neutral, used where the neutral must be isolated, such as on generator or changeover circuits."
+"about": "Four-pole MCB breaking three phases plus neutral, used where the neutral must be isolated, such as on generator or changeover circuits.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-sn201-1pn",
@@ -47,7 +55,9 @@
 "rating": "Set A",
 "poles": "1P+N",
 "curve": "B/C Curve",
-"about": "One pole plus switched neutral in a single module width, the usual choice for apartment and lighting boards where DIN space is tight."
+"about": "One pole plus switched neutral in a single module width, the usual choice for apartment and lighting boards where DIN space is tight.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-s300-p",
@@ -57,7 +67,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "Industrial",
-"about": "Industrial-grade MCB with a higher breaking capacity than domestic ranges. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA device can clear."
+"about": "Industrial-grade MCB with a higher breaking capacity than domestic ranges. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA device can clear.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-su200",
@@ -67,7 +79,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "UL/CSA",
-"about": "MCB built to UL and CSA ratings for panels destined for North American markets or for machinery exported there."
+"about": "MCB built to UL and CSA ratings for panels destined for North American markets or for machinery exported there.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "schneider-ic60n",
@@ -77,7 +91,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "B/C/D",
-"about": "Standard Acti9 MCB at 6kA breaking capacity, suitable for most commercial final circuits. Pairs with Vigi add-on blocks if earth-leakage protection is needed later."
+"about": "Standard Acti9 MCB at 6kA breaking capacity, suitable for most commercial final circuits. Pairs with Vigi add-on blocks if earth-leakage protection is needed later.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "schneider-ic60h",
@@ -87,7 +103,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "B/C/D",
-"about": "Higher breaking capacity version of the iC60 for boards closer to the transformer where fault levels are greater."
+"about": "Higher breaking capacity version of the iC60 for boards closer to the transformer where fault levels are greater.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "siemens-5sy",
@@ -97,7 +115,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "B/C/D",
-"about": "General purpose SENTRON MCB for final circuit protection across lighting, socket and small power circuits."
+"about": "General purpose SENTRON MCB for final circuit protection across lighting, socket and small power circuits.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "siemens-5sl",
@@ -107,7 +127,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "B/C/D",
-"about": "Compact economy MCB for high-volume repeat circuits in residential and light commercial boards."
+"about": "Compact economy MCB for high-volume repeat circuits in residential and light commercial boards.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "eaton-faz",
@@ -117,7 +139,9 @@
 "rating": "Set A",
 "poles": "1P-4P",
 "curve": "B/C/D",
-"about": "Eaton MCB range with a wide curve and rating selection, frequently specified in machine-building and OEM panels."
+"about": "Eaton MCB range with a wide curve and rating selection, frequently specified in machine-building and OEM panels.",
+"group": "mcbs",
+"groupName": "MCBs"
 },
 {
 "id": "abb-ds201-1pn",
@@ -127,7 +151,9 @@
 "rating": "Set A",
 "poles": "1P+N",
 "curve": "B/C Curve + RCD",
-"about": "Combined MCB and residual current device in one module: overload, short-circuit and earth-leakage protection for a single circuit. Common at 30mA for socket outlets requiring additional protection."
+"about": "Combined MCB and residual current device in one module: overload, short-circuit and earth-leakage protection for a single circuit. Common at 30mA for socket outlets requiring additional protection.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-ds202-2p",
@@ -137,7 +163,9 @@
 "rating": "Set A",
 "poles": "2P",
 "curve": "B/C Curve + RCD",
-"about": "Two-pole RCBO providing overcurrent and earth-leakage protection while isolating both line and neutral."
+"about": "Two-pole RCBO providing overcurrent and earth-leakage protection while isolating both line and neutral.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-ds203-3p",
@@ -147,7 +175,9 @@
 "rating": "Set A",
 "poles": "3P",
 "curve": "B/C Curve + RCD",
-"about": "Three-pole RCBO for three-phase circuits needing residual current protection without a separate upstream RCCB."
+"about": "Three-pole RCBO for three-phase circuits needing residual current protection without a separate upstream RCCB.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-ds204-4p",
@@ -157,7 +187,9 @@
 "rating": "Set A",
 "poles": "4P",
 "curve": "B/C Curve + RCD",
-"about": "Four-pole RCBO covering three phases and neutral. Used where individual circuit discrimination matters more than a single shared RCCB."
+"about": "Four-pole RCBO covering three phases and neutral. Used where individual circuit discrimination matters more than a single shared RCCB.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-ds200",
@@ -167,7 +199,9 @@
 "rating": "up to 63A",
 "poles": "1P+N/3P+N",
 "curve": "30-300mA, 10kA",
-"about": "Higher breaking capacity RCBO range for boards with elevated fault levels where a standard 6kA device would be inadequate."
+"about": "Higher breaking capacity RCBO range for boards with elevated fault levels where a standard 6kA device would be inadequate.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "schneider-acti9-rcbo",
@@ -177,7 +211,9 @@
 "rating": "Set A",
 "poles": "1P+N",
 "curve": "B/C + RCD",
-"about": "Acti9 RCBO in one module width, giving each circuit its own earth-leakage protection so a single fault does not trip an entire board section."
+"about": "Acti9 RCBO in one module width, giving each circuit its own earth-leakage protection so a single fault does not trip an entire board section.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "generic-rccb",
@@ -187,7 +223,9 @@
 "rating": "Set A",
 "poles": "2P/4P",
 "curve": "30-300mA",
-"about": "Residual current circuit breaker detecting earth leakage but offering no overload protection, so it always sits behind or above separate overcurrent devices. Choose the type by load: AC for simple resistive, A where electronics are present, B where drives or DC components can produce smooth residual currents."
+"about": "Residual current circuit breaker detecting earth leakage but offering no overload protection, so it always sits behind or above separate overcurrent devices. Choose the type by load: AC for simple resistive, A where electronics are present, B where drives or DC components can produce smooth residual currents.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-f200",
@@ -197,7 +235,9 @@
 "rating": "25-125A",
 "poles": "2P/4P",
 "curve": "30-500mA, Type AC/A",
-"about": "Residual current circuit breaker protecting a group of circuits against earth leakage. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section."
+"about": "Residual current circuit breaker protecting a group of circuits against earth leakage. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "schneider-iid",
@@ -207,7 +247,9 @@
 "rating": "25-100A",
 "poles": "2P/4P",
 "curve": "30-300mA, Type AC/A/B",
-"about": "Acti9 residual current device available in Type A and Type B. Type B is required where variable speed drives can produce smooth DC residual current that would blind a Type AC device."
+"about": "Acti9 residual current device available in Type A and Type B. Type B is required where variable speed drives can produce smooth DC residual current that would blind a Type AC device.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "siemens-5sv",
@@ -217,7 +259,9 @@
 "rating": "25-125A",
 "poles": "2P/4P",
 "curve": "30-300mA",
-"about": "SENTRON RCCB for group earth-leakage protection. Consider splitting circuits across several RCCBs so one nuisance trip does not take out an entire board."
+"about": "SENTRON RCCB for group earth-leakage protection. Consider splitting circuits across several RCCBs so one nuisance trip does not take out an entire board.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
 },
 {
 "id": "abb-tmax-xt1",
@@ -227,7 +271,9 @@
 "rating": "Set A - max 160A",
 "poles": "3P/4P",
 "curve": "Basic - thermal-magnetic",
-"about": "Compact moulded case breaker for feeders up to 160A with a fixed thermal-magnetic trip. Suits outgoing ways on small distribution boards."
+"about": "Compact moulded case breaker for feeders up to 160A with a fixed thermal-magnetic trip. Suits outgoing ways on small distribution boards.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt2",
@@ -237,7 +283,9 @@
 "rating": "Set A - max 160A",
 "poles": "3P/4P",
 "curve": "Heavy duty - TM/Ekip Dip/Touch",
-"about": "160A frame with a choice of thermal-magnetic or Ekip electronic trip units, giving adjustable settings for selectivity against downstream devices."
+"about": "160A frame with a choice of thermal-magnetic or Ekip electronic trip units, giving adjustable settings for selectivity against downstream devices.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt3",
@@ -247,7 +295,9 @@
 "rating": "Set A - max 250A",
 "poles": "3P/4P",
 "curve": "Basic - thermal-magnetic",
-"about": "250A frame thermal-magnetic breaker for mid-size feeders and sub-board supplies."
+"about": "250A frame thermal-magnetic breaker for mid-size feeders and sub-board supplies.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt4",
@@ -257,7 +307,9 @@
 "rating": "Set A - max 250A",
 "poles": "3P/4P",
 "curve": "Heavy duty - TM/Ekip Dip/Touch",
-"about": "250A frame with electronic trip options, used where adjustable overload and instantaneous settings are needed to coordinate with upstream protection."
+"about": "250A frame with electronic trip options, used where adjustable overload and instantaneous settings are needed to coordinate with upstream protection.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt5",
@@ -267,7 +319,9 @@
 "rating": "Set A - max 630A",
 "poles": "3P/4P",
 "curve": "Heavy duty - TM/Ekip Dip/Touch",
-"about": "400 to 630A frame for major feeders, transformer outgoings and sub-main distribution."
+"about": "400 to 630A frame for major feeders, transformer outgoings and sub-main distribution.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt6",
@@ -277,7 +331,9 @@
 "rating": "Set A - max 1000A",
 "poles": "3P/4P",
 "curve": "Basic - thermal-magnetic/Ekip Dip",
-"about": "630 to 800A frame typically used as a main incomer on medium boards or feeding large mechanical plant."
+"about": "630 to 800A frame typically used as a main incomer on medium boards or feeding large mechanical plant.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt7",
@@ -287,7 +343,9 @@
 "rating": "Set A - max 1600A",
 "poles": "3P/4P",
 "curve": "Heavy duty - Ekip Dip/Touch",
-"about": "1000 to 1600A frame for main incoming protection on large distribution boards where an air circuit breaker is not required."
+"about": "1000 to 1600A frame for main incoming protection on large distribution boards where an air circuit breaker is not required.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-tmax-xt7m",
@@ -297,7 +355,9 @@
 "rating": "Set A - max 1600A",
 "poles": "3P/4P",
 "curve": "Motorized - Ekip Dip/Touch",
-"about": "Motorised version of the XT7 for remote or automatic operation, used in transfer schemes and where remote tripping is part of the control philosophy."
+"about": "Motorised version of the XT7 for remote or automatic operation, used in transfer schemes and where remote tripping is part of the control philosophy.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "schneider-nsx",
@@ -307,7 +367,9 @@
 "rating": "16-630A",
 "poles": "3P/4P",
 "curve": "TM/Micrologic",
-"about": "Compact NSX moulded case breaker with interchangeable TM or Micrologic trip units. The electronic units add metering and adjustable protection curves."
+"about": "Compact NSX moulded case breaker with interchangeable TM or Micrologic trip units. The electronic units add metering and adjustable protection curves.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "schneider-nsj",
@@ -317,7 +379,9 @@
 "rating": "16-630A",
 "poles": "3P/4P",
 "curve": "Thermal Magnetic",
-"about": "Cost-focused moulded case breaker for standard distribution feeders where adjustable electronic protection is not required."
+"about": "Cost-focused moulded case breaker for standard distribution feeders where adjustable electronic protection is not required.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "siemens-3va1",
@@ -327,7 +391,9 @@
 "rating": "16-160A",
 "poles": "3P/4P",
 "curve": "Thermal Magnetic",
-"about": "SENTRON moulded case breaker with thermal-magnetic trip for general distribution feeders."
+"about": "SENTRON moulded case breaker with thermal-magnetic trip for general distribution feeders.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "siemens-3va2",
@@ -337,7 +403,9 @@
 "rating": "25-630A",
 "poles": "3P/4P",
 "curve": "ETU",
-"about": "SENTRON breaker with electronic trip units and optional communications, suited to boards where energy data and selectivity are both required."
+"about": "SENTRON breaker with electronic trip units and optional communications, suited to boards where energy data and selectivity are both required.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "eaton-nzm",
@@ -347,7 +415,9 @@
 "rating": "20-1600A",
 "poles": "3P/4P",
 "curve": "Electronic/TM",
-"about": "Eaton moulded case breaker range covering a wide band of frame sizes, common as both incomer and outgoing protection in industrial boards."
+"about": "Eaton moulded case breaker range covering a wide band of frame sizes, common as both incomer and outgoing protection in industrial boards.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "eaton-bzmx",
@@ -357,7 +427,9 @@
 "rating": "15-250A",
 "poles": "3P/4P",
 "curve": "Thermal Magnetic",
-"about": "Compact moulded case breaker for smaller feeders where space in the board is limited."
+"about": "Compact moulded case breaker for smaller feeders where space in the board is limited.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "generic-acb",
@@ -367,7 +439,9 @@
 "rating": "Set A",
 "poles": "3P/4P",
 "curve": "Withdrawable/fixed",
-"about": "Air circuit breaker for main incoming protection at high current, typically above 800A. Decide early whether it is fixed or withdrawable, since withdrawable versions need far more depth and a defined racking area in front of the board."
+"about": "Air circuit breaker for main incoming protection at high current, typically above 800A. Decide early whether it is fixed or withdrawable, since withdrawable versions need far more depth and a defined racking area in front of the board.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "abb-emax2",
@@ -377,7 +451,9 @@
 "rating": "630-6300A",
 "poles": "3P/4P",
 "curve": "Fixed or withdrawable",
-"about": "Air circuit breaker for main incoming protection with Ekip trip units offering full protection, metering and communications. Withdrawable versions allow maintenance without a full shutdown but need defined racking space in front of the board."
+"about": "Air circuit breaker for main incoming protection with Ekip trip units offering full protection, metering and communications. Withdrawable versions allow maintenance without a full shutdown but need defined racking space in front of the board.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "schneider-mtz",
@@ -387,7 +463,9 @@
 "rating": "630-6300A",
 "poles": "3P/4P",
 "curve": "Micrologic X",
-"about": "Main air circuit breaker with Micrologic X control units providing measurement, diagnostics and remote connectivity. Common as the incomer on large main LV boards."
+"about": "Main air circuit breaker with Micrologic X control units providing measurement, diagnostics and remote connectivity. Common as the incomer on large main LV boards.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "siemens-3wa",
@@ -397,7 +475,9 @@
 "rating": "630-6300A",
 "poles": "3P/4P",
 "curve": "ETU trip unit",
-"about": "SENTRON air circuit breaker for main and coupler positions. Confirm the trip unit family early since it drives the metering and communications you can offer later."
+"about": "SENTRON air circuit breaker for main and coupler positions. Confirm the trip unit family early since it drives the metering and communications you can offer later.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "eaton-izmx",
@@ -407,7 +487,9 @@
 "rating": "630-1600A",
 "poles": "3P/4P",
 "curve": "Fixed or withdrawable",
-"about": "Compact air circuit breaker for main protection where panel depth is constrained but ACB features are still required."
+"about": "Compact air circuit breaker for main protection where panel depth is constrained but ACB features are still required.",
+"group": "mccbs",
+"groupName": "MCCBs & ACBs"
 },
 {
 "id": "generic-spd",
@@ -417,7 +499,9 @@
 "rating": "Type 2",
 "poles": "3P+N",
 "curve": "40kA",
-"about": "Surge protection device diverting transient overvoltage from lightning and switching to earth. Type 1 goes at the origin where there is a lightning protection system, Type 2 at distribution boards. It needs a correctly rated backup fuse or breaker and the shortest possible connecting leads."
+"about": "Surge protection device diverting transient overvoltage from lightning and switching to earth. Type 1 goes at the origin where there is a lightning protection system, Type 2 at distribution boards. It needs a correctly rated backup fuse or breaker and the shortest possible connecting leads.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "abb-ovr",
@@ -427,7 +511,9 @@
 "rating": "Type 2",
 "poles": "1P-4P",
 "curve": "40kA Imax",
-"about": "Type 2 surge arrester for distribution boards, diverting switching and induced lightning transients. Keep the connecting leads under half a metre or the let-through voltage rises sharply."
+"about": "Type 2 surge arrester for distribution boards, diverting switching and induced lightning transients. Keep the connecting leads under half a metre or the let-through voltage rises sharply.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "schneider-iprd",
@@ -437,7 +523,9 @@
 "rating": "Type 2",
 "poles": "1P-4P",
 "curve": "20-65kA",
-"about": "Acti9 surge protection with a status window showing when the cartridge is spent, and a remote signalling contact so a failed arrester does not sit unnoticed."
+"about": "Acti9 surge protection with a status window showing when the cartridge is spent, and a remote signalling contact so a failed arrester does not sit unnoticed.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "phoenix-valms",
@@ -447,7 +535,9 @@
 "rating": "Type 2",
 "poles": "1P-4P",
 "curve": "Pluggable",
-"about": "Pluggable surge protection where the protection module can be replaced without disturbing the wiring, useful on boards in high-exposure locations."
+"about": "Pluggable surge protection where the protection module can be replaced without disturbing the wiring, useful on boards in high-exposure locations.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "abb-afdd",
@@ -457,7 +547,9 @@
 "rating": "6-40A",
 "poles": "1P+N",
 "curve": "B/C Curve",
-"about": "Arc fault detection device recognising the signature of a series or parallel arcing fault that a normal MCB or RCD will not see. Specified for fire risk areas such as sleeping accommodation and timber structures."
+"about": "Arc fault detection device recognising the signature of a series or parallel arcing fault that a normal MCB or RCD will not see. Specified for fire risk areas such as sleeping accommodation and timber structures.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "siemens-5sm6",
@@ -467,7 +559,9 @@
 "rating": "6-40A",
 "poles": "1P+N",
 "curve": "Combined MCB",
-"about": "Arc fault detection combined with overcurrent protection in one device, reducing the DIN width needed compared with separate units."
+"about": "Arc fault detection combined with overcurrent protection in one device, reducing the DIN width needed compared with separate units.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "abb-cm-iwx",
@@ -477,7 +571,9 @@
 "rating": "30mA-30A",
 "poles": "DIN",
 "curve": "Residual current monitor",
-"about": "Residual current monitor that measures and reports leakage continuously instead of tripping, letting you catch a deteriorating circuit before it causes an outage."
+"about": "Residual current monitor that measures and reports leakage continuously instead of tripping, letting you catch a deteriorating circuit before it causes an outage.",
+"group": "surge-arc",
+"groupName": "Surge & Arc Protection"
 },
 {
 "id": "generic-isolator",
@@ -487,7 +583,9 @@
 "rating": "Set A",
 "poles": "3P/4P",
 "curve": "Door-coupled",
-"about": "Load break switch providing a visible, lockable point of isolation so a board or section can be worked on safely. Rated for making and breaking load current, unlike a plain disconnector."
+"about": "Load break switch providing a visible, lockable point of isolation so a board or section can be worked on safely. Rated for making and breaking load current, unlike a plain disconnector.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-ot",
@@ -497,7 +595,9 @@
 "rating": "16-3150A",
 "poles": "3P/4P",
 "curve": "Door or base mount",
-"about": "Switch disconnector for main isolation or outgoing feeders, available with door-coupled rotary handles that can be padlocked off for safe working."
+"about": "Switch disconnector for main isolation or outgoing feeders, available with door-coupled rotary handles that can be padlocked off for safe working.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "schneider-ins",
@@ -507,7 +607,9 @@
 "rating": "40-2500A",
 "poles": "3P/4P",
 "curve": "Load break",
-"about": "Load break switch for isolation duty on incomers and outgoing feeders where switching capability without protection is required."
+"about": "Load break switch for isolation duty on incomers and outgoing feeders where switching capability without protection is required.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "generic-changeover",
@@ -517,7 +619,9 @@
 "rating": "Set A",
 "poles": "4P",
 "curve": "I-0-II",
-"about": "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once."
+"about": "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "socomec-sirco",
@@ -527,7 +631,9 @@
 "rating": "125-3200A",
 "poles": "3P/4P",
 "curve": "Motorised I-0-II",
-"about": "Motorised changeover switch for automatic transfer between utility and generator, mechanically interlocked so both sources can never be paralleled."
+"about": "Motorised changeover switch for automatic transfer between utility and generator, mechanically interlocked so both sources can never be paralleled.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-ats021",
@@ -537,7 +643,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Auto transfer control",
-"about": "Automatic transfer controller monitoring the normal supply and commanding changeover to the standby source. Set the transfer and return delays deliberately so brief dips do not start the generator unnecessarily."
+"about": "Automatic transfer controller monitoring the normal supply and commanding changeover to the standby source. Set the transfer and return delays deliberately so brief dips do not start the generator unnecessarily.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "deepsea-dse",
@@ -547,7 +655,9 @@
 "rating": "12/24VDC",
 "poles": "Door mount",
 "curve": "Auto mains failure",
-"about": "Auto mains failure controller starting the generator on supply loss, transferring load and returning it once the mains is stable. It needs clear wiring to the generator start contacts and both source sensing points."
+"about": "Auto mains failure controller starting the generator on supply loss, transferring load and returning it once the mains is stable. It needs clear wiring to the generator start contacts and both source sensing points.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "generic-fuse",
@@ -557,7 +667,9 @@
 "rating": "Set A",
 "poles": "1P",
 "curve": "gG/gL",
-"about": "NH fuse link giving very high breaking capacity in a compact body, often used ahead of large feeders or where the fault level exceeds what a breaker can handle economically. gG is for general cable protection, aM for motor circuits."
+"about": "NH fuse link giving very high breaking capacity in a compact body, often used ahead of large feeders or where the fault level exceeds what a breaker can handle economically. gG is for general cable protection, aM for motor circuits.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "generic-fuse-holder",
@@ -567,7 +679,9 @@
 "rating": "Set A",
 "poles": "1P/3P",
 "curve": "10x38/NH",
-"about": "DIN rail fuse carrier holding cartridge or NH fuse links, giving isolation when the carrier is withdrawn. Confirm the fuse size it accepts and whether a blown-fuse indicator is required."
+"about": "DIN rail fuse carrier holding cartridge or NH fuse links, giving isolation when the carrier is withdrawn. Confirm the fuse size it accepts and whether a blown-fuse indicator is required.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-af16-30-10",
@@ -577,7 +691,9 @@
 "rating": "16A",
 "poles": "3P",
 "curve": "1NO Aux",
-"about": "Three-pole contactor around 16A AC-3 with one normally-open auxiliary, sized for small motors and controlled loads. The AF electronic coil accepts a wide voltage band, which reduces the number of coil variants to stock."
+"about": "Three-pole contactor around 16A AC-3 with one normally-open auxiliary, sized for small motors and controlled loads. The AF electronic coil accepts a wide voltage band, which reduces the number of coil variants to stock.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-af26-30-00",
@@ -587,7 +703,9 @@
 "rating": "26A",
 "poles": "3P",
 "curve": "No Aux",
-"about": "Mid-size three-pole contactor for motor and load switching where no built-in auxiliary contact is required."
+"about": "Mid-size three-pole contactor for motor and load switching where no built-in auxiliary contact is required.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-af38-30-00",
@@ -597,7 +715,9 @@
 "rating": "38A",
 "poles": "3P",
 "curve": "No Aux",
-"about": "Larger three-pole contactor for motors up to roughly 18.5kW at 400V. Check AC-3 rating against motor full-load amps rather than the AC-1 figure."
+"about": "Larger three-pole contactor for motors up to roughly 18.5kW at 400V. Check AC-3 rating against motor full-load amps rather than the AC-1 figure.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "schneider-lc1d",
@@ -607,7 +727,9 @@
 "rating": "9-150A",
 "poles": "3P",
 "curve": "AC-3",
-"about": "TeSys D contactor, the workhorse for motor starters and load switching. Add-on auxiliary blocks and mechanical interlocks let it build reversing and star-delta arrangements."
+"about": "TeSys D contactor, the workhorse for motor starters and load switching. Add-on auxiliary blocks and mechanical interlocks let it build reversing and star-delta arrangements.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "siemens-3rt",
@@ -617,7 +739,9 @@
 "rating": "9-250A",
 "poles": "3P",
 "curve": "AC-3",
-"about": "SIRIUS contactor sized by frame across a wide kW range, designed to clip together with matching 3RU or 3RB overload relays into a compact starter."
+"about": "SIRIUS contactor sized by frame across a wide kW range, designed to clip together with matching 3RU or 3RB overload relays into a compact starter.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "eaton-dilm",
@@ -627,7 +751,9 @@
 "rating": "7-170A",
 "poles": "3P",
 "curve": "AC-3",
-"about": "Eaton DILM contactor range with matching overloads and accessory blocks, common in machine control panels."
+"about": "Eaton DILM contactor range with matching overloads and accessory blocks, common in machine control panels.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 },
 {
 "id": "abb-acs355",
@@ -637,7 +763,9 @@
 "rating": "0.37-22kW",
 "poles": "3PH",
 "curve": "Machinery drive",
-"about": "Machinery drive for conveyors, mixers and small pumps, built for panel mounting with straightforward parameter setup."
+"about": "Machinery drive for conveyors, mixers and small pumps, built for panel mounting with straightforward parameter setup.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-acs580",
@@ -647,7 +775,9 @@
 "rating": "0.75-250kW",
 "poles": "3PH",
 "curve": "General purpose",
-"about": "General purpose drive covering most building services and industrial motor loads, with a built-in choke that reduces harmonic current without an external reactor."
+"about": "General purpose drive covering most building services and industrial motor loads, with a built-in choke that reduces harmonic current without an external reactor.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-ach580",
@@ -657,7 +787,9 @@
 "rating": "0.75-500kW",
 "poles": "3PH",
 "curve": "HVAC drive",
-"about": "HVAC variant tuned for fans and pumps, including firefighter override and PID control for pressure and flow."
+"about": "HVAC variant tuned for fans and pumps, including firefighter override and PID control for pressure and flow.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-acs880",
@@ -667,7 +799,9 @@
 "rating": "0.55-3200kW",
 "poles": "3PH",
 "curve": "Industrial drive",
-"about": "Industrial drive for demanding applications including regenerative and common DC bus configurations. Confirm cooling and cabinet depth early, since larger frames are substantial."
+"about": "Industrial drive for demanding applications including regenerative and common DC bus configurations. Confirm cooling and cabinet depth early, since larger frames are substantial.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-atv12",
@@ -677,7 +811,9 @@
 "rating": "0.18-4kW",
 "poles": "1PH/3PH",
 "curve": "Basic machines",
-"about": "Entry-level drive for small machines and single-phase supplies, typically fitted straight onto the machine panel."
+"about": "Entry-level drive for small machines and single-phase supplies, typically fitted straight onto the machine panel.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-atv320",
@@ -687,7 +823,9 @@
 "rating": "0.18-15kW",
 "poles": "3PH",
 "curve": "Machine drive",
-"about": "Compact machine drive available in book and compact formats, with integrated safety functions such as Safe Torque Off."
+"about": "Compact machine drive available in book and compact formats, with integrated safety functions such as Safe Torque Off.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-atv340",
@@ -697,7 +835,9 @@
 "rating": "0.75-75kW",
 "poles": "3PH",
 "curve": "High performance",
-"about": "High performance drive for dynamic machine control where fast response and precise speed regulation matter."
+"about": "High performance drive for dynamic machine control where fast response and precise speed regulation matter.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-atv630",
@@ -707,7 +847,9 @@
 "rating": "0.75-315kW",
 "poles": "3PH",
 "curve": "Process drive",
-"about": "Process drive for pumps, fans and compressors with energy-saving control and built-in EMC filtering."
+"about": "Process drive for pumps, fans and compressors with energy-saving control and built-in EMC filtering.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-v20",
@@ -717,7 +859,9 @@
 "rating": "0.12-30kW",
 "poles": "1PH/3PH",
 "curve": "Basic drive",
-"about": "Basic drive for simple fan, pump and conveyor duties where a full parameter set would be overkill."
+"about": "Basic drive for simple fan, pump and conveyor duties where a full parameter set would be overkill.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-g120c",
@@ -727,7 +871,9 @@
 "rating": "0.55-132kW",
 "poles": "3PH",
 "curve": "Compact drive",
-"about": "Compact single-unit drive combining control and power in one housing, saving panel width against the modular G120."
+"about": "Compact single-unit drive combining control and power in one housing, saving panel width against the modular G120.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-g120",
@@ -737,7 +883,9 @@
 "rating": "0.55-250kW",
 "poles": "3PH",
 "curve": "Modular drive",
-"about": "Modular drive where control unit and power module are selected separately, so the same power module can serve different control and communication needs."
+"about": "Modular drive where control unit and power module are selected separately, so the same power module can serve different control and communication needs.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "danfoss-fc51",
@@ -747,7 +895,9 @@
 "rating": "0.18-22kW",
 "poles": "1PH/3PH",
 "curve": "Micro drive",
-"about": "Micro drive for basic speed control on small motors, common in HVAC and simple machinery."
+"about": "Micro drive for basic speed control on small motors, common in HVAC and simple machinery.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "danfoss-fc202",
@@ -757,7 +907,9 @@
 "rating": "0.25-1400kW",
 "poles": "3PH",
 "curve": "Pump drive",
-"about": "Drive tuned for water and wastewater duty, with pump-specific features such as dry-run detection, pipe fill and cascade control."
+"about": "Drive tuned for water and wastewater duty, with pump-specific features such as dry-run detection, pipe fill and cascade control.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "danfoss-fc302",
@@ -767,7 +919,9 @@
 "rating": "0.25-800kW",
 "poles": "3PH",
 "curve": "Automation drive",
-"about": "Automation drive for demanding motor control including closed loop and servo-like applications."
+"about": "Automation drive for demanding motor control including closed loop and servo-like applications.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "delta-ms300",
@@ -777,7 +931,9 @@
 "rating": "0.4-22kW",
 "poles": "3PH",
 "curve": "Compact vector",
-"about": "Compact vector drive giving good torque control in a small footprint, widely used in OEM machine panels."
+"about": "Compact vector drive giving good torque control in a small footprint, widely used in OEM machine panels.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "delta-c2000",
@@ -787,7 +943,9 @@
 "rating": "0.75-400kW",
 "poles": "3PH",
 "curve": "Heavy duty vector",
-"about": "Heavy duty vector drive for cranes, hoists and high-torque applications where overload capability matters."
+"about": "Heavy duty vector drive for cranes, hoists and high-torque applications where overload capability matters.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "eaton-dc1",
@@ -797,7 +955,9 @@
 "rating": "0.37-11kW",
 "poles": "1PH/3PH",
 "curve": "Compact drive",
-"about": "Compact drive for basic speed control, sized for small panels and simple commissioning."
+"about": "Compact drive for basic speed control, sized for small panels and simple commissioning.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "eaton-dg1",
@@ -807,7 +967,9 @@
 "rating": "0.75-250kW",
 "poles": "3PH",
 "curve": "General purpose",
-"about": "General purpose drive with active energy control, used across pump, fan and conveyor duties."
+"about": "General purpose drive with active energy control, used across pump, fan and conveyor duties.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "generic-soft-starter",
@@ -817,7 +979,9 @@
 "rating": "Set kW",
 "poles": "3PH",
 "curve": "Ramp start/stop",
-"about": "Ramps motor voltage up and down to limit inrush current and mechanical shock on belts, couplings and pumps. Confirm whether a bypass is built in, and remember it still needs upstream isolation and overload protection."
+"about": "Ramps motor voltage up and down to limit inrush current and mechanical shock on belts, couplings and pumps. Confirm whether a bypass is built in, and remember it still needs upstream isolation and overload protection.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-psr",
@@ -827,7 +991,9 @@
 "rating": "3-105A",
 "poles": "3PH",
 "curve": "Compact ramp",
-"about": "Compact soft starter for small motors where the aim is simply to take the shock out of starting. No internal bypass, so allow for the heat it dissipates while ramping."
+"about": "Compact soft starter for small motors where the aim is simply to take the shock out of starting. No internal bypass, so allow for the heat it dissipates while ramping.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-pse",
@@ -837,7 +1003,9 @@
 "rating": "18-370A",
 "poles": "3PH",
 "curve": "Bypass + current limit",
-"about": "Soft starter with internal bypass and current limiting, so it stops dissipating heat once the motor is up to speed."
+"about": "Soft starter with internal bypass and current limiting, so it stops dissipating heat once the motor is up to speed.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-pstx",
@@ -847,7 +1015,9 @@
 "rating": "30-1250A",
 "poles": "3PH",
 "curve": "Advanced, built-in bypass",
-"about": "Advanced soft starter with built-in bypass, torque control and motor protection, suitable for large pumps and compressors where starting stress is a real problem."
+"about": "Advanced soft starter with built-in bypass, torque control and motor protection, suitable for large pumps and compressors where starting stress is a real problem.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-ats01",
@@ -857,7 +1027,9 @@
 "rating": "3-32A",
 "poles": "3PH",
 "curve": "Basic ramp",
-"about": "Basic soft starter for small motors, providing a simple voltage ramp without configurable protection."
+"about": "Basic soft starter for small motors, providing a simple voltage ramp without configurable protection.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-ats22",
@@ -867,7 +1039,9 @@
 "rating": "17-590A",
 "poles": "3PH",
 "curve": "Torque control",
-"about": "Soft starter with torque control giving smoother starts and stops on pumps, which reduces water hammer in pipework."
+"about": "Soft starter with torque control giving smoother starts and stops on pumps, which reduces water hammer in pipework.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "schneider-ats480",
@@ -877,7 +1051,9 @@
 "rating": "17-1200A",
 "poles": "3PH",
 "curve": "Advanced, bypass",
-"about": "Advanced soft starter with integrated bypass, protection and diagnostics for larger motors and critical duties."
+"about": "Advanced soft starter with integrated bypass, protection and diagnostics for larger motors and critical duties.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-3rw30",
@@ -887,7 +1063,9 @@
 "rating": "3-106A",
 "poles": "3PH",
 "curve": "Standard ramp",
-"about": "Standard soft starter for straightforward ramp starting on general purpose motors."
+"about": "Standard soft starter for straightforward ramp starting on general purpose motors.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-3rw52",
@@ -897,7 +1075,9 @@
 "rating": "13-370A",
 "poles": "3PH",
 "curve": "Bypass + protection",
-"about": "Soft starter combining bypass and motor protection in one device, reducing the component count in the starter section."
+"about": "Soft starter combining bypass and motor protection in one device, reducing the component count in the starter section.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "siemens-3rw44",
@@ -907,7 +1087,9 @@
 "rating": "29-1214A",
 "poles": "3PH",
 "curve": "High feature",
-"about": "High-feature soft starter for large motors with adjustable torque control and comprehensive protection and diagnostics."
+"about": "High-feature soft starter for large motors with adjustable torque control and comprehensive protection and diagnostics.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "eaton-ds7",
@@ -917,7 +1099,9 @@
 "rating": "9-135A",
 "poles": "3PH",
 "curve": "Integrated bypass",
-"about": "Soft starter with integrated bypass controlling two phases, compact enough to fit where a full three-phase controlled unit would not."
+"about": "Soft starter with integrated bypass controlling two phases, compact enough to fit where a full three-phase controlled unit would not.",
+"group": "drives",
+"groupName": "Drives & Soft Starters"
 },
 {
 "id": "abb-ms132",
@@ -927,7 +1111,9 @@
 "rating": "0.1-32A",
 "poles": "3P",
 "curve": "Manual motor starter",
-"about": "Manual motor starter combining short-circuit, overload and manual switching in one device. Dial the current setting to motor full-load amps and check the breaking capacity against the board fault level."
+"about": "Manual motor starter combining short-circuit, overload and manual switching in one device. Dial the current setting to motor full-load amps and check the breaking capacity against the board fault level.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "abb-ms165",
@@ -937,7 +1123,9 @@
 "rating": "10-65A",
 "poles": "3P",
 "curve": "Manual motor starter",
-"about": "Larger frame manual motor starter for motors up to roughly 30kW, with the same combined protection and switching function."
+"about": "Larger frame manual motor starter for motors up to roughly 30kW, with the same combined protection and switching function.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "schneider-gv2me",
@@ -947,7 +1135,9 @@
 "rating": "0.1-32A",
 "poles": "3P",
 "curve": "Thermal-magnetic",
-"about": "TeSys manual motor starter with thermal-magnetic protection and a rotary handle, commonly the first device in a compact motor feeder."
+"about": "TeSys manual motor starter with thermal-magnetic protection and a rotary handle, commonly the first device in a compact motor feeder.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "schneider-gv3",
@@ -957,7 +1147,9 @@
 "rating": "9-65A",
 "poles": "3P",
 "curve": "Thermal-magnetic",
-"about": "Larger TeSys motor circuit breaker for mid-size motors, often paired with a matching contactor to form a compact starter."
+"about": "Larger TeSys motor circuit breaker for mid-size motors, often paired with a matching contactor to form a compact starter.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "siemens-3rv2",
@@ -967,7 +1159,9 @@
 "rating": "0.11-100A",
 "poles": "3P",
 "curve": "Motor protection",
-"about": "SIRIUS motor starter protector that clips directly to matching 3RT contactors, forming a tested combination without extra wiring."
+"about": "SIRIUS motor starter protector that clips directly to matching 3RT contactors, forming a tested combination without extra wiring.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "eaton-pkzm0",
@@ -977,7 +1171,9 @@
 "rating": "0.1-32A",
 "poles": "3P",
 "curve": "Motor protective",
-"about": "Motor protective circuit breaker with adjustable overload, used as a compact combined isolator and protection device."
+"about": "Motor protective circuit breaker with adjustable overload, used as a compact combined isolator and protection device.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "generic-overload",
@@ -987,7 +1183,9 @@
 "rating": "Set A",
 "poles": "3P",
 "curve": "Motor protection",
-"about": "Thermal overload relay protecting a motor from sustained overcurrent such as a jammed load or lost phase. Set the dial to motor full-load amps and check the trip class suits the starting time."
+"about": "Thermal overload relay protecting a motor from sustained overcurrent such as a jammed load or lost phase. Set the dial to motor full-load amps and check the trip class suits the starting time.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "abb-ta25du",
@@ -997,7 +1195,9 @@
 "rating": "0.1-32A",
 "poles": "3P",
 "curve": "Thermal, Class 10",
-"about": "Thermal overload relay mounting directly onto matching contactors. Set the dial to motor full-load amps, and reset behaviour should be chosen deliberately since automatic reset on a motor can restart machinery."
+"about": "Thermal overload relay mounting directly onto matching contactors. Set the dial to motor full-load amps, and reset behaviour should be chosen deliberately since automatic reset on a motor can restart machinery.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "abb-ef19",
@@ -1007,7 +1207,9 @@
 "rating": "0.1-18.9A",
 "poles": "3P",
 "curve": "Electronic, Class 10-30",
-"about": "Electronic overload relay with a wider setting range and selectable trip class, holding accuracy better than a bimetallic relay across ambient changes."
+"about": "Electronic overload relay with a wider setting range and selectable trip class, holding accuracy better than a bimetallic relay across ambient changes.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "schneider-lrd",
@@ -1017,7 +1219,9 @@
 "rating": "0.1-140A",
 "poles": "3P",
 "curve": "Thermal, Class 10/20",
-"about": "TeSys thermal overload relay clipping onto LC1D contactors, the standard partner in a Schneider motor starter."
+"about": "TeSys thermal overload relay clipping onto LC1D contactors, the standard partner in a Schneider motor starter.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "schneider-lr9",
@@ -1027,7 +1231,9 @@
 "rating": "0.3-630A",
 "poles": "3P",
 "curve": "Electronic",
-"about": "Electronic overload relay for larger motors, with a wide adjustment range and better protection against phase loss."
+"about": "Electronic overload relay for larger motors, with a wide adjustment range and better protection against phase loss.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "siemens-3ru21",
@@ -1037,7 +1243,9 @@
 "rating": "0.11-100A",
 "poles": "3P",
 "curve": "Thermal, Class 10",
-"about": "Thermal overload relay designed to mount directly on 3RT contactors, forming a compact tested starter combination."
+"about": "Thermal overload relay designed to mount directly on 3RT contactors, forming a compact tested starter combination.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "siemens-3rb30",
@@ -1047,7 +1255,9 @@
 "rating": "0.1-100A",
 "poles": "3P",
 "curve": "Electronic, Class 5-30",
-"about": "Electronic overload relay with selectable trip class from 5 to 30, useful for motors with long run-up times such as large fans."
+"about": "Electronic overload relay with selectable trip class from 5 to 30, useful for motors with long run-up times such as large fans.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "generic-dol-starter",
@@ -1057,7 +1267,9 @@
 "rating": "Set kW",
 "poles": "3PH",
 "curve": "Contactor + overload",
-"about": "Direct-on-line starter combining contactor and overload for the simplest motor start. Draws six to eight times full-load current at start, so confirm the supply and any generator can accept that step."
+"about": "Direct-on-line starter combining contactor and overload for the simplest motor start. Draws six to eight times full-load current at start, so confirm the supply and any generator can accept that step.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "generic-star-delta",
@@ -1067,7 +1279,9 @@
 "rating": "Set kW",
 "poles": "3PH",
 "curve": "3 contactors + timer",
-"about": "Star-delta starter reducing starting current by first running the motor in star, then switching to delta. The motor must have all six leads available and the transition timer needs setting to the actual run-up time."
+"about": "Star-delta starter reducing starting current by first running the motor in star, then switching to delta. The motor must have all six leads available and the transition timer needs setting to the actual run-up time.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "generic-reversing",
@@ -1077,7 +1291,9 @@
 "rating": "Set kW",
 "poles": "3PH",
 "curve": "Interlocked pair",
-"about": "Reversing starter using two mechanically and electrically interlocked contactors to swap two phases. The interlock is a safety requirement, not an option, since both closing together is a direct phase-to-phase fault."
+"about": "Reversing starter using two mechanically and electrically interlocked contactors to swap two phases. The interlock is a safety requirement, not an option, since both closing together is a direct phase-to-phase fault.",
+"group": "motor-protection",
+"groupName": "Motor Protection & Starters"
 },
 {
 "id": "generic-transformer",
@@ -1087,7 +1303,9 @@
 "rating": "Set VA",
 "poles": "1PH",
 "curve": "400/230V",
-"about": "Control transformer stepping the panel supply down to a separate control voltage, typically 230V or 110V, and isolating the control circuit from the power circuit. Size the VA for the inrush of all contactor coils picking up together, not just their holding current."
+"about": "Control transformer stepping the panel supply down to a separate control voltage, typically 230V or 110V, and isolating the control circuit from the power circuit. Size the VA for the inrush of all contactor coils picking up together, not just their holding current.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "phoenix-step",
@@ -1097,7 +1315,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "0.5-10A basic",
-"about": "Basic 24VDC supply for small control loads such as a handful of relays and sensors, where power reserve features are unnecessary."
+"about": "Basic 24VDC supply for small control loads such as a handful of relays and sensors, where power reserve features are unnecessary.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "phoenix-trio",
@@ -1107,7 +1327,9 @@
 "rating": "24VDC",
 "poles": "1PH/3PH",
 "curve": "2.5-20A",
-"about": "Mid-range 24VDC supply for typical control panels, with a stable output and compact DIN footprint."
+"about": "Mid-range 24VDC supply for typical control panels, with a stable output and compact DIN footprint.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "phoenix-quint",
@@ -1117,7 +1339,9 @@
 "rating": "24VDC",
 "poles": "1PH/3PH",
 "curve": "5-40A, SFB tech",
-"about": "Premium 24VDC supply whose selective fuse breaking technology delivers extra current briefly, so a downstream fault clears its protective device instead of dragging the whole 24V rail down."
+"about": "Premium 24VDC supply whose selective fuse breaking technology delivers extra current briefly, so a downstream fault clears its protective device instead of dragging the whole 24V rail down.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "abb-cpd",
@@ -1127,7 +1351,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "0.42-2.5A compact",
-"about": "Compact 24VDC supply for small control tasks where DIN width is at a premium."
+"about": "Compact 24VDC supply for small control tasks where DIN width is at a premium.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "abb-cpe",
@@ -1137,7 +1363,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "0.75-20A",
-"about": "General purpose 24VDC supply covering most panel control loads, with adjustable output voltage to compensate for line drop."
+"about": "General purpose 24VDC supply covering most panel control loads, with adjustable output voltage to compensate for line drop.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "siemens-psu100s",
@@ -1147,7 +1375,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "2.5-40A",
-"about": "Single-phase SITOP supply for control circuits and SIMATIC controllers, with reserve capacity for short overloads."
+"about": "Single-phase SITOP supply for control circuits and SIMATIC controllers, with reserve capacity for short overloads.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "siemens-psu8200",
@@ -1157,7 +1387,9 @@
 "rating": "24VDC",
 "poles": "3PH",
 "curve": "10-40A",
-"about": "Three-phase SITOP supply for larger 24VDC loads, balancing the draw across all three phases rather than loading one."
+"about": "Three-phase SITOP supply for larger 24VDC loads, balancing the draw across all three phases rather than loading one.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "meanwell-dr",
@@ -1167,7 +1399,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "15-120W",
-"about": "Economical DIN rail supply for light control duties, widely used in OEM panels."
+"about": "Economical DIN rail supply for light control duties, widely used in OEM panels.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "meanwell-hdr",
@@ -1177,7 +1411,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "15-150W ultra slim",
-"about": "Ultra-slim DIN supply for tight enclosures where every millimetre of rail counts."
+"about": "Ultra-slim DIN supply for tight enclosures where every millimetre of rail counts.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "meanwell-ndr",
@@ -1187,7 +1423,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "75-480W",
-"about": "Higher power DIN supply for panels with substantial 24VDC load such as banks of valves or extensive I/O."
+"about": "Higher power DIN supply for panels with substantial 24VDC load such as banks of valves or extensive I/O.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "meanwell-tdr",
@@ -1197,7 +1435,9 @@
 "rating": "24VDC",
 "poles": "3PH",
 "curve": "240-960W",
-"about": "Three-phase DIN supply for heavy 24VDC loads, keeping phase loading balanced on larger installations."
+"about": "Three-phase DIN supply for heavy 24VDC loads, keeping phase loading balanced on larger installations.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "delta-drp",
@@ -1207,7 +1447,9 @@
 "rating": "24VDC",
 "poles": "1PH/3PH",
 "curve": "60-960W",
-"about": "CliQ series supply available in single and three-phase versions with good efficiency and a compact footprint."
+"about": "CliQ series supply available in single and three-phase versions with good efficiency and a compact footprint.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "eaton-psg",
@@ -1217,7 +1459,9 @@
 "rating": "24VDC",
 "poles": "1PH",
 "curve": "1.3-20A",
-"about": "General purpose 24VDC supply for control circuits, with models sized from small interface duty upward."
+"about": "General purpose 24VDC supply for control circuits, with models sized from small interface duty upward.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "phoenix-quint-ups",
@@ -1227,7 +1471,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "5-40A + battery",
-"about": "DC uninterruptible supply with intelligent battery management that reports remaining backup time, so control power outlives a brief mains loss."
+"about": "DC uninterruptible supply with intelligent battery management that reports remaining backup time, so control power outlives a brief mains loss.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "siemens-ups1600",
@@ -1237,7 +1483,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "10-40A managed",
-"about": "Managed DC-UPS with configurable buffer time and diagnostics over the controller network, letting a PLC shut down cleanly rather than dying mid-operation."
+"about": "Managed DC-UPS with configurable buffer time and diagnostics over the controller network, letting a PLC shut down cleanly rather than dying mid-operation.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "abb-cpa-ru",
@@ -1247,7 +1495,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Redundancy + buffer",
-"about": "Redundancy and buffer module decoupling two power supplies so a single failed unit cannot pull down the shared 24V rail."
+"about": "Redundancy and buffer module decoupling two power supplies so a single failed unit cannot pull down the shared 24V rail.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "meanwell-drc",
@@ -1257,7 +1507,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Charger + backup",
-"about": "DIN rail supply with an integrated battery charger and changeover, a cost-effective route to backed-up control power on smaller panels."
+"about": "DIN rail supply with an integrated battery charger and changeover, a cost-effective route to backed-up control power on smaller panels.",
+"group": "control-power",
+"groupName": "Control Power & UPS"
 },
 {
 "id": "generic-plc",
@@ -1267,7 +1519,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Digital I/O",
-"about": "Programmable logic controller running the panel control sequence. Count the digital and analogue I/O needed with spare capacity, and confirm the communication protocol before fixing the enclosure layout."
+"about": "Programmable logic controller running the panel control sequence. Count the digital and analogue I/O needed with spare capacity, and confirm the communication protocol before fixing the enclosure layout.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "siemens-s71200",
@@ -1277,7 +1531,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Compact controller",
-"about": "Compact controller for panel automation with expandable digital and analogue I/O. Confirm the I/O count with spare capacity and whether PROFINET or Modbus is required before finalising the layout."
+"about": "Compact controller for panel automation with expandable digital and analogue I/O. Confirm the I/O count with spare capacity and whether PROFINET or Modbus is required before finalising the layout.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "schneider-m221",
@@ -1287,7 +1543,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Machine controller",
-"about": "Machine controller for pump, HVAC and small process panels, with built-in Ethernet on most references."
+"about": "Machine controller for pump, HVAC and small process panels, with built-in Ethernet on most references.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "abb-ac500",
@@ -1297,7 +1555,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Modular controller",
-"about": "Modular controller that scales from small to large I/O counts, useful where the same panel design must cover several plant sizes."
+"about": "Modular controller that scales from small to large I/O counts, useful where the same panel design must cover several plant sizes.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "delta-dvp",
@@ -1307,7 +1567,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Compact controller",
-"about": "Cost-effective compact PLC widely used in OEM machine panels with straightforward digital and analogue expansion."
+"about": "Cost-effective compact PLC widely used in OEM machine panels with straightforward digital and analogue expansion.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "siemens-ktp",
@@ -1317,7 +1579,9 @@
 "rating": "24VDC",
 "poles": "Door mount",
 "curve": "4-15 inch touch",
-"about": "Door-mounted touch panel giving the operator status, alarms and setpoints. Cutting the door aperture accurately matters, and the IP rating only holds if the supplied gasket is fitted correctly."
+"about": "Door-mounted touch panel giving the operator status, alarms and setpoints. Cutting the door aperture accurately matters, and the IP rating only holds if the supplied gasket is fitted correctly.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "schneider-hmigxu",
@@ -1327,7 +1591,9 @@
 "rating": "24VDC",
 "poles": "Door mount",
 "curve": "3.5-7 inch touch",
-"about": "Compact operator terminal for smaller panels where a full PC-based interface is unnecessary."
+"about": "Compact operator terminal for smaller panels where a full PC-based interface is unnecessary.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "pilz-pnoz",
@@ -1337,7 +1603,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Emergency stop / guard",
-"about": "Safety relay monitoring emergency stops, guard switches and light curtains, providing a redundant and monitored trip path. It must be wired to the documented category and cannot be bypassed by ordinary control logic."
+"about": "Safety relay monitoring emergency stops, guard switches and light curtains, providing a redundant and monitored trip path. It must be wired to the documented category and cannot be bypassed by ordinary control logic.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "siemens-3sk1",
@@ -1347,7 +1615,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "Safety monitoring",
-"about": "Safety relay for emergency stop and guard monitoring with expandable output modules for larger safety circuits."
+"about": "Safety relay for emergency stop and guard monitoring with expandable output modules for larger safety circuits.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "generic-relay",
@@ -1357,7 +1627,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "1CO/2CO",
-"about": "Interface relay isolating low-power controller outputs from the coils and loads they switch, and converting between control voltages. The slim DIN format keeps a dense I/O interface tidy."
+"about": "Interface relay isolating low-power controller outputs from the coils and loads they switch, and converting between control voltages. The slim DIN format keeps a dense I/O interface tidy.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "phoenix-plcrsc",
@@ -1367,7 +1639,9 @@
 "rating": "24VDC",
 "poles": "DIN",
 "curve": "6.2mm slim",
-"about": "Slim plug-in interface relay isolating controller outputs from field loads. The pluggable design lets a failed relay be swapped without disturbing terminal wiring."
+"about": "Slim plug-in interface relay isolating controller outputs from field loads. The pluggable design lets a failed relay be swapped without disturbing terminal wiring.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "finder-55",
@@ -1377,7 +1651,9 @@
 "rating": "24-230V",
 "poles": "DIN",
 "curve": "2CO/3CO",
-"about": "General purpose plug-in relay with a socket base, used for interposing and simple control logic in panels of every size."
+"about": "General purpose plug-in relay with a socket base, used for interposing and simple control logic in panels of every size.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "generic-timer",
@@ -1387,7 +1663,9 @@
 "rating": "24-230V",
 "poles": "DIN",
 "curve": "On/off delay",
-"about": "Time relay providing on-delay, off-delay or cyclic switching for sequencing, pump alternation and star-delta transitions."
+"about": "Time relay providing on-delay, off-delay or cyclic switching for sequencing, pump alternation and star-delta transitions.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "finder-80",
@@ -1397,7 +1675,9 @@
 "rating": "12-240V",
 "poles": "DIN",
 "curve": "Multifunction",
-"about": "Multifunction timer covering on-delay, off-delay, interval and cyclic modes in one part, which cuts down on stocked variants."
+"about": "Multifunction timer covering on-delay, off-delay, interval and cyclic modes in one part, which cuts down on stocked variants.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "abb-cm-mps",
@@ -1407,7 +1687,9 @@
 "rating": "3x400V",
 "poles": "DIN",
 "curve": "Phase failure / sequence",
-"about": "Three-phase monitoring relay detecting phase loss, wrong phase sequence, under and overvoltage. It is what stops a motor running single-phased after an upstream fuse clears one leg."
+"about": "Three-phase monitoring relay detecting phase loss, wrong phase sequence, under and overvoltage. It is what stops a motor running single-phased after an upstream fuse clears one leg.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "siemens-3ug4",
@@ -1417,7 +1699,9 @@
 "rating": "3x400V",
 "poles": "DIN",
 "curve": "Voltage / phase monitor",
-"about": "Line monitoring relay for phase sequence, asymmetry and voltage window, commonly interlocked into the start circuit of motor panels."
+"about": "Line monitoring relay for phase sequence, asymmetry and voltage window, commonly interlocked into the start circuit of motor panels.",
+"group": "control-automation",
+"groupName": "Control & Automation"
 },
 {
 "id": "generic-meter",
@@ -1427,7 +1711,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Panel mount",
-"about": "Panel-mounted digital meter showing voltage, current and basic energy values on the board door. Confirm whether it measures directly or needs current transformers."
+"about": "Panel-mounted digital meter showing voltage, current and basic energy values on the board door. Confirm whether it measures directly or needs current transformers.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "schneider-iem3000",
@@ -1437,7 +1723,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "DIN, Modbus",
-"about": "DIN rail energy meter for sub-billing and consumption monitoring, available in direct-connect and CT versions with Modbus output."
+"about": "DIN rail energy meter for sub-billing and consumption monitoring, available in direct-connect and CT versions with Modbus output.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "siemens-pac3200",
@@ -1447,7 +1735,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Door mount",
-"about": "Door-mounted multifunction meter showing the full set of electrical values with Modbus or PROFINET reporting."
+"about": "Door-mounted multifunction meter showing the full set of electrical values with Modbus or PROFINET reporting.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "carlogavazzi-em21",
@@ -1457,7 +1747,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "DIN, Modbus",
-"about": "Compact DIN rail energy meter widely used for sub-metering individual feeders in tenant and process installations."
+"about": "Compact DIN rail energy meter widely used for sub-metering individual feeders in tenant and process installations.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "generic-power-analyzer",
@@ -1467,7 +1759,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Modbus",
-"about": "Power quality analyser recording harmonics, power factor, demand and event data, usually reporting over Modbus to a monitoring system. Specify where energy billing or harmonic problems need evidence."
+"about": "Power quality analyser recording harmonics, power factor, demand and event data, usually reporting over Modbus to a monitoring system. Specify where energy billing or harmonic problems need evidence.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "schneider-pm2000",
@@ -1477,7 +1771,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Panel mount",
-"about": "Panel-mounted power meter measuring energy, demand and basic power quality, suited to tenant metering and energy management."
+"about": "Panel-mounted power meter measuring energy, demand and basic power quality, suited to tenant metering and energy management.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "siemens-pac4200",
@@ -1487,7 +1783,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Harmonics + logging",
-"about": "Advanced meter adding harmonic analysis and data logging, used where power quality has to be proven rather than assumed."
+"about": "Advanced meter adding harmonic analysis and data logging, used where power quality has to be proven rather than assumed.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "abb-m2m",
@@ -1497,7 +1795,9 @@
 "rating": "230/400V",
 "poles": "3PH",
 "curve": "Modbus",
-"about": "Network analyser recording power quality and harmonic content, typically fitted where drives and non-linear loads dominate."
+"about": "Network analyser recording power quality and harmonic content, typically fitted where drives and non-linear loads dominate.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "generic-ct",
@@ -1507,7 +1807,9 @@
 "rating": "50-5000A",
 "poles": "1PH each",
 "curve": "Class 0.5-1",
-"about": "Current transformer scaling feeder current down to a meter input, usually 5A or 1A. Match the ratio and accuracy class to the meter, and never leave the secondary open circuit while primary current flows."
+"about": "Current transformer scaling feeder current down to a meter input, usually 5A or 1A. Match the ratio and accuracy class to the meter, and never leave the secondary open circuit while primary current flows.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "generic-test-block",
@@ -1517,7 +1819,9 @@
 "rating": "5A",
 "poles": "Panel mount",
 "curve": "Shorting type",
-"about": "Test block allowing meters and protection relays to be tested or replaced without breaking the CT secondary, which it shorts automatically as the plug is withdrawn."
+"about": "Test block allowing meters and protection relays to be tested or replaced without breaking the CT secondary, which it shorts automatically as the plug is withdrawn.",
+"group": "metering",
+"groupName": "Metering & Monitoring"
 },
 {
 "id": "abb-rvt",
@@ -1527,7 +1831,9 @@
 "rating": "230/400V",
 "poles": "Door mount",
 "curve": "6-12 stages",
-"about": "Power factor controller switching capacitor stages to hold the target power factor and avoid reactive energy charges. Set the target and the C/k ratio to suit the CT and the smallest stage."
+"about": "Power factor controller switching capacitor stages to hold the target power factor and avoid reactive energy charges. Set the target and the C/k ratio to suit the CT and the smallest stage.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "schneider-varlogic",
@@ -1537,7 +1843,9 @@
 "rating": "230/400V",
 "poles": "Door mount",
 "curve": "6-12 stages",
-"about": "Power factor controller with stage health monitoring, which matters because a failed capacitor stage otherwise goes unnoticed until the bill rises."
+"about": "Power factor controller with stage health monitoring, which matters because a failed capacitor stage otherwise goes unnoticed until the bill rises.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "abb-clmd",
@@ -1547,7 +1855,9 @@
 "rating": "Set kVAr",
 "poles": "3PH",
 "curve": "Dry type",
-"about": "Dry-type power capacitor forming the stages of a correction bank. Capacitors need discharge resistors and adequate ventilation, and they age faster in hot or harmonic-rich environments."
+"about": "Dry-type power capacitor forming the stages of a correction bank. Capacitors need discharge resistors and adequate ventilation, and they age faster in hot or harmonic-rich environments.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "generic-detuned-reactor",
@@ -1557,7 +1867,9 @@
 "rating": "Set kVAr",
 "poles": "3PH",
 "curve": "7% or 14%",
-"about": "Detuned reactor placed in series with capacitor stages to shift the resonant frequency away from prevailing harmonics. Required wherever significant drive or UPS load shares the installation."
+"about": "Detuned reactor placed in series with capacitor stages to shift the resonant frequency away from prevailing harmonics. Required wherever significant drive or UPS load shares the installation.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "generic-line-reactor",
@@ -1567,7 +1879,9 @@
 "rating": "Set A",
 "poles": "3PH",
 "curve": "2-5% impedance",
-"about": "Line or load reactor fitted with a drive to reduce current distortion, protect the drive input and limit voltage stress on long motor cables."
+"about": "Line or load reactor fitted with a drive to reduce current distortion, protect the drive input and limit voltage stress on long motor cables.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "generic-active-filter",
@@ -1577,7 +1891,9 @@
 "rating": "30-300A",
 "poles": "3PH",
 "curve": "Real time correction",
-"about": "Active filter injecting counter-current to cancel harmonics in real time. Specify from a measured harmonic survey rather than assumption, since sizing depends on the actual spectrum."
+"about": "Active filter injecting counter-current to cancel harmonics in real time. Specify from a measured harmonic survey rather than assumption, since sizing depends on the actual spectrum.",
+"group": "power-quality",
+"groupName": "Power Factor & Quality"
 },
 {
 "id": "phoenix-terminal",
@@ -1587,7 +1903,9 @@
 "rating": "2.5-35mm²",
 "poles": "DIN",
 "curve": "cm rail",
-"about": "Screw-clamp terminal block for field wiring connections. Grouping terminals by function and numbering them consistently is what makes later fault finding fast."
+"about": "Screw-clamp terminal block for field wiring connections. Grouping terminals by function and numbering them consistently is what makes later fault finding fast.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "phoenix-ut",
@@ -1597,7 +1915,9 @@
 "rating": "0.14-95mm2",
 "poles": "DIN",
 "curve": "Screw clamp",
-"about": "Screw clamp terminal range covering signal through power cross-sections in a consistent form, with matching bridges, markers and test accessories."
+"about": "Screw clamp terminal range covering signal through power cross-sections in a consistent form, with matching bridges, markers and test accessories.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "phoenix-pt",
@@ -1607,7 +1927,9 @@
 "rating": "0.14-16mm2",
 "poles": "DIN",
 "curve": "Push-in spring",
-"about": "Push-in spring terminal that accepts a ferruled conductor without a tool, cutting wiring time and removing the retorquing that screw terminals need."
+"about": "Push-in spring terminal that accepts a ferruled conductor without a tool, cutting wiring time and removing the retorquing that screw terminals need.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "wago-2002",
@@ -1617,7 +1939,9 @@
 "rating": "0.25-16mm2",
 "poles": "DIN",
 "curve": "Push-in CAGE CLAMP",
-"about": "Spring clamp terminal that holds tension regardless of vibration or thermal cycling, which is why it is common on machinery and transport panels."
+"about": "Spring clamp terminal that holds tension regardless of vibration or thermal cycling, which is why it is common on machinery and transport panels.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "weidmuller-a",
@@ -1627,7 +1951,9 @@
 "rating": "0.14-95mm2",
 "poles": "DIN",
 "curve": "Push-in",
-"about": "Push-in terminal system with a uniform accessory set across cross-sections, keeping cross-bridging and marking consistent through the panel."
+"about": "Push-in terminal system with a uniform accessory set across cross-sections, keeping cross-bridging and marking consistent through the panel.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "phoenix-ptfix",
@@ -1637,7 +1963,9 @@
 "rating": "1.5-6mm2",
 "poles": "DIN or adhesive",
 "curve": "Potential distributor",
-"about": "Potential distribution block splitting one supply into many outgoing points, tidying up the 24VDC and earth distribution that otherwise turns into daisy-chained terminals."
+"about": "Potential distribution block splitting one supply into many outgoing points, tidying up the 24VDC and earth distribution that otherwise turns into daisy-chained terminals.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-power-distribution-block",
@@ -1647,7 +1975,9 @@
 "rating": "125-800A",
 "poles": "1P/3P/4P",
 "curve": "Insulated body",
-"about": "Insulated distribution block taking one large incoming cable and splitting it to several outgoing ways without a full busbar system."
+"about": "Insulated distribution block taking one large incoming cable and splitting it to several outgoing ways without a full busbar system.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-ferrule",
@@ -1657,7 +1987,9 @@
 "rating": "0.5-35mm2",
 "poles": "Per conductor",
 "curve": "Crimped",
-"about": "Bootlace ferrule terminating a stranded conductor so no strand escapes the terminal. Use the correct crimp tool and die, since an under-crimped ferrule becomes a hot joint."
+"about": "Bootlace ferrule terminating a stranded conductor so no strand escapes the terminal. Use the correct crimp tool and die, since an under-crimped ferrule becomes a hot joint.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-lug",
@@ -1667,7 +1999,9 @@
 "rating": "10-630mm2",
 "poles": "Per conductor",
 "curve": "Crimped",
-"about": "Compression lug terminating large cables onto busbars and breaker pads. Match lug, die and tool from the same system, and confirm bolt torque against the manufacturer figure."
+"about": "Compression lug terminating large cables onto busbars and breaker pads. Match lug, die and tool from the same system, and confirm bolt torque against the manufacturer figure.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-marker",
@@ -1677,7 +2011,9 @@
 "rating": "All sizes",
 "poles": "Per conductor",
 "curve": "Printed",
-"about": "Printed markers identifying conductors and terminals to the drawing. Consistent numbering is the single thing that most reduces fault-finding time years later."
+"about": "Printed markers identifying conductors and terminals to the drawing. Consistent numbering is the single thing that most reduces fault-finding time years later.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-trunking",
@@ -1687,7 +2023,9 @@
 "rating": "Set cm",
 "poles": "PVC",
 "curve": "Slotted",
-"about": "Slotted wiring duct routing and containing panel wiring. Leave real spare capacity, since ducts filled to the brim make later modifications painful and trap heat."
+"about": "Slotted wiring duct routing and containing panel wiring. Leave real spare capacity, since ducts filled to the brim make later modifications painful and trap heat.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-cable-gland",
@@ -1697,7 +2035,9 @@
 "rating": "Set size",
 "poles": "M thread",
 "curve": "IP rated",
-"about": "Cable gland sealing a cable where it enters the enclosure, maintaining the IP rating and providing strain relief. Metal glands additionally terminate cable armour or screen."
+"about": "Cable gland sealing a cable where it enters the enclosure, maintaining the IP rating and providing strain relief. Metal glands additionally terminate cable armour or screen.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-din",
@@ -1707,7 +2047,9 @@
 "rating": "1m",
 "poles": "DIN",
 "curve": "Cut to cm",
-"about": "Standard 35mm DIN rail carrying modular devices. Plan rail heights and spacing around wiring duct so devices remain accessible after wiring."
+"about": "Standard 35mm DIN rail carrying modular devices. Plan rail heights and spacing around wiring duct so devices remain accessible after wiring.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 },
 {
 "id": "generic-busbar-250",
@@ -1717,7 +2059,9 @@
 "rating": "250A",
 "poles": "3P+N",
 "curve": "cm/m sizing",
-"about": "Copper busbar system rated around 250A for distributing current across a board section, keeping outgoing connections short and consistent."
+"about": "Copper busbar system rated around 250A for distributing current across a board section, keeping outgoing connections short and consistent.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-busbar-630",
@@ -1727,7 +2071,9 @@
 "rating": "630A",
 "poles": "3P+N",
 "curve": "cm/m sizing",
-"about": "Higher rated busbar for main distribution sections, where cable connections to every outgoing device would be impractical."
+"about": "Higher rated busbar for main distribution sections, where cable connections to every outgoing device would be impractical.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "rittal-riline",
@@ -1737,7 +2083,9 @@
 "rating": "100-1600A",
 "poles": "3P/4P",
 "curve": "Component adaptor",
-"about": "Busbar system with component adaptors that clip devices directly onto the bars, cutting internal cabling and giving a repeatable, tested arrangement."
+"about": "Busbar system with component adaptors that clip devices directly onto the bars, cutting internal cabling and giving a repeatable, tested arrangement.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-copper-bar",
@@ -1747,7 +2095,9 @@
 "rating": "Set cm",
 "poles": "Flat bar",
 "curve": "Busbar",
-"about": "Copper bar carrying current between sections and devices inside the board. Size it for continuous current and short-circuit withstand, and check the support spacing for the fault level."
+"about": "Copper bar carrying current between sections and devices inside the board. Size it for continuous current and short-circuit withstand, and check the support spacing for the fault level.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-flexible-busbar",
@@ -1757,7 +2107,9 @@
 "rating": "Set A",
 "poles": "Per phase",
 "curve": "Laminated",
-"about": "Flexible laminated connector between busbar and device, absorbing vibration and thermal movement and easing awkward connection geometry."
+"about": "Flexible laminated connector between busbar and device, absorbing vibration and thermal movement and easing awkward connection geometry.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-busbar-support",
@@ -1767,7 +2119,9 @@
 "rating": "Set A",
 "poles": "3P/4P",
 "curve": "Insulated",
-"about": "Insulated busbar support holding bars at a fixed spacing. Support spacing is a short-circuit withstand question, not a tidiness one: bars must not deflect together under fault forces."
+"about": "Insulated busbar support holding bars at a fixed spacing. Support spacing is a short-circuit withstand question, not a tidiness one: bars must not deflect together under fault forces.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-earth-bar",
@@ -1777,7 +2131,9 @@
 "rating": "Set length",
 "poles": "PE",
 "curve": "Copper/brass",
-"about": "Protective earth bar giving every circuit a common bonding point. It must be sized for the largest fault current and clearly labelled and accessible."
+"about": "Protective earth bar giving every circuit a common bonding point. It must be sized for the largest fault current and clearly labelled and accessible.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-neutral-bar",
@@ -1787,7 +2143,9 @@
 "rating": "Set length",
 "poles": "N",
 "curve": "Copper/brass",
-"about": "Neutral bar collecting circuit neutrals. Keep neutrals grouped with their own circuits so that RCD protection and later fault finding both work predictably."
+"about": "Neutral bar collecting circuit neutrals. Keep neutrals grouped with their own circuits so that RCD protection and later fault finding both work predictably.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "generic-earth-braid",
@@ -1797,7 +2155,9 @@
 "rating": "6-25mm2",
 "poles": "Per door",
 "curve": "Flexible",
-"about": "Flexible bonding braid earthing doors and hinged plates. Doors carrying any electrical device must be bonded, and paint has to be removed at the fixing point for the bond to be real."
+"about": "Flexible bonding braid earthing doors and hinged plates. Doors carrying any electrical device must be bonded, and paint has to be removed at the fixing point for the bond to be real.",
+"group": "busbars",
+"groupName": "Busbars & Earthing"
 },
 {
 "id": "rittal-ae",
@@ -1807,7 +2167,9 @@
 "rating": "IP66",
 "poles": "Wall mount",
 "curve": "Sheet steel",
-"about": "Compact wall-mounting enclosure for smaller boards and control panels. Confirm the IP rating survives every cut-out and gland you add to it."
+"about": "Compact wall-mounting enclosure for smaller boards and control panels. Confirm the IP rating survives every cut-out and gland you add to it.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "rittal-vx25",
@@ -1817,7 +2179,9 @@
 "rating": "IP55",
 "poles": "Floor standing",
 "curve": "Frame system",
-"about": "Bayable floor-standing frame system for large boards, allowing sections to be joined into a lineup with continuous busbar and shared cable zones."
+"about": "Bayable floor-standing frame system for large boards, allowing sections to be joined into a lineup with continuous busbar and shared cable zones.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-fan",
@@ -1827,7 +2191,9 @@
 "rating": "230V",
 "poles": "Filter fan",
 "curve": "Airflow",
-"about": "Filter fan drawing cooler outside air through the enclosure to remove heat from drives, transformers and breakers. It needs a matching exit filter, and the filter mats need a cleaning interval in the maintenance plan."
+"about": "Filter fan drawing cooler outside air through the enclosure to remove heat from drives, transformers and breakers. It needs a matching exit filter, and the filter mats need a cleaning interval in the maintenance plan.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "rittal-sk-fan",
@@ -1837,7 +2203,9 @@
 "rating": "230V",
 "poles": "Door or side",
 "curve": "Filtered airflow",
-"about": "Filter fan with matched exit filter for forced ventilation. Size airflow from the calculated heat load and remember it can only cool to ambient, never below it."
+"about": "Filter fan with matched exit filter for forced ventilation. Size airflow from the calculated heat load and remember it can only cool to ambient, never below it.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "rittal-bluee",
@@ -1847,7 +2215,9 @@
 "rating": "230/400V",
 "poles": "Wall or roof",
 "curve": "Active cooling",
-"about": "Active cooling unit refrigerating the enclosure below ambient, needed where drives and transformers exceed what filtered ventilation can remove. It needs condensate management and a sealed enclosure to work correctly."
+"about": "Active cooling unit refrigerating the enclosure below ambient, needed where drives and transformers exceed what filtered ventilation can remove. It needs condensate management and a sealed enclosure to work correctly.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-heater",
@@ -1857,7 +2227,9 @@
 "rating": "230V",
 "poles": "DIN",
 "curve": "PTC element",
-"about": "Panel heater preventing condensation in cold or outdoor enclosures. Condensation, not cold, is what damages electronics, so pair it with a hygrostat or thermostat."
+"about": "Panel heater preventing condensation in cold or outdoor enclosures. Condensation, not cold, is what damages electronics, so pair it with a hygrostat or thermostat.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-thermostat",
@@ -1867,7 +2239,9 @@
 "rating": "230V",
 "poles": "DIN",
 "curve": "NO/NC",
-"about": "Panel thermostat switching a fan or heater at a set temperature. Use a normally-closed unit for heating and a normally-open unit for cooling."
+"about": "Panel thermostat switching a fan or heater at a set temperature. Use a normally-closed unit for heating and a normally-open unit for cooling.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-hygrostat",
@@ -1877,7 +2251,9 @@
 "rating": "230V",
 "poles": "DIN",
 "curve": "Humidity control",
-"about": "Hygrostat switching a heater on humidity rather than temperature, which is the more reliable way to keep an outdoor enclosure dry."
+"about": "Hygrostat switching a heater on humidity rather than temperature, which is the more reliable way to keep an outdoor enclosure dry.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-panel-light",
@@ -1887,7 +2263,9 @@
 "rating": "230V",
 "poles": "Interior",
 "curve": "Door switch",
-"about": "Interior LED light, usually with a door switch, so maintenance inside a deep board does not depend on a hand torch."
+"about": "Interior LED light, usually with a door switch, so maintenance inside a deep board does not depend on a hand torch.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-panel-socket",
@@ -1897,7 +2275,9 @@
 "rating": "230V",
 "poles": "DIN or panel",
 "curve": "16A",
-"about": "Service socket inside the enclosure for test equipment and tools. It should be fed from its own protected circuit with RCD protection."
+"about": "Service socket inside the enclosure for test equipment and tools. It should be fed from its own protected circuit with RCD protection.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-door-interlock",
@@ -1907,7 +2287,9 @@
 "rating": "Set A",
 "poles": "Handle",
 "curve": "Mechanical",
-"about": "Mechanical door interlock preventing the enclosure being opened while the main switch is closed, with a defeat facility for authorised testing."
+"about": "Mechanical door interlock preventing the enclosure being opened while the main switch is closed, with a defeat facility for authorised testing.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 },
 {
 "id": "generic-estop",
@@ -1917,7 +2299,9 @@
 "rating": "22/40mm",
 "poles": "NC contacts",
 "curve": "Twist release",
-"about": "Latching emergency stop with positively-driven normally-closed contacts. It must break the control path directly, not merely request a stop from a controller."
+"about": "Latching emergency stop with positively-driven normally-closed contacts. It must break the control path directly, not merely request a stop from a controller.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "generic-push-button",
@@ -1927,7 +2311,9 @@
 "rating": "22mm",
 "poles": "NO/NC",
 "curve": "Panel door",
-"about": "22mm door-mounted push button for start, stop and reset commands. Contact blocks are ordered separately, so confirm how many NO and NC contacts each function needs."
+"about": "22mm door-mounted push button for start, stop and reset commands. Contact blocks are ordered separately, so confirm how many NO and NC contacts each function needs.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "schneider-xb4",
@@ -1937,7 +2323,9 @@
 "rating": "22mm",
 "poles": "NO/NC blocks",
 "curve": "Metal bezel",
-"about": "Metal-bezel control station range for doors, with a wide selection of heads and contact blocks that share one mounting cut-out."
+"about": "Metal-bezel control station range for doors, with a wide selection of heads and contact blocks that share one mounting cut-out.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "siemens-3su1",
@@ -1947,7 +2335,9 @@
 "rating": "22mm",
 "poles": "NO/NC blocks",
 "curve": "Plastic or metal",
-"about": "Modular door control range with plastic and metal versions, and connection options from screw terminals to an integrated bus module."
+"about": "Modular door control range with plastic and metal versions, and connection options from screw terminals to an integrated bus module.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "generic-selector",
@@ -1957,7 +2347,9 @@
 "rating": "22mm",
 "poles": "2/3 position",
 "curve": "Panel door",
-"about": "Panel door selector switch giving a positive two or three position choice such as hand-off-auto. Confirm the contact arrangement matches the control logic before drilling the door."
+"about": "Panel door selector switch giving a positive two or three position choice such as hand-off-auto. Confirm the contact arrangement matches the control logic before drilling the door.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "generic-indicator",
@@ -1967,7 +2359,9 @@
 "rating": "24/230V",
 "poles": "22mm",
 "curve": "LED",
-"about": "Pilot light showing run, trip or supply-healthy status on the door. LED versions draw far less current and last longer than filament equivalents."
+"about": "Pilot light showing run, trip or supply-healthy status on the door. LED versions draw far less current and last longer than filament equivalents.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "generic-ammeter",
@@ -1977,7 +2371,9 @@
 "rating": "Via CT",
 "poles": "1PH each",
 "curve": "Moving iron",
-"about": "Analogue ammeter giving an at-a-glance load indication on the door. Still favoured on motor panels because a swinging needle shows a struggling load better than a digital readout."
+"about": "Analogue ammeter giving an at-a-glance load indication on the door. Still favoured on motor panels because a swinging needle shows a struggling load better than a digital readout.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 },
 {
 "id": "generic-selector-ammeter",
@@ -1987,6 +2383,8 @@
 "rating": "Via CT",
 "poles": "3PH+off",
 "curve": "Shorting type",
-"about": "Ammeter selector letting one meter read each phase in turn. It must be the CT-shorting type so the transformer secondary is never opened while switching."
+"about": "Ammeter selector letting one meter read each phase in turn. It must be the CT-shorting type so the transformer secondary is never opened while switching.",
+"group": "door-devices",
+"groupName": "Door & Operator Devices"
 }
 ]

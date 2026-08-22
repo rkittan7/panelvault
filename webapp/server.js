@@ -14,11 +14,16 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createStorage } = require("./storage");
+const { createGeminiClient } = require("./gemini");
 
 const PORT = Number.parseInt(process.env.PORT || "8090", 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const SECRET_FILE = path.join(DATA_DIR, "secret");
+
+/** Shared with the iPhone apps — see assets/catalog/README.md. */
+const CATALOG_IMAGE_DIR = path.resolve(__dirname, "..", "assets", "catalog");
+const CATALOG_IMAGE_TYPES = new Set([".png", ".jpg", ".jpeg", ".webp", ".heic", ".json"]);
 
 const CATALOG = JSON.parse(fs.readFileSync(path.join(__dirname, "catalog.json"), "utf8"));
 const CATALOG_BY_ID = new Map(CATALOG.map((p) => [p.id, p]));
@@ -50,6 +55,7 @@ const SECRET = (() => {
 /** { companies: { [code]: company } } — cached in one server process. */
 let db = { companies: {} };
 const storage = createStorage({ dataDir: DATA_DIR });
+const gemini = createGeminiClient();
 
 function normalizeCompanies() {
   for (const company of Object.values(db.companies || {})) {
@@ -58,6 +64,7 @@ function normalizeCompanies() {
     company.partSettings ||= {};
     company.boards ||= [];
     company.barcodeMappings ||= [];
+    company.deliveries ||= [];
     // The role set gained Staff Manager and QA, and "worker" was renamed to
     // "staff". Migrate on load so existing sessions keep their access.
     for (const user of company.users || []) {
@@ -143,6 +150,12 @@ function normalizeMinorUnits(value) {
 
 function id(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+/** A phone's timestamp, or now when its clock sent us something unusable. */
+function isoDate(value) {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }
 
 /** Short human-shareable code, unambiguous alphabet. */
@@ -312,6 +325,71 @@ function appendMovement(company, movement) {
   return movement;
 }
 
+// ---------------------------------------------------------------- deliveries
+
+/** A confirmed delivery note: the paperwork a batch of receipts came from.
+ *
+ * Batches are evidence, not stock. The movements they created are the stock,
+ * and they upload through their own endpoint, so a batch never has to arrive
+ * in the same request — or even the same order — as its movements. That is
+ * why `movementIDs` is stored as written by the phone and only resolved when
+ * a batch is read: an offline queue that had to upload in a fixed order would
+ * stall the whole warehouse behind one failed request.
+ */
+const DELIVERY_SOURCES = ["scan", "manual", "stocktake"];
+
+function ensureDeliverySequences(company) {
+  let next = Math.max(1, Math.trunc(Number(company.nextDeliverySequence)) || 1);
+  for (const delivery of company.deliveries) {
+    if (!Number.isInteger(delivery.sequence) || delivery.sequence < 1) {
+      delivery.sequence = next;
+    }
+    next = Math.max(next, delivery.sequence + 1);
+  }
+  company.nextDeliverySequence = next;
+  return next - 1;
+}
+
+/** What a delivery did to stock, replayed from the movements that arrived.
+ *
+ * `movementsByID` is passed in when summarizing a whole list, so building the
+ * index does not repeat once per delivery.
+ */
+function deliveryTotals(company, delivery, movementsByID) {
+  const byID = movementsByID || new Map(company.movements.map((movement) => [movement.id, movement]));
+  const present = delivery.movementIDs.map((id) => byID.get(id)).filter(Boolean);
+  return {
+    movementCount: present.length,
+    // A batch whose movements have not all uploaded yet is still worth showing;
+    // saying so is more honest than quietly reporting a short total.
+    missingMovements: delivery.movementIDs.length - present.length,
+    unitCount: present.reduce((sum, movement) => sum + Math.abs(movement.quantity), 0),
+    movements: present,
+  };
+}
+
+/** List shape: enough to scan the history, without every OCR line. */
+function deliverySummary(company, delivery, movementsByID) {
+  const totals = deliveryTotals(company, delivery, movementsByID);
+  return {
+    id: delivery.id,
+    noteNumber: delivery.noteNumber,
+    supplier: delivery.supplier,
+    source: delivery.source,
+    scannedAt: delivery.scannedAt,
+    confirmedAt: delivery.confirmedAt,
+    uploadedAt: delivery.uploadedAt,
+    pageCount: delivery.pageCount,
+    lineCount: delivery.lines.length,
+    confirmedLineCount: delivery.lines.filter((line) => line.included).length,
+    movementCount: totals.movementCount,
+    missingMovements: totals.missingMovements,
+    unitCount: totals.unitCount,
+    userName: company.users.find((user) => user.id === delivery.userID)?.name || "",
+    deviceID: delivery.deviceID,
+  };
+}
+
 // ---------------------------------------------------------------- http plumbing
 
 function sendJSON(res, status, body, headers = {}) {
@@ -460,14 +538,46 @@ async function createCompanyAccount({ companyName, name, password }) {
     partSettings: {},
     boards: [],
     barcodeMappings: [],
+    deliveries: [],
   };
   db.companies[code] = company;
   await save();
   return { company, user: owner };
 }
 
+/** Companies holding an active invite with this code.
+ *
+ * Invite codes are minted globally unique, so this is normally empty or a
+ * single company. The array shape exists only so a legacy duplicate minted
+ * before that guarantee can be disambiguated by company code, rather than
+ * silently joining somebody to the wrong company. */
+function companiesWithInvite(inviteCode) {
+  const code = (inviteCode || "").trim().toUpperCase();
+  if (!code) return [];
+  return Object.values(db.companies).filter((company) =>
+    (company.invites || []).some((item) => item.code === code && item.active)
+  );
+}
+
+function inviteCodeTaken(code) {
+  return Object.values(db.companies).some((company) =>
+    (company.invites || []).some((item) => item.code === code)
+  );
+}
+
 async function joinCompanyAccount({ companyCode, inviteCode, name, password }) {
-  const company = db.companies[(companyCode || "").trim().toUpperCase()];
+  const code = (companyCode || "").trim().toUpperCase();
+  // The website asks for the invite code on its own — one code to type instead
+  // of two. A company code is still honoured when sent, so the iPhone apps and
+  // older invite links keep working with no change.
+  let company = code ? db.companies[code] : null;
+  if (!company && !code) {
+    const matches = companiesWithInvite(inviteCode);
+    if (matches.length > 1) {
+      throw accountError("That invite code matches more than one company. Add your company code.");
+    }
+    company = matches[0] || null;
+  }
   const invite = company?.invites.find(
     (item) => item.code === (inviteCode || "").trim().toUpperCase() && item.active
   );
@@ -500,6 +610,15 @@ const routes = {
 
   "GET /api/health": async (_req, res) => {
     sendJSON(res, 200, { ok: true, storage: storage.kind });
+  },
+
+  "POST /api/ai/generate": async (req, res) => {
+    const { prompt } = await readBody(req);
+    const result = await gemini.generate(prompt, {
+      systemInstruction:
+        "You are PanelVault's electrical-panel and warehouse assistant. Be concise, practical, and explicit when a qualified electrician must verify safety-critical information.",
+    });
+    sendJSON(res, 200, result);
   },
 
   /** Owner registers the company and becomes its first admin. */
@@ -607,6 +726,15 @@ const routes = {
             };
           })()
         : undefined,
+      // Newest first, and summarized — the OCR lines live behind /api/delivery
+      // so a company with a year of paperwork does not ship it on every load.
+      deliveries: (() => {
+        const movementsByID = new Map(company.movements.map((m) => [m.id, m]));
+        return [...company.deliveries]
+          .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt))
+          .slice(0, 100)
+          .map((delivery) => deliverySummary(company, delivery, movementsByID));
+      })(),
       customParts: company.customParts,
       members: admin ? company.users.map(publicUser) : undefined,
       invites: admin ? company.invites.filter((i) => i.active) : undefined,
@@ -678,18 +806,13 @@ const routes = {
       if (!Number.isFinite(quantity) || quantity === 0 || Math.abs(quantity) > 100000) {
         return fail(res, 400, "A movement has an invalid quantity.");
       }
-      const parsedDate = new Date(incoming.date);
-      const date = Number.isFinite(parsedDate.getTime())
-        ? parsedDate.toISOString()
-        : new Date().toISOString();
-
       validated.push({
         id: movementID,
         partID: incoming.partID,
         kind: incoming.kind,
         quantity: incoming.kind === "adjust" ? quantity : Math.abs(quantity),
         reference: String(incoming.reference || "").trim().slice(0, 240),
-        date,
+        date: isoDate(incoming.date),
         deviceID: String(incoming.deviceID || "").trim().slice(0, 100),
         userID: user.id,
       });
@@ -727,6 +850,145 @@ const routes = {
     });
   },
 
+  "POST /api/sync/deliveries": async (req, res, session) => {
+    const { company, user } = session;
+    const { deliveries } = await readBody(req);
+    if (!Array.isArray(deliveries) || deliveries.length > 50) {
+      return fail(res, 400, "Send an array of at most 50 deliveries.");
+    }
+
+    ensureDeliverySequences(company);
+    const existingIDs = new Set(company.deliveries.map((delivery) => delivery.id));
+    const acceptedIDs = [];
+    const duplicateIDs = [];
+    const validated = [];
+
+    for (const incoming of deliveries) {
+      const deliveryID = String(incoming.id || "").trim();
+      if (!/^[A-Za-z0-9-]{8,100}$/.test(deliveryID)) {
+        return fail(res, 400, "A delivery has an invalid id.");
+      }
+      // Confirmed paperwork is immutable, like the movements it produced: a
+      // retry re-sends the same batch, and re-sending must never rewrite it.
+      if (existingIDs.has(deliveryID)) {
+        duplicateIDs.push(deliveryID);
+        continue;
+      }
+      if (!Array.isArray(incoming.lines) || incoming.lines.length > 500) {
+        return fail(res, 400, "A delivery has an invalid line list.");
+      }
+      if (!Array.isArray(incoming.movementIDs) || incoming.movementIDs.length > 500) {
+        return fail(res, 400, "A delivery has an invalid movement list.");
+      }
+
+      const lines = [];
+      for (const line of incoming.lines) {
+        const partID = line.partID == null ? null : String(line.partID);
+        // An unmatched line is the point of the review screen, so null is
+        // valid — but a named part that this company does not have is not.
+        if (partID !== null && !partFor(company, partID)) {
+          return fail(res, 400, "A delivery line references an unknown part.");
+        }
+        const quantity = Math.trunc(Number(line.quantity));
+        if (!Number.isFinite(quantity) || quantity < 0 || quantity > 100000) {
+          return fail(res, 400, "A delivery line has an invalid quantity.");
+        }
+        lines.push({
+          rawText: String(line.rawText || "").trim().slice(0, 400),
+          quantity,
+          partID,
+          included: Boolean(line.included),
+          movementID: line.movementID ? String(line.movementID).trim().slice(0, 100) : null,
+        });
+      }
+
+      const movementIDs = [];
+      for (const rawID of incoming.movementIDs) {
+        const movementID = String(rawID || "").trim();
+        if (!/^[A-Za-z0-9-]{8,100}$/.test(movementID)) {
+          return fail(res, 400, "A delivery references an invalid movement id.");
+        }
+        movementIDs.push(movementID);
+      }
+
+      const pageCount = Math.trunc(Number(incoming.pageCount)) || 0;
+      validated.push({
+        id: deliveryID,
+        noteNumber: String(incoming.noteNumber || "").trim().slice(0, 120),
+        supplier: String(incoming.supplier || "").trim().slice(0, 160),
+        source: DELIVERY_SOURCES.includes(incoming.source) ? incoming.source : "manual",
+        scannedAt: isoDate(incoming.scannedAt),
+        confirmedAt: isoDate(incoming.confirmedAt),
+        // Server clock, so "when did the boss actually see this" is answerable
+        // even when a phone has been offline in a van for two days.
+        uploadedAt: new Date().toISOString(),
+        pageCount: Math.min(Math.max(pageCount, 0), 100),
+        lines,
+        movementIDs,
+        deviceID: String(incoming.deviceID || "").trim().slice(0, 100),
+        // Whoever's session uploaded it — never a user id from the body.
+        userID: user.id,
+      });
+      existingIDs.add(deliveryID);
+    }
+
+    for (const delivery of validated) {
+      delivery.sequence = company.nextDeliverySequence++;
+      company.deliveries.push(delivery);
+      acceptedIDs.push(delivery.id);
+    }
+
+    if (acceptedIDs.length) await save();
+    sendJSON(res, 200, {
+      acceptedIDs,
+      duplicateIDs,
+      latestSequence: ensureDeliverySequences(company),
+    });
+  },
+
+  "GET /api/sync/deliveries": async (req, res, session) => {
+    const { company } = session;
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const after = Math.max(0, Math.trunc(Number(url.searchParams.get("after"))) || 0);
+    const latestSequence = ensureDeliverySequences(company);
+    const deliveries = company.deliveries
+      .filter((delivery) => delivery.sequence > after)
+      .sort((a, b) => a.sequence - b.sequence)
+      .slice(0, 200);
+    sendJSON(res, 200, {
+      deliveries,
+      latestSequence,
+      hasMore: deliveries.length === 200 && deliveries.at(-1).sequence < latestSequence,
+    });
+  },
+
+  /** One delivery in full: every read line, matched or not, and what it did. */
+  "GET /api/delivery": async (req, res, session) => {
+    const { company } = session;
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const delivery = company.deliveries.find((item) => item.id === url.searchParams.get("id"));
+    if (!delivery) return fail(res, 404, "No such delivery.");
+    const totals = deliveryTotals(company, delivery);
+    sendJSON(res, 200, {
+      delivery: {
+        ...deliverySummary(company, delivery),
+        lines: delivery.lines.map((line) => ({
+          ...line,
+          partName: line.partID
+            ? (() => {
+                const part = partFor(company, line.partID);
+                return part ? `${part.manufacturer} ${part.model}` : line.partID;
+              })()
+            : "",
+        })),
+        movements: totals.movements.map((movement) => ({
+          ...movement,
+          partName: partFor(company, movement.partID)?.model || movement.partID,
+        })),
+      },
+    });
+  },
+
   "POST /api/sync/barcodes": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can teach barcodes.");
@@ -746,16 +1008,13 @@ const routes = {
       if (!Number.isFinite(packageQuantity) || packageQuantity < 1 || packageQuantity > 100000) {
         return fail(res, 400, "A barcode has an invalid package quantity.");
       }
-      const parsedDate = new Date(incoming.updatedAt);
       validated.push({
         code,
         symbology: String(incoming.symbology || "barcode").trim().slice(0, 60),
         partID: incoming.partID,
         packageQuantity,
         boxLabel: String(incoming.boxLabel || "").trim().slice(0, 160),
-        updatedAt: Number.isFinite(parsedDate.getTime())
-          ? parsedDate.toISOString()
-          : new Date().toISOString(),
+        updatedAt: isoDate(incoming.updatedAt),
         updatedByDeviceID: String(incoming.updatedByDeviceID || "").trim().slice(0, 100),
         updatedByUserID: user.id,
       });
@@ -924,8 +1183,13 @@ const routes = {
     if (!allowed.includes(role)) {
       return fail(res, 403, `You can invite: ${allowed.join(", ") || "nobody"}.`);
     }
+    // Globally unique, so a joiner can be resolved from the invite code alone.
+    let inviteCode;
+    do {
+      inviteCode = shortCode(8);
+    } while (inviteCodeTaken(inviteCode));
     const invite = {
-      code: shortCode(8),
+      code: inviteCode,
       role,
       active: true,
       createdBy: user.id,
@@ -983,6 +1247,10 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".heic": "image/heic",
 };
 
 function serveStatic(req, res, urlPath) {
@@ -994,6 +1262,38 @@ function serveStatic(req, res, urlPath) {
   }
   const ext = path.extname(filePath);
   res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+  fs.createReadStream(filePath).pipe(res);
+}
+
+/** Component and manufacturer photos, served straight out of assets/catalog.
+ *
+ * The same folder is what the three iPhone apps bundle, so the browser and the
+ * phones cannot drift onto different pictures of the same part. Nothing here
+ * is generated into public/ — one copy of each photo exists in the repo, and
+ * this is it.
+ *
+ * Unauthenticated on purpose: these are catalog pictures of products, the same
+ * for every company on the server, and gating them behind a session would mean
+ * no logo could render on the sign-in screen.
+ */
+function serveCatalogImage(req, res, urlPath) {
+  const relative = decodeURIComponent(urlPath.slice("/catalog-images/".length));
+  const filePath = path.resolve(CATALOG_IMAGE_DIR, relative);
+  // path.resolve collapses `..`, so this rejects anything that climbed out.
+  if (filePath !== CATALOG_IMAGE_DIR && !filePath.startsWith(CATALOG_IMAGE_DIR + path.sep)) {
+    return fail(res, 403, "no");
+  }
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    return fail(res, 404, "No such image.");
+  }
+  const ext = path.extname(filePath).toLowerCase();
+  if (!CATALOG_IMAGE_TYPES.has(ext)) return fail(res, 403, "no");
+  res.writeHead(200, {
+    "Content-Type": MIME[ext] || "application/octet-stream",
+    // Photos change only when someone drops a new file in and redeploys, and
+    // the manifest is re-fetched on every page load, so a long cache is safe.
+    "Cache-Control": ext === ".json" ? "no-cache" : "public, max-age=86400",
+  });
   fs.createReadStream(filePath).pipe(res);
 }
 
@@ -1021,6 +1321,10 @@ const server = http.createServer(async (req, res) => {
       return await invoke();
     }
     if (url.pathname.startsWith("/api/")) return fail(res, 404, "No such endpoint.");
+    if (url.pathname.startsWith("/catalog-images/")) {
+      if (req.method !== "GET") return fail(res, 405, "No such endpoint.");
+      return serveCatalogImage(req, res, url.pathname);
+    }
     return serveStatic(req, res, url.pathname);
   } catch (error) {
     return fail(res, error.statusCode || 400, error.message || "Bad request.");

@@ -36,6 +36,27 @@ struct WarehouseSyncMetadata: Codable, Equatable {
   var companyCode = ""
   var syncedMovementIDs: Set<String> = []
   var lastSequence = 0
+  var syncedDeliveryIDs: Set<String> = []
+  var lastDeliverySequence = 0
+
+  // Added after the first shipped version, so decoding an older file must not
+  // fail — a phone that loses its metadata re-uploads everything it has.
+  enum CodingKeys: String, CodingKey {
+    case companyCode, syncedMovementIDs, lastSequence, syncedDeliveryIDs, lastDeliverySequence
+  }
+
+  init(companyCode: String = "") {
+    self.companyCode = companyCode
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    companyCode = try container.decodeIfPresent(String.self, forKey: .companyCode) ?? ""
+    syncedMovementIDs = try container.decodeIfPresent(Set<String>.self, forKey: .syncedMovementIDs) ?? []
+    lastSequence = try container.decodeIfPresent(Int.self, forKey: .lastSequence) ?? 0
+    syncedDeliveryIDs = try container.decodeIfPresent(Set<String>.self, forKey: .syncedDeliveryIDs) ?? []
+    lastDeliverySequence = try container.decodeIfPresent(Int.self, forKey: .lastDeliverySequence) ?? 0
+  }
 }
 
 struct CloudMovement: Codable {
@@ -74,6 +95,77 @@ struct CloudMovement: Codable {
   }
 }
 
+/// Wire shape of a confirmed delivery. Dates travel as strings, like movements,
+/// so a server that only speaks ISO-8601 never has to guess an encoding.
+struct CloudDeliveryBatch: Codable {
+  struct Line: Codable {
+    let rawText: String
+    let quantity: Int
+    let partID: String?
+    let included: Bool
+    let movementID: String?
+  }
+
+  let id: String
+  let noteNumber: String
+  let supplier: String
+  let source: String
+  let scannedAt: String
+  let confirmedAt: String
+  let pageCount: Int
+  let lines: [Line]
+  let movementIDs: [String]
+  let deviceID: String?
+  let sequence: Int?
+
+  init(_ batch: DeliveryBatch) {
+    id = batch.id
+    noteNumber = batch.noteNumber
+    supplier = batch.supplier
+    source = batch.source.rawValue
+    scannedAt = ISO8601DateFormatter.warehouse.string(from: batch.scannedAt)
+    confirmedAt = ISO8601DateFormatter.warehouse.string(from: batch.confirmedAt)
+    pageCount = batch.pageCount
+    lines = batch.lines.map {
+      Line(rawText: $0.rawText, quantity: $0.quantity, partID: $0.partID,
+           included: $0.included, movementID: $0.movementID)
+    }
+    movementIDs = batch.movementIDs
+    deviceID = batch.deviceID
+    sequence = nil
+  }
+
+  var localBatch: DeliveryBatch? {
+    guard let scanned = CloudDeliveryBatch.date(from: scannedAt),
+          let confirmed = CloudDeliveryBatch.date(from: confirmedAt) else { return nil }
+    return DeliveryBatch(
+      id: id,
+      noteNumber: noteNumber,
+      supplier: supplier,
+      source: DeliveryBatch.Source(rawValue: source) ?? .manual,
+      scannedAt: scanned,
+      confirmedAt: confirmed,
+      pageCount: pageCount,
+      lines: lines.enumerated().map { index, line in
+        DeliveryBatch.Line(
+          id: line.movementID ?? "\(id)-\(index)",
+          rawText: line.rawText,
+          quantity: line.quantity,
+          partID: line.partID,
+          included: line.included,
+          movementID: line.movementID
+        )
+      },
+      movementIDs: movementIDs,
+      deviceID: deviceID ?? "cloud"
+    )
+  }
+
+  private static func date(from text: String) -> Date? {
+    ISO8601DateFormatter.warehouse.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  }
+}
+
 struct CloudLoginResponse: Decodable {
   struct Company: Decodable { let code: String; let name: String }
   struct User: Decodable { let id: String; let name: String; let role: String }
@@ -98,12 +190,44 @@ struct CloudDownloadResponse: Decodable {
   let barcodeMappings: [BarcodeMapping]
 }
 
+struct CloudDeliveryUploadResponse: Decodable {
+  let acceptedIDs: [String]
+  let duplicateIDs: [String]
+  let latestSequence: Int
+}
+
+struct CloudDeliveryDownloadResponse: Decodable {
+  let deliveries: [CloudDeliveryBatch]
+  let latestSequence: Int
+  let hasMore: Bool
+}
+
 struct CloudBarcodeResponse: Decodable {
   let barcodeMappings: [BarcodeMapping]
 }
 
 struct CloudPartsResponse: Decodable {
   let customParts: [CatalogPart]
+}
+
+struct WarehouseCloudInvite {
+  let companyCode: String
+  let inviteCode: String
+
+  static func parse(companyCode rawCompany: String, invite rawInvite: String) throws -> WarehouseCloudInvite {
+    let fallbackCompany = rawCompany.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let inviteText = rawInvite.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let url = URL(string: inviteText), let fragment = url.fragment {
+      let parts = fragment.split(separator: "/").map(String.init)
+      if parts.count >= 3, parts[0].lowercased() == "join" {
+        return WarehouseCloudInvite(companyCode: parts[1].uppercased(), inviteCode: parts[2].uppercased())
+      }
+    }
+    guard !fallbackCompany.isEmpty, !inviteText.isEmpty else {
+      throw WarehouseCloudError.server("Paste the invite link, or enter both company and invite codes.")
+    }
+    return WarehouseCloudInvite(companyCode: fallbackCompany, inviteCode: inviteText.uppercased())
+  }
 }
 
 enum WarehouseCloudError: LocalizedError {
@@ -136,8 +260,50 @@ struct WarehouseCloudClient {
       body: payload,
       token: nil
     )
-    return WarehouseCloudAccount(
-      baseURL: normalized.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+    return account(from: response, baseURL: normalized)
+  }
+
+  func createCompany(baseURL: String, companyName: String, name: String, password: String) async throws -> WarehouseCloudAccount {
+    let normalized = try normalizedBaseURL(baseURL)
+    let payload = ["companyName": companyName, "name": name, "password": password]
+    let response: CloudLoginResponse = try await request(
+      baseURL: normalized,
+      path: "/api/mobile/company",
+      method: "POST",
+      body: payload,
+      token: nil
+    )
+    return account(from: response, baseURL: normalized)
+  }
+
+  func joinCompany(
+    baseURL: String,
+    companyCode: String,
+    inviteCode: String,
+    name: String,
+    password: String
+  ) async throws -> WarehouseCloudAccount {
+    let normalized = try normalizedBaseURL(baseURL)
+    let invite = try WarehouseCloudInvite.parse(companyCode: companyCode, invite: inviteCode)
+    let payload = [
+      "companyCode": invite.companyCode,
+      "inviteCode": invite.inviteCode,
+      "name": name,
+      "password": password,
+    ]
+    let response: CloudLoginResponse = try await request(
+      baseURL: normalized,
+      path: "/api/mobile/join",
+      method: "POST",
+      body: payload,
+      token: nil
+    )
+    return account(from: response, baseURL: normalized)
+  }
+
+  private func account(from response: CloudLoginResponse, baseURL: URL) -> WarehouseCloudAccount {
+    WarehouseCloudAccount(
+      baseURL: baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
       token: response.token,
       expiresAt: response.expiresAt,
       companyCode: response.company.code,
@@ -162,6 +328,32 @@ struct WarehouseCloudClient {
     try await request(
       baseURL: try normalizedBaseURL(account.baseURL),
       path: "/api/sync/movements?after=\(sequence)",
+      method: "GET",
+      body: Optional<String>.none,
+      token: account.token
+    )
+  }
+
+  func uploadDeliveries(
+    _ deliveries: [DeliveryBatch],
+    account: WarehouseCloudAccount
+  ) async throws -> CloudDeliveryUploadResponse {
+    try await request(
+      baseURL: try normalizedBaseURL(account.baseURL),
+      path: "/api/sync/deliveries",
+      method: "POST",
+      body: ["deliveries": deliveries.map(CloudDeliveryBatch.init)],
+      token: account.token
+    )
+  }
+
+  func downloadDeliveries(
+    after sequence: Int,
+    account: WarehouseCloudAccount
+  ) async throws -> CloudDeliveryDownloadResponse {
+    try await request(
+      baseURL: try normalizedBaseURL(account.baseURL),
+      path: "/api/sync/deliveries?after=\(sequence)",
       method: "GET",
       body: Optional<String>.none,
       token: account.token
@@ -200,7 +392,21 @@ struct WarehouseCloudClient {
     guard let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
       throw WarehouseCloudError.invalidServer
     }
+    if url.scheme?.lowercased() == "http", !Self.isPrivateDevelopmentHost(url.host ?? "") {
+      throw WarehouseCloudError.invalidServer
+    }
     return url
+  }
+
+  private static func isPrivateDevelopmentHost(_ rawHost: String) -> Bool {
+    let host = rawHost.lowercased()
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local") {
+      return true
+    }
+    let octets = host.split(separator: ".").compactMap { Int($0) }
+    guard octets.count == 4 else { return false }
+    if octets[0] == 10 || (octets[0] == 192 && octets[1] == 168) { return true }
+    return octets[0] == 172 && (16...31).contains(octets[1])
   }
 
   private func request<Response: Decodable, Body: Encodable>(

@@ -6,7 +6,7 @@ struct ReceiveView: View {
   @EnvironmentObject private var store: WarehouseStore
   @State private var scanning = false
   @State private var processing = false
-  @State private var reviewLines: [ParsedDeliveryLine]?
+  @State private var review: DeliveryScan?
   @State private var manualPart: CatalogPart?
   @State private var pickingManual = false
 
@@ -55,6 +55,18 @@ struct ReceiveView: View {
               .tint(theme.secondary)
             }
           }
+
+          if !store.recentDeliveries.isEmpty {
+            GlassCard(theme: theme) {
+              VStack(alignment: .leading, spacing: 10) {
+                Label("Confirmed deliveries", systemImage: "shippingbox.fill")
+                  .font(.headline.weight(.heavy))
+                ForEach(store.recentDeliveries.prefix(5)) { delivery in
+                  DeliveryHistoryRow(theme: theme, delivery: delivery)
+                }
+              }
+            }
+          }
         }
         .padding(18)
       }
@@ -63,12 +75,16 @@ struct ReceiveView: View {
       .fullScreenCover(isPresented: $scanning) {
         DocumentScanner { pages in
           processing = true
-          Task { [customParts = store.customParts] in
+          // The moment the paper was photographed, kept separately from the
+          // moment it was confirmed: reviewing a long note takes minutes, and
+          // the delivery record should say when each happened.
+          let scannedAt = Date()
+          Task { [customParts = store.customParts, pageCount = pages.count] in
             let lines = await DeliveryNoteOCR.recognizeLines(in: pages)
             let parsed = DeliveryNoteParser.parse(lines: lines, extraParts: customParts)
             await MainActor.run {
               processing = false
-              reviewLines = parsed
+              review = DeliveryScan(scannedAt: scannedAt, pageCount: pageCount, lines: parsed)
             }
           }
         }
@@ -83,16 +99,52 @@ struct ReceiveView: View {
         ManualReceiveSheet(theme: theme, part: part)
           .presentationDetents([.medium])
       }
-      .sheet(isPresented: Binding(
-        get: { reviewLines != nil },
-        set: { if !$0 { reviewLines = nil } }
-      )) {
-        if let lines = reviewLines {
-          ScanReviewView(theme: theme, lines: lines) {
-            reviewLines = nil
-          }
+      .sheet(item: $review) { scan in
+        ScanReviewView(theme: theme, scan: scan) {
+          review = nil
         }
       }
+    }
+  }
+}
+
+/// One completed camera pass, waiting to be reviewed.
+struct DeliveryScan: Identifiable {
+  let id = UUID()
+  let scannedAt: Date
+  let pageCount: Int
+  let lines: [ParsedDeliveryLine]
+}
+
+/// One confirmed delivery, as the worker who confirmed it sees it afterwards.
+struct DeliveryHistoryRow: View {
+  let theme: WarehouseTheme
+  let delivery: DeliveryBatch
+
+  private var subtitle: String {
+    let skipped = delivery.lines.count - delivery.lines.filter(\.included).count
+    var parts = [delivery.confirmedAt.formatted(date: .abbreviated, time: .shortened)]
+    if delivery.pageCount > 0 {
+      parts.append("\(delivery.pageCount) page\(delivery.pageCount == 1 ? "" : "s")")
+    }
+    if skipped > 0 { parts.append("\(skipped) not received") }
+    return parts.joined(separator: " · ")
+  }
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(delivery.title)
+          .font(.subheadline.weight(.heavy))
+          .lineLimit(1)
+        Text(subtitle)
+          .font(.caption)
+          .foregroundStyle(theme.mutedText)
+      }
+      Spacer(minLength: 8)
+      Text("+\(delivery.receivedUnits)")
+        .font(.subheadline.weight(.black))
+        .foregroundStyle(theme.positive)
     }
   }
 }
@@ -145,11 +197,20 @@ struct ManualReceiveSheet: View {
 /// with its match and quantity, correctable, and nothing applies until Confirm.
 struct ScanReviewView: View {
   let theme: WarehouseTheme
-  @State var lines: [ParsedDeliveryLine]
+  let scan: DeliveryScan
   let onDone: () -> Void
   @EnvironmentObject private var store: WarehouseStore
+  @State private var lines: [ParsedDeliveryLine]
   @State private var deliveryReference = ""
+  @State private var supplier = ""
   @State private var correctingLine: UUID?
+
+  init(theme: WarehouseTheme, scan: DeliveryScan, onDone: @escaping () -> Void) {
+    self.theme = theme
+    self.scan = scan
+    self.onDone = onDone
+    _lines = State(initialValue: scan.lines)
+  }
 
   private var includedCount: Int {
     lines.filter { $0.include && $0.matchedPartID != nil }.count
@@ -161,6 +222,11 @@ struct ScanReviewView: View {
         Section {
           TextField("Delivery note number (optional)", text: $deliveryReference)
             .listRowBackground(theme.surface)
+          TextField("Supplier (optional)", text: $supplier)
+            .listRowBackground(theme.surface)
+        } footer: {
+          Text("\(scan.pageCount) page\(scan.pageCount == 1 ? "" : "s") scanned. Everything read is kept with the delivery, including the lines you leave off.")
+            .foregroundStyle(theme.mutedText)
         }
         Section("\(lines.count) lines read — confirm what arrived") {
           ForEach($lines) { $line in
@@ -181,19 +247,7 @@ struct ScanReviewView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
           Button("Confirm \(includedCount)") {
-            let reference = deliveryReference.trimmingCharacters(in: .whitespaces)
-            let batch = lines
-              .filter { $0.include }
-              .compactMap { line -> StockMovement? in
-                guard let partID = line.matchedPartID, line.quantity > 0 else { return nil }
-                return StockMovement(
-                  partID: partID,
-                  kind: .receive,
-                  quantity: line.quantity,
-                  reference: reference.isEmpty ? "Scanned delivery" : reference
-                )
-              }
-            store.append(batch)
+            confirm()
             onDone()
           }
           .fontWeight(.black)
@@ -216,6 +270,53 @@ struct ScanReviewView: View {
     }
     .preferredColorScheme(.dark)
     .interactiveDismissDisabled()
+  }
+
+  /// Turns the reviewed screen into stock plus the paperwork behind it.
+  ///
+  /// Every line the camera read is recorded, not just the accepted ones — the
+  /// question the boss asks later is usually "what did it say?", and a record
+  /// that dropped the rejected lines cannot answer it.
+  private func confirm() {
+    let reference = deliveryReference.trimmingCharacters(in: .whitespaces)
+    var movements: [StockMovement] = []
+    var batchLines: [DeliveryBatch.Line] = []
+
+    for line in lines {
+      let receiving = line.include && line.matchedPartID != nil && line.quantity > 0
+      var movementID: String?
+      if receiving, let partID = line.matchedPartID {
+        let movement = StockMovement(
+          partID: partID,
+          kind: .receive,
+          quantity: line.quantity,
+          reference: reference.isEmpty ? "Scanned delivery" : reference
+        )
+        movements.append(movement)
+        movementID = movement.id
+      }
+      batchLines.append(DeliveryBatch.Line(
+        id: line.id.uuidString,
+        rawText: line.rawText,
+        quantity: line.quantity,
+        partID: line.matchedPartID,
+        included: receiving,
+        movementID: movementID
+      ))
+    }
+
+    store.confirm(
+      DeliveryBatch(
+        noteNumber: reference,
+        supplier: supplier.trimmingCharacters(in: .whitespaces),
+        source: .scan,
+        scannedAt: scan.scannedAt,
+        pageCount: scan.pageCount,
+        lines: batchLines,
+        movementIDs: movements.map(\.id)
+      ),
+      movements: movements
+    )
   }
 }
 

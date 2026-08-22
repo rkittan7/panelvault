@@ -9,7 +9,15 @@ targets:
   Warehouse:
     type: application
     platform: iOS
-    sources: [Sources]
+    sources:
+      - Sources
+      # The shared catalog photos, bundled as a folder reference rather than
+      # copied in: one set of files in the repo serves this app, PanelVault,
+      # the Worker app and the website. Arrives in the bundle as `catalog/`,
+      # which is the path CatalogImageLibrary reads.
+      - path: ../assets/catalog
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.panelvault.warehouse

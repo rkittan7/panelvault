@@ -91,14 +91,18 @@ struct StockRow: View {
   var body: some View {
     GlassCard(theme: theme, padding: 12) {
       HStack(spacing: 12) {
+        CatalogPartThumb(theme: theme, part: entry.part)
         VStack(alignment: .leading, spacing: 4) {
           Text(entry.part.displayName)
             .font(.subheadline.weight(.heavy))
             .lineLimit(1)
-          Text("\(entry.part.type) • \(entry.part.rating)")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(theme.mutedText)
-            .lineLimit(1)
+          HStack(spacing: 6) {
+            CatalogBrandMark(manufacturer: entry.part.manufacturer)
+            Text("\(entry.part.type) • \(entry.part.rating)")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(theme.mutedText)
+              .lineLimit(1)
+          }
           if let serialNumber = entry.part.serialNumber, !serialNumber.isEmpty {
             Text("Serial: \(serialNumber)")
               .font(.caption2.weight(.bold))
@@ -146,10 +150,15 @@ struct PartPickerSheet: View {
     return store.allParts.filter { $0.searchText.contains(trimmed) }
   }
 
+  private var canCreatePart: Bool {
+    guard let role = store.account?.role else { return true }
+    return role == "owner" || role == "manager"
+  }
+
   var body: some View {
     NavigationStack {
       List {
-        if results.isEmpty {
+        if results.isEmpty && canCreatePart {
           Section {
             Button {
               creating = true
@@ -168,13 +177,17 @@ struct PartPickerSheet: View {
             onPick(part)
             dismiss()
           } label: {
-            HStack {
+            HStack(spacing: 10) {
+              CatalogPartThumb(theme: theme, part: part, size: 34)
               VStack(alignment: .leading, spacing: 3) {
                 Text(part.displayName)
                   .font(.subheadline.weight(.heavy))
-                Text("\(part.type) • \(part.rating)")
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(theme.mutedText)
+                HStack(spacing: 6) {
+                  CatalogBrandMark(manufacturer: part.manufacturer, height: 11)
+                  Text("\(part.type) • \(part.rating)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(theme.mutedText)
+                }
               }
               if part.id.hasPrefix("custom-") {
                 Spacer()
@@ -195,11 +208,13 @@ struct PartPickerSheet: View {
         ToolbarItem(placement: .topBarLeading) {
           Button("Cancel") { dismiss() }
         }
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            creating = true
-          } label: {
-            Image(systemName: "plus")
+        if canCreatePart {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button {
+              creating = true
+            } label: {
+              Image(systemName: "plus")
+            }
           }
         }
       }

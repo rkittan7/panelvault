@@ -33,58 +33,80 @@
           <p>The company warehouse, from anywhere.</p>
         </div>
 
-        <div class="auth-card">
-          <div class="seg" role="tablist">
-            <button data-tab="login" class="active">Sign in</button>
-            <button data-tab="create">New company</button>
-            <button data-tab="join">Invite</button>
-          </div>
+        <div class="seg" role="tablist" aria-label="Sign in or sign up">
+          <button data-tab="signin" class="active" type="button" role="tab" aria-selected="true" aria-controls="form-signin">Sign in</button>
+          <button data-tab="signup" type="button" role="tab" aria-selected="false" aria-controls="form-signup">Sign up</button>
+        </div>
 
-          <form id="form-login" class="auth-form">
-            <label>Company code
+        <form id="form-signin" class="auth-form" role="tabpanel">
+          <div class="ios-group">
+            <label class="ios-row">
+              <span>Company</span>
               <input name="companyCode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="K7M2XQ" required>
             </label>
-            <label>Your name
-              <input name="name" autocomplete="username" required>
+            <label class="ios-row">
+              <span>Name</span>
+              <input name="name" autocomplete="username" placeholder="Your name" required>
             </label>
-            <label>Password
-              <input name="password" type="password" autocomplete="current-password" required>
+            <label class="ios-row">
+              <span>Password</span>
+              <input name="password" type="password" autocomplete="current-password" placeholder="Required" required>
             </label>
-            <button class="btn-primary" type="submit">Sign in</button>
-          </form>
+          </div>
+          <button class="btn-ios" type="submit">Sign in</button>
+        </form>
 
-          <form id="form-create" class="auth-form hidden">
-            <label>Company name
-              <input name="companyName" placeholder="Kittan Electric" required>
-            </label>
-            <label>Your name
-              <input name="name" required>
-            </label>
-            <label>Password
-              <input name="password" type="password" minlength="6" autocomplete="new-password" required>
-            </label>
-            <p class="hint">You become the owner. You'll get a company code and invite links for your team.</p>
-            <button class="btn-primary" type="submit">Create company</button>
-          </form>
+        <form id="form-signup" class="auth-form hidden" role="tabpanel">
+          <div class="ios-group" id="signup-mode" role="radiogroup" aria-label="How are you signing up?">
+            <button type="button" class="ios-row choice active" data-mode="join" role="radio" aria-checked="true">
+              <span class="choice-text">
+                <strong>Join a team</strong>
+                <small>You were sent an invite code</small>
+              </span>
+              <svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            </button>
+            <button type="button" class="ios-row choice" data-mode="create" role="radio" aria-checked="false">
+              <span class="choice-text">
+                <strong>Start a company</strong>
+                <small>You're the boss, setting it up</small>
+              </span>
+              <svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            </button>
+          </div>
 
-          <form id="form-join" class="auth-form hidden">
-            <label>Company code
-              <input name="companyCode" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+          <div class="ios-group" id="signup-join">
+            <label class="ios-row">
+              <span>Invite code</span>
+              <input name="inviteCode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="From your boss" required>
             </label>
-            <label>Invite code
-              <input name="inviteCode" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
-            </label>
-            <label>Your name
-              <input name="name" required>
-            </label>
-            <label>Choose a password
-              <input name="password" type="password" minlength="6" autocomplete="new-password" required>
-            </label>
-            <button class="btn-primary" type="submit">Join company</button>
-          </form>
+            <!-- Filled only by a /#join/COMPANY/INVITE link. Left empty otherwise,
+                 and the server then resolves the company from the invite code. -->
+            <input type="hidden" name="companyCode">
+          </div>
 
-          <p id="auth-error" class="form-error hidden" role="alert"></p>
-        </div>
+          <div class="ios-group hidden" id="signup-create">
+            <label class="ios-row">
+              <span>Company</span>
+              <input name="companyName" placeholder="Kittan Electric" required disabled>
+            </label>
+          </div>
+
+          <div class="ios-group">
+            <label class="ios-row">
+              <span>Name</span>
+              <input name="name" placeholder="Your name" required>
+            </label>
+            <label class="ios-row">
+              <span>Password</span>
+              <input name="password" type="password" minlength="6" autocomplete="new-password" placeholder="6+ characters" required>
+            </label>
+          </div>
+
+          <p class="ios-foot" id="signup-hint">Your boss creates the invite code in Team. Ask for one if you don't have it yet.</p>
+          <button class="btn-ios" type="submit">Create account</button>
+        </form>
+
+        <p id="auth-error" class="form-error hidden" role="alert"></p>
       </div>
     </section>
 
@@ -134,6 +156,8 @@
       <div class="content">
         <div id="view-dashboard" class="view"></div>
         <div id="view-stock" class="view hidden"></div>
+        <div id="view-catalog" class="view hidden"></div>
+        <div id="view-deliveries" class="view hidden"></div>
         <div id="view-boards" class="view hidden"></div>
         <div id="view-team" class="view hidden"></div>
       </div>

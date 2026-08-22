@@ -137,6 +137,7 @@ FILES = {
         "CustomerContactRecord", "CompanyRecord", "ManufacturerRecord",
         "SchemeRecord", "PersonalChecklistRecord",
     ],
+    "CatalogImages.swift": ["CatalogImageLibrary"],
     "Cloud.swift": [
         "PanelCloudAccount", "PanelCloudLoginResponse", "PanelCloudMovement",
         "PanelCloudDownloadResponse", "PanelCloudError", "PanelCloudClient",
@@ -158,6 +159,7 @@ IMPORTS = {
     "Catalog.swift": ["SwiftUI", "PhotosUI"],
     "Models.swift": ["SwiftUI", "UIKit"],
     "Persistence.swift": ["SwiftUI", "UIKit"],
+    "CatalogImages.swift": ["UIKit"],
     "Cloud.swift": ["SwiftUI", "Foundation", "Security"],
 }
 

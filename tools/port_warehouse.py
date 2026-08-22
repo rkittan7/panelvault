@@ -28,7 +28,12 @@ OUT = "worker/Sources/Warehouse"
 
 # Dropped: their contents are provided by the PanelVault design system or by
 # the worker app's own root view.
-SKIP = {"Theme.swift", "WarehouseApp.swift"}
+#
+# CatalogImages.swift is dropped for the same reason: the worker app already
+# has `CatalogImageLibrary` from the PanelVault side, and porting the warehouse
+# copy would redeclare it in the same target. The views built on top of it live
+# in CatalogPartViews.swift, which does get ported.
+SKIP = {"Theme.swift", "WarehouseApp.swift", "CatalogImages.swift"}
 
 RENAME_FILES = {
     "Catalog.swift": "WarehouseCatalog.swift",

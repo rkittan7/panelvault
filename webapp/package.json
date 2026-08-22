@@ -8,6 +8,6 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test server.test.js storage.test.js"
+    "test": "node --test server.test.js storage.test.js gemini.test.js"
   }
 }

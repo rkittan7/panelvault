@@ -16,6 +16,9 @@ final class WarehouseStore: ObservableObject {
   /// Same shape as catalog parts so the rest of the app cannot tell them apart.
   @Published private(set) var customParts: [CatalogPart] = []
   @Published private(set) var barcodeMappings: [BarcodeMapping] = []
+
+  /// Confirmed delivery notes, newest last. Evidence for the movements above.
+  @Published private(set) var deliveries: [DeliveryBatch] = []
   @Published private(set) var account: WarehouseCloudAccount?
   @Published private(set) var syncPhase: WarehouseSyncPhase = .signedOut
 
@@ -148,6 +151,27 @@ final class WarehouseStore: ObservableObject {
     triggerSync()
   }
 
+  /// Confirms a reviewed delivery: its movements and its paperwork are written
+  /// in one step, so the log can never gain stock the boss cannot trace back.
+  func confirm(_ delivery: DeliveryBatch, movements batch: [StockMovement]) {
+    deliveries.append(delivery)
+    persistDeliveries()
+    if batch.isEmpty {
+      triggerSync()
+    } else {
+      // Persists and syncs both.
+      append(batch)
+    }
+  }
+
+  var recentDeliveries: [DeliveryBatch] {
+    deliveries.sorted { $0.confirmedAt > $1.confirmedAt }
+  }
+
+  var pendingDeliveryCount: Int {
+    deliveries.lazy.filter { !self.syncMetadata.syncedDeliveryIDs.contains($0.id) }.count
+  }
+
   func updateSettings(for partID: String, _ update: PartSettings) {
     if update == .none {
       settings.removeValue(forKey: partID)
@@ -239,7 +263,8 @@ final class WarehouseStore: ObservableObject {
   }
 
   private var hasLocalCompanyData: Bool {
-    !movements.isEmpty || !customParts.isEmpty || !barcodeMappings.isEmpty || !settings.isEmpty
+    !movements.isEmpty || !customParts.isEmpty || !barcodeMappings.isEmpty
+      || !settings.isEmpty || !deliveries.isEmpty
   }
 
   private func preventCompanyChange(to companyCode: String) throws {
@@ -292,6 +317,19 @@ final class WarehouseStore: ObservableObject {
         persistSyncMetadata()
       }
 
+      // After the movements: a batch that reached the server first would show
+      // the boss a delivery whose stock had not arrived yet.
+      while true {
+        let pendingDeliveries = deliveries
+          .filter { !syncMetadata.syncedDeliveryIDs.contains($0.id) }
+          .prefix(50)
+        guard !pendingDeliveries.isEmpty else { break }
+        let response = try await cloud.uploadDeliveries(Array(pendingDeliveries), account: account)
+        syncMetadata.syncedDeliveryIDs.formUnion(response.acceptedIDs)
+        syncMetadata.syncedDeliveryIDs.formUnion(response.duplicateIDs)
+        persistSyncMetadata()
+      }
+
       var shouldContinue = true
       while shouldContinue {
         let response = try await cloud.download(after: syncMetadata.lastSequence, account: account)
@@ -303,6 +341,23 @@ final class WarehouseStore: ObservableObject {
             ?? syncMetadata.lastSequence
         } else {
           syncMetadata.lastSequence = response.latestSequence
+          shouldContinue = false
+        }
+        persistSyncMetadata()
+      }
+
+      shouldContinue = true
+      while shouldContinue {
+        let response = try await cloud.downloadDeliveries(
+          after: syncMetadata.lastDeliverySequence,
+          account: account
+        )
+        mergeRemoteDeliveries(response.deliveries)
+        if response.hasMore {
+          syncMetadata.lastDeliverySequence = response.deliveries.compactMap(\.sequence).max()
+            ?? syncMetadata.lastDeliverySequence
+        } else {
+          syncMetadata.lastDeliverySequence = response.latestSequence
           shouldContinue = false
         }
         persistSyncMetadata()
@@ -331,6 +386,18 @@ final class WarehouseStore: ObservableObject {
       movements.append(contentsOf: additions)
       persistMovements()
     }
+  }
+
+  private func mergeRemoteDeliveries(_ remote: [CloudDeliveryBatch]) {
+    let existing = Set(deliveries.map(\.id))
+    let additions = remote.compactMap { item -> DeliveryBatch? in
+      syncMetadata.syncedDeliveryIDs.insert(item.id)
+      guard !existing.contains(item.id) else { return nil }
+      return item.localBatch
+    }
+    guard !additions.isEmpty else { return }
+    deliveries.append(contentsOf: additions)
+    persistDeliveries()
   }
 
   private func mergeCustomParts(_ remote: [CatalogPart]) {
@@ -372,6 +439,7 @@ final class WarehouseStore: ObservableObject {
   private static var customPartsURL: URL { directory.appendingPathComponent("customParts.json") }
   private static var syncMetadataURL: URL { directory.appendingPathComponent("cloudSync.json") }
   private static var barcodeMappingsURL: URL { directory.appendingPathComponent("barcodeMappings.json") }
+  private static var deliveriesURL: URL { directory.appendingPathComponent("deliveries.json") }
 
   private static func normalizedBarcode(_ value: String) -> String {
     value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -398,6 +466,10 @@ final class WarehouseStore: ObservableObject {
        let decoded = try? JSONDecoder.warehouse.decode([BarcodeMapping].self, from: data) {
       barcodeMappings = decoded
     }
+    if let data = try? Data(contentsOf: WarehouseStore.deliveriesURL),
+       let decoded = try? JSONDecoder.warehouse.decode([DeliveryBatch].self, from: data) {
+      deliveries = decoded
+    }
   }
 
   private func persistMovements() {
@@ -414,6 +486,10 @@ final class WarehouseStore: ObservableObject {
 
   private func persistBarcodeMappings() {
     persist(barcodeMappings, to: WarehouseStore.barcodeMappingsURL)
+  }
+
+  private func persistDeliveries() {
+    persist(deliveries, to: WarehouseStore.deliveriesURL)
   }
 
   private func persist<T: Encodable>(_ value: T, to url: URL) {

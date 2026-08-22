@@ -62,13 +62,17 @@ struct ItemDetailView: View {
   private func header(_ part: CatalogPart) -> some View {
     GlassCard(theme: theme) {
       VStack(alignment: .leading, spacing: 10) {
-        HStack {
+        HStack(spacing: 12) {
+          CatalogPartThumb(theme: theme, part: part, size: 64)
           VStack(alignment: .leading, spacing: 4) {
             Text(part.displayName)
               .font(.title3.weight(.black))
-            Text("\(part.type) • \(part.rating) • \(part.poles)")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(theme.mutedText)
+            HStack(spacing: 6) {
+              CatalogBrandMark(manufacturer: part.manufacturer)
+              Text("\(part.type) • \(part.rating) • \(part.poles)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(theme.mutedText)
+            }
             if let serialNumber = part.serialNumber, !serialNumber.isEmpty {
               Text("Serial: \(serialNumber)")
                 .font(.caption.weight(.bold))

@@ -94,6 +94,14 @@ with a tunnel). Two things matter in production:
   appended. Stable movement IDs make retries idempotent.
 - Movement downloads use an increasing company sequence cursor, while stock
   remains derived from the immutable movement log.
+- Component and manufacturer pictures are served at `/catalog-images/` straight
+  out of `../assets/catalog`, the same folder the three iPhone apps bundle, so
+  the browser and the phones cannot end up showing different pictures of the
+  same part. Nothing is copied into `public/`. The route is unauthenticated —
+  these are pictures of products, identical for every company on the server —
+  and it serves only image types from inside that one directory. The browser
+  reads `index.json` there once per page load and draws a photo only for the
+  ids it lists.
 
 ## Mobile sync API
 

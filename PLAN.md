@@ -100,6 +100,12 @@ This makes offline merging predictable and preserves the audit history.
 
 ## Phase 3: Connect delivery-note scanning
 
+**Status: delivery batches implemented and synchronized (August 2026).**
+Confirming a reviewed scan now writes the batch and its movements together,
+uploads both through the offline queue, and PanelVault Cloud shows the
+paperwork behind every receipt. Page images are the one piece still missing —
+see "Scanned pages" below.
+
 Reuse the existing scan, OCR, matching, and review flow.
 
 ### Scan workflow
@@ -130,6 +136,28 @@ Each scanned delivery should store:
 - Confirmed movement UUIDs
 - Sync state and last error
 
+All of these are stored except the page images; the batch records how many
+pages were scanned, and the confirming user is taken from the uploading
+session rather than the request body.
+
+### Scanned pages
+
+The page images are the remaining gap. PanelVault Cloud currently persists one
+guarded JSON document — locally or in Supabase — and a delivery note is
+megabytes of JPEG. Putting them in that document would bloat every read and
+every save of the whole company state, and an ephemeral Render disk would lose
+them on the next deploy. Pages therefore stay on the phone until Phase 7
+provides object storage; the batch already carries the page count, so the
+website can say what it does not yet hold.
+
+### Upload ordering
+
+Batches and movements upload through the same queue but as separate requests,
+and the server accepts a batch whose movements have not arrived yet. It reports
+the shortfall instead of rejecting the batch, because an offline queue that had
+to upload in a fixed order would stall the whole warehouse behind one failed
+request. The website marks such a delivery until the rest lands.
+
 ### Safety requirements
 
 - No stock movement is created before confirmation.
@@ -140,11 +168,16 @@ Each scanned delivery should store:
 
 ## Phase 4: Website warehouse control center
 
+**Status: delivery history implemented (August 2026).** The Deliveries page
+lists every confirmed batch and opens each one on its read lines — accepted and
+rejected — and the stock it created. The remaining items below are still open.
+
 - Refresh stock and activity automatically after synchronized movements.
 - Show on-hand, minimum level, reserved, and available quantities.
 - Add low-stock and out-of-stock views.
-- Show delivery batches with supplier, note number, worker, and sync time.
-- Open a delivery to inspect its confirmed lines and original scan.
+- ~~Show delivery batches with supplier, note number, worker, and sync time.~~ Done.
+- Open a delivery to inspect its confirmed lines and original scan — lines are
+  done; the original scan waits on object storage.
 - Allow managers to add corrections with a required reason.
 - Keep destructive actions behind confirmation dialogs.
 - Add export for stock, movement history, and delivery records.
@@ -228,9 +261,10 @@ maintaining separate versions of a project or board.
 1. Manual movement upload from one iPhone to one company.
 2. Movement download and UUID deduplication.
 3. Offline queue and retry states.
-4. Delivery batch model.
-5. Connect confirmed OCR scans to the queue.
-6. Website delivery history and automatic refresh.
+4. Delivery batch model. — done.
+5. Connect confirmed OCR scans to the queue. — done.
+6. Website delivery history and automatic refresh. — history done; automatic
+   refresh and scanned-page storage remain.
 7. Board reservations and consumption.
 8. Full project and board synchronization.
 9. Production database, deployment, backups, and monitoring.

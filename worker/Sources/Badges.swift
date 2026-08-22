@@ -256,9 +256,16 @@ struct EquipmentBrandBadge: View {
   let name: String
   var image: UIImage? = nil
 
+  /// The caller's logo, or the one bundled in `assets/catalog` for this brand.
+  /// Resolved here rather than at each call site so every badge in the app
+  /// picks up a newly added logo without another edit.
+  private var resolvedImage: UIImage? {
+    image ?? CatalogImageLibrary.manufacturerThumbnail(name: name)
+  }
+
   var body: some View {
     Group {
-      if let image {
+      if let image = resolvedImage {
         TransparentImageBubble(
           image: image,
           width: 50,
@@ -281,7 +288,7 @@ struct EquipmentBrandBadge: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       }
     }
-    .frame(width: image == nil ? 50 : 50, height: image == nil ? 28 : 50)
+    .frame(width: 50, height: resolvedImage == nil ? 28 : 50)
   }
 
   private var brandGlowColor: Color {
@@ -368,9 +375,15 @@ struct ABBLogo: View {
 struct ManufacturerLogoView: View {
   let manufacturer: ManufacturerItem
 
+  /// A logo the user set on this device, else the one bundled for this brand.
+  private var logo: UIImage? {
+    manufacturer.thumbnail
+      ?? CatalogImageLibrary.manufacturerThumbnail(name: manufacturer.name)
+  }
+
   var body: some View {
     Group {
-      if let image = manufacturer.thumbnail {
+      if let image = logo {
         TransparentImageBubble(
           image: image,
           width: 54,
@@ -409,9 +422,17 @@ struct ManufacturerMarkView: View {
     return letters.isEmpty ? String(fallbackName.prefix(2)).uppercased() : String(letters).uppercased()
   }
 
+  /// The brand's own logo where the mark is used for a known manufacturer, and
+  /// the bundled catalog logo otherwise — including for the plain-name case,
+  /// where a board records a brand nobody has added as a manufacturer yet.
+  private var logo: UIImage? {
+    manufacturer?.thumbnail
+      ?? CatalogImageLibrary.manufacturerThumbnail(name: manufacturer?.name ?? fallbackName)
+  }
+
   var body: some View {
     Group {
-      if let image = manufacturer?.thumbnail {
+      if let image = logo {
         TransparentImageBubble(
           image: image,
           width: size,

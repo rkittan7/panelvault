@@ -1,0 +1,51 @@
+{
+  "//": "Drawing notation -> catalog FAMILY + the variant axes that make it a real stock item. catalog.json entries are families ('Set A - max 160A', '3P/4P'), not orderable products, so a family id alone is never a valid stock key. Read by both the Gemini prompt and the server matcher. Seeded from 3918.24-12-1 — verify the variant letters against what you actually stock.",
+
+  "//series": "series -> which catalog family it belongs to, and which axes must be known before it can be stocked. Missing any listed axis = incomplete, send to review, do not create a stock line.",
+  "series": {
+    "XT1": { "family": "abb-tmax-xt1", "axes": ["class", "poles", "rating"] },
+    "XT2": { "family": "abb-tmax-xt2", "axes": ["class", "poles", "rating"] },
+    "XT3": { "family": "abb-tmax-xt3", "axes": ["class", "poles", "rating"] },
+    "XT4": { "family": "abb-tmax-xt4", "axes": ["class", "poles", "rating"] },
+    "F200": { "family": "abb-f200", "axes": ["poles", "rating", "sensitivity", "type"] },
+    "S201": { "family": "abb-s201-1p", "axes": ["rating", "curve"] },
+    "S202": { "family": "abb-s202-2p", "axes": ["rating", "curve"] },
+    "S203": { "family": "abb-s203-3p", "axes": ["rating", "curve"] },
+    "S204": { "family": "abb-s204-4p", "axes": ["rating", "curve"] }
+  },
+
+  "//axes": "Legal values per axis. class is the ABB breaking-capacity letter — CONFIRM THIS LIST, it is the whole reason a stock line is distinct. Drawing said XT1D.",
+  "axes": {
+    "class": ["C", "D", "N"],
+    "poles": ["1P", "2P", "3P", "4P", "1P+N", "3P+N"],
+    "curve": ["B", "C", "D"],
+    "type": ["AC", "A", "B"],
+    "sensitivity": ["10MA", "30MA", "100MA", "300MA", "500MA"]
+  },
+
+  "//notation": "What the drawing writes -> series plus any variant it encodes in the model number itself.",
+  "notation": {
+    "S201M": { "series": "S201" },
+    "S202M": { "series": "S202" },
+    "S203M": { "series": "S203" },
+    "S204M": { "series": "S204" },
+    "XT1C": { "series": "XT1", "class": "C" },
+    "XT1D": { "series": "XT1", "class": "D" },
+    "XT1N": { "series": "XT1", "class": "N" },
+    "F202A": { "series": "F200", "poles": "2P", "type": "A" },
+    "F204A": { "series": "F200", "poles": "4P", "type": "A" }
+  },
+
+  "//stockKey": "How a resolved component becomes a partID. Axes in the order listed under series, uppercased, joined with |. Example: abb-tmax-xt1|D|3P|100A. Family id alone is never a stock key.",
+  "stockKeyFormat": "{family}|{axis values in declared order}",
+
+  "//uncatalogued": "Seen on real drawings, deliberately absent from catalog.json. Listed so the model treats these as expected misses rather than failures — stops it substituting a similar ABB part.",
+  "uncatalogued": [
+    "HAGER EPN510",
+    "KLEMSAN",
+    "SATEC PM135EH",
+    "UID-0016T",
+    "UID-1600",
+    "AVK-4"
+  ]
+}

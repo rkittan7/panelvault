@@ -20,6 +20,13 @@ DISPLAY_NAME = "PanelVault Worker"
 SOURCES = "worker/Sources"
 PROJECT_DIR = f"worker/{APP}.xcodeproj"
 
+# The shared component and manufacturer photos, bundled as a folder reference
+# so the app ships the same files the website serves. Path is relative to
+# worker/, matching the `sources:` entry in worker/project.yml — keep the two
+# in step, since either tool may have written the project you are building.
+RESOURCE_FOLDER = "../assets/catalog"
+RESOURCE_NAME = "catalog"
+
 
 def object_id(*parts):
     """Stable 24-hex-character object id, so regenerating gives no diff."""
@@ -65,6 +72,9 @@ def main():
     target_id = object_id("target", APP)
     product_ref = object_id("product", APP)
     sources_phase = object_id("sourcesphase", APP)
+    resources_phase = object_id("resourcesphase", APP)
+    resource_ref = object_id("fileref", RESOURCE_FOLDER)
+    resource_build = object_id("buildfile", RESOURCE_FOLDER)
     project_config_list = object_id("configlist", "project", APP)
     target_config_list = object_id("configlist", "target", APP)
     configs = {
@@ -91,6 +101,8 @@ def main():
         key = f"{group}/{name}"
         add(f"\t\t{ids[key]['build']} /* {name} in Sources */ = {{isa = PBXBuildFile; "
             f"fileRef = {ids[key]['file']} /* {name} */; }};")
+    add(f"\t\t{resource_build} /* {RESOURCE_NAME} in Resources */ = {{isa = PBXBuildFile; "
+        f"fileRef = {resource_ref} /* {RESOURCE_NAME} */; }};")
     add("/* End PBXBuildFile section */")
 
     add("\n/* Begin PBXFileReference section */")
@@ -100,6 +112,12 @@ def main():
             f"lastKnownFileType = sourcecode.swift; path = {name}; sourceTree = \"<group>\"; }};")
     add(f"\t\t{product_ref} /* {APP}.app */ = {{isa = PBXFileReference; includeInIndex = 0; "
         f"lastKnownFileType = wrapper.application; path = {APP}.app; sourceTree = BUILT_PRODUCTS_DIR; }};")
+    # `lastKnownFileType = folder` is what makes this a folder reference: Xcode
+    # copies the directory into the bundle whole, so photos added to it later
+    # need no project change.
+    add(f"\t\t{resource_ref} /* {RESOURCE_NAME} */ = {{isa = PBXFileReference; "
+        f"lastKnownFileType = folder; name = {RESOURCE_NAME}; path = {RESOURCE_FOLDER}; "
+        f"sourceTree = SOURCE_ROOT; }};")
     add("/* End PBXFileReference section */")
 
     add("\n/* Begin PBXGroup section */")
@@ -132,6 +150,7 @@ def main():
     add("\t\t\tisa = PBXGroup;")
     add("\t\t\tchildren = (")
     add(f"\t\t\t\t{group_ids['']} /* Sources */,")
+    add(f"\t\t\t\t{resource_ref} /* {RESOURCE_NAME} */,")
     add(f"\t\t\t\t{products_group} /* Products */,")
     add("\t\t\t);")
     add("\t\t\tsourceTree = \"<group>\";")
@@ -144,6 +163,7 @@ def main():
     add(f"\t\t\tbuildConfigurationList = {target_config_list} /* Build configuration list for PBXNativeTarget \"{APP}\" */;")
     add("\t\t\tbuildPhases = (")
     add(f"\t\t\t\t{sources_phase} /* Sources */,")
+    add(f"\t\t\t\t{resources_phase} /* Resources */,")
     add("\t\t\t);")
     add("\t\t\tbuildRules = (")
     add("\t\t\t);")
@@ -197,6 +217,17 @@ def main():
     add("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
     add("\t\t};")
     add("/* End PBXSourcesBuildPhase section */")
+
+    add("\n/* Begin PBXResourcesBuildPhase section */")
+    add(f"\t\t{resources_phase} /* Resources */ = {{")
+    add("\t\t\tisa = PBXResourcesBuildPhase;")
+    add("\t\t\tbuildActionMask = 2147483647;")
+    add("\t\t\tfiles = (")
+    add(f"\t\t\t\t{resource_build} /* {RESOURCE_NAME} in Resources */,")
+    add("\t\t\t);")
+    add("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
+    add("\t\t};")
+    add("/* End PBXResourcesBuildPhase section */")
 
     shared = [
         "ALWAYS_SEARCH_USER_PATHS = NO",

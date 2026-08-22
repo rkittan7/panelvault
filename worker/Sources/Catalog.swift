@@ -211,14 +211,17 @@ struct ComponentCatalogView: View {
   }
 
   private func manufacturerImage(for name: String) -> UIImage? {
-    manufacturer(for: name)?.thumbnail
+    manufacturer(for: name)?.thumbnail ?? CatalogImageLibrary.manufacturerThumbnail(name: name)
   }
 
+  /// A photo of this part: the one taken on this device if there is one, and
+  /// otherwise the catalog photo shipped in `assets/catalog`.
   private func storedImage(for component: PanelComponent) -> UIImage? {
     component.imageLookupIDs
       .lazy
       .compactMap { ImageStore.shared.image(for: componentImages[$0]) }
       .first
+      ?? CatalogImageLibrary.componentImage(id: component.imageStorageID)
   }
 
   /// Row-sized variant, so scrolling the catalog does not decode full-size
@@ -228,6 +231,7 @@ struct ComponentCatalogView: View {
       .lazy
       .compactMap { ImageStore.shared.thumbnail(for: componentImages[$0]) }
       .first
+      ?? CatalogImageLibrary.componentThumbnail(ids: component.imageLookupIDs)
   }
 
   private func loadComponentImagesIfNeeded() {

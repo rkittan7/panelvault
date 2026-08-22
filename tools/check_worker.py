@@ -30,7 +30,7 @@ ROOT = "worker/Sources"
 SYSTEM = {
     # Standard library
     "Any", "AnyHashable", "Array", "Bool", "CGFloat", "CGPoint", "CGRect",
-    "CGSize", "Character", "Codable", "CodingKeys", "Comparable", "Data",
+    "CGSize", "Character", "Codable", "CodingKey", "CodingKeys", "Comparable", "Data",
     "Date", "DateFormatter", "DateComponents", "Calendar", "Decodable",
     "Decoder", "Dictionary", "Double", "Encodable", "Encoder", "Equatable",
     "Error", "Float", "Hashable", "Identifiable", "Int", "Int32", "Int64",

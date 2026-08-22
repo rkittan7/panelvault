@@ -104,6 +104,83 @@ struct StockEntry: Identifiable {
   }
 }
 
+/// One confirmed delivery note: the paperwork a batch of receipts came from.
+///
+/// The movements are still the stock — this is the evidence behind them. It
+/// records what the camera actually read, including the lines the worker chose
+/// not to receive, so the boss can later answer "why is there stock for this?"
+/// with the original document rather than a number.
+///
+/// Immutable once confirmed, for the same reason movements are: a mistake is
+/// corrected by a new adjustment, never by rewriting what was signed off.
+struct DeliveryBatch: Identifiable, Codable, Equatable {
+  enum Source: String, Codable {
+    /// Read from a photographed delivery note.
+    case scan
+    /// Typed in by hand.
+    case manual
+    /// Produced by an opening stocktake rather than a delivery.
+    case stocktake
+  }
+
+  /// One line as it was read and as the worker left it on the review screen.
+  struct Line: Identifiable, Codable, Equatable {
+    var id: String
+    /// Exactly what OCR produced — never cleaned up.
+    var rawText: String
+    var quantity: Int
+    /// Nil when nothing in the catalog matched; kept anyway as evidence.
+    var partID: String?
+    var included: Bool
+    /// The movement this line created, when it was included.
+    var movementID: String?
+  }
+
+  let id: String
+  var noteNumber: String
+  var supplier: String
+  var source: Source
+  var scannedAt: Date
+  var confirmedAt: Date
+  var pageCount: Int
+  var lines: [Line]
+  var movementIDs: [String]
+  let deviceID: String
+
+  init(
+    id: String = UUID().uuidString,
+    noteNumber: String,
+    supplier: String,
+    source: Source,
+    scannedAt: Date,
+    confirmedAt: Date = Date(),
+    pageCount: Int,
+    lines: [Line],
+    movementIDs: [String],
+    deviceID: String = StockMovement.currentDeviceID
+  ) {
+    self.id = id
+    self.noteNumber = noteNumber
+    self.supplier = supplier
+    self.source = source
+    self.scannedAt = scannedAt
+    self.confirmedAt = confirmedAt
+    self.pageCount = pageCount
+    self.lines = lines
+    self.movementIDs = movementIDs
+    self.deviceID = deviceID
+  }
+
+  var receivedUnits: Int {
+    lines.filter(\.included).reduce(0) { $0 + $1.quantity }
+  }
+
+  var title: String {
+    let parts = [noteNumber.isEmpty ? "" : "Note \(noteNumber)", supplier].filter { !$0.isEmpty }
+    return parts.isEmpty ? "Delivery" : parts.joined(separator: " · ")
+  }
+}
+
 /// A manufacturer barcode taught once and reused by every future stocktake.
 /// The code identifies the box SKU; packageQuantity says how many physical
 /// units one scan contributes to the count.

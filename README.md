@@ -43,6 +43,39 @@ receipts are stored on the iPhone first and then synchronized to the correct
 PanelVault Cloud company. Uploads are safe to retry: movement IDs are
 deduplicated by the server, so a delivery cannot be counted twice.
 
+Confirming also records the delivery itself — note number, supplier, page
+count, and every line the camera read, including the ones the worker chose not
+to receive. That batch uploads alongside the movements, and the Deliveries page
+in PanelVault Cloud shows the paperwork behind any receipt. The scanned page
+images stay on the phone until PanelVault Cloud has object storage; the website
+reports the page count so it is clear what it does not yet hold.
+
+## Component and manufacturer photos
+
+Every component and every manufacturer can carry a picture, and all four
+surfaces read the same one. The files live in `assets/catalog` — logos in
+`manufacturers/`, part photos in `components/` — and are referenced, never
+copied: PanelVault Cloud serves the folder at `/catalog-images/`, and the three
+Xcode projects bundle it as a folder reference. One file in the repository,
+four places it shows up.
+
+Adding photos is two steps: drop them in the folder, then run
+
+```bash
+python3 tools/sync_catalog_images.py
+```
+
+which matches each file to a catalog id — exact ids like `abb-s201-1p.jpg`
+always win, and loose names like `ABB S201 1P.jpg` or `ABB logo.png` are
+resolved by matching against the catalog — and writes the `index.json` manifest
+that every surface reads. Files it cannot place, or that could mean more than
+one part, are reported rather than guessed at. See
+[assets/catalog/README.md](assets/catalog/README.md) for the naming rules.
+
+These pictures are defaults. A photo someone takes on their phone is stored on
+that device and always wins over the catalog photo; a part with neither keeps
+the SF Symbol for its category, exactly as before.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -51,6 +84,7 @@ deduplicated by the server, so a delivery cannot be counted twice.
 | `worker/` | Native SwiftUI worker app: PanelVault's interface with the warehouse in it and creation removed |
 | `warehouse/` | Native SwiftUI warehouse companion app and delivery scanner |
 | `webapp/` | PanelVault Cloud website, API, accounts, roles, stock, and boards |
+| `assets/catalog/` | Component and manufacturer photos shared by all four surfaces |
 | `tools/` | Scripts that assemble the worker app from `ios/` and `warehouse/` |
 
 ### How the three iPhone apps relate
@@ -69,6 +103,8 @@ own. See `worker/README.md`.
 - Company accounts with owner, manager, staff manager, QA, and staff roles
 - Revocable invitation links and team management
 - Browser-based stock receiving, consumption, and corrections
+- Delivery history: every confirmed note with its read lines and the stock it
+  created, including lines the worker rejected
 - Custom parts, minimum levels, locations, and movement history
 - Board creation, assignment, and worker status updates
 - Manager-only stock valuation, component pricing, and per-board cost summaries
@@ -135,11 +171,12 @@ stores a guarded JSON document, so relational tables and object storage for
 PDFs/photos are still required before the system becomes business-critical or
 scales horizontally.
 
-The planned receipt and scheme AI integration will call the OpenAI Responses
-API from PanelVault Cloud. `OPENAI_API_KEY` must be a server environment secret
-and must never be embedded in either iPhone app, browser JavaScript, or Git.
-Scanned results will always pass through a user review screen before creating
-boards or changing stock.
+PanelVault Cloud exposes the authenticated `POST /api/ai/generate` endpoint for
+its receipt and scheme AI features. Configure `GEMINI_API_KEY` as a server
+environment secret (and optionally `GEMINI_MODEL`, which defaults to
+`gemini-2.5-flash`). The key must never be embedded in either iPhone app,
+browser JavaScript, or Git. Scanned results must always pass through a user
+review screen before creating boards or changing stock.
 
 ## Run the Warehouse app
 
