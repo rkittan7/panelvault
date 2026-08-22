@@ -4,7 +4,7 @@
 
 Build one connected PanelVault platform for electrical-board companies:
 
-- Workers use an iPhone in the warehouse and workshop.
+- Workers use the PanelVault Worker iPhone app in the warehouse and workshop.
 - The boss and managers use PanelVault Cloud from any computer.
 - Projects, boards, components, warehouse stock, and activity share the same
   company data.
@@ -156,6 +156,12 @@ Each scanned delivery should store:
 - **Worker:** view stock, receive deliveries, consume parts, and update assigned
   boards.
 
+The role boundary is now enforced by the client as well as the server. The
+worker app (`worker/`) simply has no interface for creating or renaming a
+project, board, customer, manufacturer, board type or company — see
+`worker/README.md`. The server must still reject those actions by role; a
+client that cannot ask is not the same as a server that will not answer.
+
 ## Phase 5: Link boards to warehouse stock
 
 - Use the same component IDs in boards and warehouse stock.
@@ -166,6 +172,28 @@ Each scanned delivery should store:
 - Release unused reservations when a board is changed or cancelled.
 - Show shortages before work starts.
 - Link every consumption movement back to its board and project.
+
+## Phase 5b: Split the manager and worker apps
+
+**Status: worker app assembled, not yet compiled (August 2026).**
+
+- `ios/` stays as it is and is now the manager app.
+- `worker/` is a generated copy of it: the warehouse replaces the creation tab,
+  and every screen that creates or renames a record is gone.
+- `warehouse/` stays as a standalone app for staff who only handle stock.
+- The copy is produced by `tools/split_worker.py` and `tools/port_warehouse.py`
+  rather than maintained by hand, so the manager app remains the source of truth
+  for the interface and the data model.
+
+Next:
+
+1. Compile it in Xcode and fix what the first build surfaces.
+2. Give it its own app icon.
+3. Collapse the two component catalogs (`ComponentGroup` and `CatalogPart`) into
+   one, now that both ship in the same binary.
+4. Decide whether the worker app should read its archive from Cloud rather than
+   the local snapshot — this is the same question Phase 6 answers for the
+   website, and both should get the same answer.
 
 ## Phase 6: Full PanelVault desktop experience
 
@@ -196,6 +224,7 @@ maintaining separate versions of a project or board.
 
 ## Recommended implementation order
 
+0. Split the manager and worker apps (Phase 5b) — done, pending first compile.
 1. Manual movement upload from one iPhone to one company.
 2. Movement download and UUID deduplication.
 3. Offline queue and retry states.

@@ -58,6 +58,14 @@ function normalizeCompanies() {
     company.partSettings ||= {};
     company.boards ||= [];
     company.barcodeMappings ||= [];
+    // The role set gained Staff Manager and QA, and "worker" was renamed to
+    // "staff". Migrate on load so existing sessions keep their access.
+    for (const user of company.users || []) {
+      if (user.role === "worker") user.role = "staff";
+    }
+    for (const invite of company.invites || []) {
+      if (invite.role === "worker") invite.role = "staff";
+    }
   }
 }
 
@@ -92,8 +100,46 @@ function serializeMutation(action) {
 
 // ---------------------------------------------------------------- helpers
 
-const ROLES = ["owner", "manager", "worker"];
-const isAdmin = (user) => user.role === "owner" || user.role === "manager";
+// Roles, most privileged first. "owner" is the account that created the company
+// and is not invitable. Legacy "worker" rows migrate to "staff" on load.
+const ROLES = ["owner", "manager", "staff-manager", "qa", "staff"];
+const ROLE_LABELS = {
+  owner: "Owner",
+  manager: "Manager",
+  "staff-manager": "Staff Manager",
+  qa: "QA",
+  staff: "Staff",
+};
+
+// Capabilities, not role checks, so a permission can be re-granted in one place.
+//
+// `canSeeCosts` is deliberately narrower than `canAdminister`: a staff manager
+// runs the floor and may move stock and boards, but unit costs and board totals
+// are commercial data kept to the owner and managers.
+const CAN_ADMINISTER = new Set(["owner", "manager", "staff-manager"]);
+const CAN_SEE_COSTS = new Set(["owner", "manager"]);
+const CAN_SIGN_OFF_QA = new Set(["owner", "manager", "staff-manager", "qa"]);
+
+const isOwner = (user) => user.role === "owner";
+const isAdmin = (user) => CAN_ADMINISTER.has(user.role);
+const canSeeCosts = (user) => CAN_SEE_COSTS.has(user.role);
+const canSignOffQA = (user) => CAN_SIGN_OFF_QA.has(user.role);
+
+/** Which roles a given user may hand out through an invite. */
+function invitableRoles(user) {
+  if (isOwner(user)) return ["manager", "staff-manager", "qa", "staff"];
+  if (user.role === "manager") return ["staff-manager", "qa", "staff"];
+  if (user.role === "staff-manager") return ["qa", "staff"];
+  return [];
+}
+
+/** Money is stored in minor units so totals never accumulate float error. */
+function normalizeMinorUnits(value) {
+  if (value == null || value === "") return null;
+  const cents = Math.round(Number(value) * 100);
+  if (!Number.isFinite(cents) || cents < 0 || cents > 100_000_000) return null;
+  return cents;
+}
 
 function id(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -147,8 +193,13 @@ function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
 }
 
-/** Derived stock state, exactly like the iPhone app computes it. */
-function stockEntries(company) {
+/** Derived stock state, exactly like the iPhone app computes it.
+ *
+ * Cost fields are only populated when `withCosts` is true. The caller decides
+ * from the session role, so a staff or QA response never carries prices at all
+ * rather than relying on the client to hide them.
+ */
+function stockEntries(company, withCosts = false) {
   const counts = {};
   const lastDates = {};
   for (const m of company.movements) {
@@ -162,16 +213,84 @@ function stockEntries(company) {
     const part = partFor(company, partID);
     if (!part) continue;
     const settings = company.partSettings[partID] || {};
-    entries.push({
+    const onHand = counts[partID] || 0;
+    const entry = {
       part,
-      onHand: counts[partID] || 0,
+      onHand,
       minimumLevel: settings.minimumLevel ?? null,
       location: settings.location || "",
       lastMovement: lastDates[partID] || null,
-    });
+    };
+    if (withCosts) {
+      const unit = settings.unitCostMinor ?? null;
+      entry.unitCostMinor = unit;
+      // What the shelf is worth right now. Negative stock would invent value,
+      // so clamp it.
+      entry.stockValueMinor = unit == null ? null : unit * Math.max(onHand, 0);
+    }
+    entries.push(entry);
   }
   entries.sort((a, b) => a.part.model.localeCompare(b.part.model));
   return entries;
+}
+
+/** A movement belongs to a board by explicit id, else by its reference text
+ *  matching the board number — the link the warehouse app already writes. */
+function movementMatchesBoard(movement, board) {
+  if (movement.boardID) return movement.boardID === board.id;
+  const reference = (movement.reference || "").trim().toLowerCase();
+  const number = (board.number || "").trim().toLowerCase();
+  return number.length > 0 && reference === number;
+}
+
+/** Cost of the parts consumed by one board, replayed from the movement log.
+ *
+ * Never stored: like stock, a board's cost is always derived, so correcting a
+ * movement or a price corrects every total that depends on it.
+ */
+function boardCost(company, board) {
+  let totalMinor = 0;
+  let lines = 0;
+  let pricedLines = 0;
+  const byPart = new Map();
+
+  for (const movement of company.movements) {
+    if (movement.kind !== "consume") continue;
+    if (!movementMatchesBoard(movement, board)) continue;
+    const settings = company.partSettings[movement.partID] || {};
+    const unit = settings.unitCostMinor ?? null;
+    const existing = byPart.get(movement.partID) || { quantity: 0, unitCostMinor: unit, lineTotalMinor: null };
+    existing.quantity += movement.quantity;
+    existing.unitCostMinor = unit;
+    existing.lineTotalMinor = unit == null ? null : unit * existing.quantity;
+    byPart.set(movement.partID, existing);
+  }
+
+  const items = [];
+  for (const [partID, line] of byPart) {
+    const part = partFor(company, partID);
+    lines += 1;
+    if (line.lineTotalMinor != null) {
+      totalMinor += line.lineTotalMinor;
+      pricedLines += 1;
+    }
+    items.push({
+      partID,
+      partName: part ? `${part.manufacturer} ${part.model}` : partID,
+      quantity: line.quantity,
+      unitCostMinor: line.unitCostMinor,
+      lineTotalMinor: line.lineTotalMinor,
+    });
+  }
+  items.sort((a, b) => (b.lineTotalMinor ?? -1) - (a.lineTotalMinor ?? -1));
+
+  return {
+    totalMinor,
+    items,
+    // Surfaced so the UI can say "partial" instead of implying a complete total
+    // when some consumed parts have no price yet.
+    unpricedLines: lines - pricedLines,
+  };
 }
 
 function ensureMovementSequences(company) {
@@ -438,10 +557,23 @@ const routes = {
   "GET /api/state": async (req, res, session) => {
     const { company, user } = session;
     const admin = isAdmin(user);
+    const withCosts = canSeeCosts(user);
     sendJSON(res, 200, {
       company: { code: company.code, name: company.name },
-      me: publicUser(user),
-      stock: stockEntries(company),
+      me: {
+        ...publicUser(user),
+        // Capabilities travel with the session so the UI mirrors what the
+        // server will actually allow, instead of re-deriving role rules.
+        can: {
+          administer: admin,
+          seeCosts: withCosts,
+          signOffQA: canSignOffQA(user),
+          manageMembers: isOwner(user),
+        },
+        invitableRoles: invitableRoles(user),
+      },
+      roleLabels: ROLE_LABELS,
+      stock: stockEntries(company, withCosts),
       movements: [...company.movements]
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, 100)
@@ -450,12 +582,31 @@ const routes = {
           partName: partFor(company, m.partID)?.model || m.partID,
           userName: company.users.find((u) => u.id === m.userID)?.name || "",
         })),
-      boards: company.boards
-        .filter((board) => admin || board.assignedTo === user.id)
-        .map((b) => ({
+      boards: company.boards.map((b) => {
+        const board = {
           ...b,
           assignedName: company.users.find((u) => u.id === b.assignedTo)?.name || "",
-        })),
+        };
+        if (withCosts) {
+          const cost = boardCost(company, b);
+          board.costMinor = cost.totalMinor;
+          board.costItems = cost.items;
+          board.unpricedLines = cost.unpricedLines;
+        }
+        return board;
+      }),
+      // Company-wide figures worth a manager's glance on the dashboard.
+      costSummary: withCosts
+        ? (() => {
+            const entries = stockEntries(company, true);
+            return {
+              stockValueMinor: entries.reduce((sum, e) => sum + (e.stockValueMinor || 0), 0),
+              pricedParts: entries.filter((e) => e.unitCostMinor != null).length,
+              unpricedParts: entries.filter((e) => e.unitCostMinor == null).length,
+              boardCostMinor: company.boards.reduce((sum, b) => sum + boardCost(company, b).totalMinor, 0),
+            };
+          })()
+        : undefined,
       customParts: company.customParts,
       members: admin ? company.users.map(publicUser) : undefined,
       invites: admin ? company.invites.filter((i) => i.active) : undefined,
@@ -687,11 +838,23 @@ const routes = {
   "POST /api/part-settings": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can change part settings.");
-    const { partID, minimumLevel, location } = await readBody(req);
+    const { partID, minimumLevel, location, unitCost } = await readBody(req);
     if (!partFor(company, partID)) return fail(res, 400, "Unknown part.");
+    const existing = company.partSettings[partID] || {};
+    // Unit cost is commercial data: a staff manager may set stock levels and
+    // locations, but must not write — or silently clear — a price.
+    let unitCostMinor = existing.unitCostMinor ?? null;
+    if (unitCost !== undefined) {
+      if (!canSeeCosts(user)) return fail(res, 403, "Only the owner or a manager can set prices.");
+      unitCostMinor = normalizeMinorUnits(unitCost);
+      if (unitCost != null && unitCost !== "" && unitCostMinor === null) {
+        return fail(res, 400, "Enter a valid unit price.");
+      }
+    }
     company.partSettings[partID] = {
       minimumLevel: minimumLevel == null ? null : Math.max(0, Math.trunc(Number(minimumLevel)) || 0),
       location: (location || "").trim(),
+      unitCostMinor,
     };
     await save();
     sendJSON(res, 200, { ok: true });
@@ -755,10 +918,11 @@ const routes = {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can invite people.");
     const { role } = await readBody(req);
-    if (!["manager", "worker"].includes(role)) return fail(res, 400, "Role must be manager or worker.");
-    // Managers must not mint manager invites — only the owner can grow admins.
-    if (role === "manager" && user.role !== "owner") {
-      return fail(res, 403, "Only the owner can invite managers.");
+    // Nobody may invite a role at or above their own: the allowed set is
+    // derived from the inviter, so a staff manager cannot mint a manager.
+    const allowed = invitableRoles(user);
+    if (!allowed.includes(role)) {
+      return fail(res, 403, `You can invite: ${allowed.join(", ") || "nobody"}.`);
     }
     const invite = {
       code: shortCode(8),
@@ -789,9 +953,11 @@ const routes = {
     const member = company.users.find((u) => u.id === userID);
     if (!member) return fail(res, 404, "No such member.");
     if (member.role === "owner") return fail(res, 400, "The owner account cannot be changed here.");
-    if (role !== undefined && !["manager", "worker"].includes(role)) return fail(res, 400, "Bad role.");
     if (active !== undefined) member.active = Boolean(active);
-    if (role !== undefined) member.role = role;
+    if (role !== undefined) {
+      if (!ROLES.includes(role) || role === "owner") return fail(res, 400, "Bad role.");
+      member.role = role;
+    }
     await save();
     sendJSON(res, 200, { ok: true });
   },

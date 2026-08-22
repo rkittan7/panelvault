@@ -7761,8 +7761,6 @@ struct MoreView: View {
       }
       .sheet(isPresented: $profileOpen) {
         ProfileEditorSheet(theme: theme, name: $profileName, company: $profileCompany, phone: $profilePhone, imageToken: $profileImageToken)
-          .presentationDetents([.medium])
-          .presentationDragIndicator(.visible)
       }
       .sheet(isPresented: $warehouseStockOpen) {
         WarehouseStockSheet(theme: theme)
@@ -12901,19 +12899,7 @@ extension Color {
 // straight on the catalog. Stock is always replayed from the append-only
 // movement log; this client never invents or edits a total.
 
-/// Credentials and identity for a PanelVault Cloud session. Mirrors the
-/// warehouse app's `WarehouseCloudAccount` so both clients speak one contract.
-struct WarehouseStockCloudAccount: Codable, Equatable {
-  let baseURL: String
-  let token: String
-  let expiresAt: String
-  let companyCode: String
-  let companyName: String
-  let userName: String
-  let role: String
-}
-
-struct WarehouseStockLoginResponse: Decodable {
+struct PanelCloudLoginResponse: Decodable {
   struct Company: Decodable { let code: String; let name: String }
   struct User: Decodable { let id: String; let name: String; let role: String }
   let token: String
@@ -12923,7 +12909,7 @@ struct WarehouseStockLoginResponse: Decodable {
 }
 
 /// One movement as Cloud returns it, narrowed to what stock derivation needs.
-struct WarehouseStockMovement: Decodable {
+struct PanelCloudMovement: Decodable {
   let id: String
   let partID: String
   let kind: String
@@ -12942,8 +12928,8 @@ struct WarehouseStockMovement: Decodable {
   }
 }
 
-struct WarehouseStockDownloadResponse: Decodable {
-  let movements: [WarehouseStockMovement]
+struct PanelCloudDownloadResponse: Decodable {
+  let movements: [PanelCloudMovement]
   let latestSequence: Int
   let hasMore: Bool
 }
@@ -12963,27 +12949,28 @@ enum WarehouseStockCloudError: LocalizedError {
 }
 
 struct WarehouseStockCloudClient {
-  func login(baseURL: String, companyCode: String, name: String, password: String) async throws -> WarehouseStockCloudAccount {
+  func login(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
     let normalized = try WarehouseStockCloudClient.normalizedBaseURL(baseURL)
-    let response: WarehouseStockLoginResponse = try await request(
+    let response: PanelCloudLoginResponse = try await request(
       baseURL: normalized,
       path: "/api/mobile/login",
       method: "POST",
       body: ["companyCode": companyCode, "name": name, "password": password],
       token: nil
     )
-    return WarehouseStockCloudAccount(
+    return PanelCloudAccount(
       baseURL: normalized.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
       token: response.token,
       expiresAt: response.expiresAt,
       companyCode: response.company.code,
       companyName: response.company.name,
+      userID: response.user.id,
       userName: response.user.name,
       role: response.user.role
     )
   }
 
-  func download(after sequence: Int, account: WarehouseStockCloudAccount) async throws -> WarehouseStockDownloadResponse {
+  func download(after sequence: Int, account: PanelCloudAccount) async throws -> PanelCloudDownloadResponse {
     try await request(
       baseURL: try WarehouseStockCloudClient.normalizedBaseURL(account.baseURL),
       path: "/api/sync/movements?after=\(sequence)",
@@ -13037,7 +13024,7 @@ struct WarehouseStockCloudClient {
     let (data, response) = try await URLSession.shared.data(for: request)
     guard let http = response as? HTTPURLResponse else { throw WarehouseStockCloudError.invalidResponse }
     guard 200..<300 ~= http.statusCode else {
-      let message = (try? JSONDecoder().decode(WarehouseStockErrorBody.self, from: data).error)
+      let message = (try? JSONDecoder().decode(PanelCloudErrorBody.self, from: data).error)
         ?? "PanelVault Cloud request failed (\(http.statusCode))."
       throw WarehouseStockCloudError.server(message)
     }
@@ -13048,15 +13035,15 @@ struct WarehouseStockCloudClient {
   }
 }
 
-private struct WarehouseStockErrorBody: Decodable { let error: String }
+private struct PanelCloudErrorBody: Decodable { let error: String }
 
 /// The session token lives in the keychain, not UserDefaults. Its service id is
 /// distinct from the warehouse app's so the two never fight over one entry.
-enum WarehouseStockKeychain {
+enum PanelCloudKeychain {
   private static let service = "com.panelvault.ios.cloud"
   private static let account = "active-account"
 
-  static func load() -> WarehouseStockCloudAccount? {
+  static func load() -> PanelCloudAccount? {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
@@ -13067,10 +13054,10 @@ enum WarehouseStockKeychain {
     var result: CFTypeRef?
     guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
           let data = result as? Data else { return nil }
-    return try? JSONDecoder().decode(WarehouseStockCloudAccount.self, from: data)
+    return try? JSONDecoder().decode(PanelCloudAccount.self, from: data)
   }
 
-  static func save(_ value: WarehouseStockCloudAccount?) {
+  static func save(_ value: PanelCloudAccount?) {
     let base: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
@@ -13094,7 +13081,7 @@ enum WarehouseStockKeychain {
 final class WarehouseStockStore: ObservableObject {
   static let shared = WarehouseStockStore()
 
-  @Published private(set) var account: WarehouseStockCloudAccount?
+  @Published private(set) var account: PanelCloudAccount?
   @Published private(set) var onHand: [String: Int] = [:]
   @Published private(set) var lastSyncedAt: Date?
   @Published private(set) var isSyncing = false
@@ -13118,7 +13105,7 @@ final class WarehouseStockStore: ObservableObject {
   }
 
   private init() {
-    account = WarehouseStockKeychain.load()
+    account = PanelCloudKeychain.load()
     loadCache()
   }
 
@@ -13136,7 +13123,7 @@ final class WarehouseStockStore: ObservableObject {
         lastSyncedAt = nil
       }
       account = signedIn
-      WarehouseStockKeychain.save(signedIn)
+      PanelCloudKeychain.save(signedIn)
       saveCache()
       await sync()
     } catch {
@@ -13150,7 +13137,7 @@ final class WarehouseStockStore: ObservableObject {
     lastSequence = 0
     lastSyncedAt = nil
     errorMessage = nil
-    WarehouseStockKeychain.save(nil)
+    PanelCloudKeychain.save(nil)
     saveCache()
   }
 
