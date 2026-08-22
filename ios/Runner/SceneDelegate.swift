@@ -2374,10 +2374,10 @@ struct DashboardBoardProgressRow: View {
               DueDateBadge(date: dueDate, compact: true)
             }
             Spacer(minLength: 5)
-            Text(board.currentProductionStage.title)
-              .font(.system(size: 11, weight: .heavy))
+            Text("\(board.completion)%")
+              .font(.system(size: 17, weight: .black))
               .foregroundStyle(progressColor)
-              .lineLimit(1)
+              .monospacedDigit()
             Image(systemName: "chevron.right")
               .font(.system(size: 13, weight: .bold))
               .foregroundStyle(.secondary)
@@ -2388,7 +2388,24 @@ struct DashboardBoardProgressRow: View {
             RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
           }
           .fixedSize(horizontal: false, vertical: true)
-          BoardCompactStageRow(theme: theme, board: board)
+          GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+              Capsule()
+                .fill(theme.surface.opacity(0.82))
+              Capsule()
+                .fill(
+                  LinearGradient(
+                    colors: [progressColor.opacity(0.70), progressColor],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                  )
+                )
+                .frame(width: max(proxy.size.width * progress, progress > 0 ? 12 : 0))
+                .shadow(color: progressColor.opacity(0.28), radius: 5, y: 1)
+                .animation(.easeInOut(duration: 0.38), value: board.completion)
+            }
+          }
+          .frame(height: 7)
           }
         }
       }
@@ -5687,23 +5704,48 @@ struct BoardProductionStageTracker: View {
         }
 
         ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 7) {
-            ForEach(board.productionStages) { stage in
-              let index = board.productionStages.firstIndex(where: { $0.id == stage.id }) ?? 0
+          let stages = board.productionStages
+          HStack(alignment: .top, spacing: 0) {
+            ForEach(stages.indices, id: \.self) { index in
+              let stage = stages[index]
               let stageColor = color(for: stage)
-              VStack(alignment: .leading, spacing: 7) {
-                ZStack {
+              VStack(spacing: 8) {
+                HStack(spacing: 0) {
+                  Capsule()
+                    .fill(index > 0 && stages[index - 1].state == "done" ? Color(hex: 0x35E177).opacity(0.72) : theme.surface)
+                    .frame(width: 27, height: 3)
+                    .opacity(index == 0 ? 0 : 1)
+                  ZStack {
+                    if ["current", "ready", "attention"].contains(stage.state) {
+                      Circle()
+                        .stroke(stageColor.opacity(0.18), lineWidth: 6)
+                        .frame(width: 38, height: 38)
+                    }
                   Circle()
-                    .fill(stage.state == "upcoming" ? theme.surface : stageColor)
-                    .frame(width: 27, height: 27)
-                  Image(systemName: stage.state == "done" ? "checkmark" : "\(index + 1).circle.fill")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(stage.state == "upcoming" ? Color.secondary : Color.white)
+                      .fill(stage.state == "upcoming" ? theme.surface : stageColor)
+                      .frame(width: 30, height: 30)
+                      .overlay(Circle().stroke(stageColor.opacity(stage.state == "upcoming" ? 0.28 : 0.8), lineWidth: 1))
+                    if stage.state == "done" {
+                      Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.white)
+                    } else {
+                      Text("\(index + 1)")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(stage.state == "upcoming" ? Color.secondary : Color.white)
+                    }
+                  }
+                  Capsule()
+                    .fill(stage.state == "done" ? Color(hex: 0x35E177).opacity(0.72) : theme.surface)
+                    .frame(width: 27, height: 3)
+                    .opacity(index == stages.count - 1 ? 0 : 1)
                 }
                 Text(stage.title)
                   .font(.system(size: 10, weight: .heavy))
+                  .foregroundStyle(["current", "ready", "attention"].contains(stage.state) ? stageColor : Color.primary)
+                  .multilineTextAlignment(.center)
                   .lineLimit(2)
-                  .frame(width: 76, alignment: .leading)
+                  .frame(width: 84)
                 if ["mechanical", "components", "wiring", "finishing"].contains(stage.id) {
                   Text("\(stage.progress)%")
                     .font(.system(size: 9, weight: .semibold))
@@ -5711,41 +5753,15 @@ struct BoardProductionStageTracker: View {
                     .monospacedDigit()
                 }
               }
-              .padding(10)
-              .frame(minHeight: 105, alignment: .topLeading)
-              .background(stageColor.opacity(stage.state == "upcoming" ? 0.035 : 0.11))
-              .overlay(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                  .stroke(stageColor.opacity(stage.state == "upcoming" ? 0.16 : 0.42), lineWidth: 1)
-              )
-              .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+              .frame(width: 84, alignment: .top)
             }
           }
-          .padding(.vertical, 2)
+          .padding(.horizontal, 4)
+          .padding(.vertical, 8)
         }
       }
     }
     .animation(.easeInOut(duration: 0.38), value: board.currentProductionStage.id)
-  }
-}
-
-struct BoardCompactStageRow: View {
-  let theme: PanelTheme
-  let board: BoardDraft
-
-  var body: some View {
-    HStack(spacing: 5) {
-      ForEach(board.productionStages) { stage in
-        Circle()
-          .fill(stage.state == "done" ? Color(hex: 0x35E177) : (["current", "ready"].contains(stage.state) ? theme.primary : (stage.state == "attention" ? Color.red : Color.secondary.opacity(0.22))))
-          .frame(width: 7, height: 7)
-      }
-      Text(board.currentProductionStage.title)
-        .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      Spacer(minLength: 0)
-    }
   }
 }
 

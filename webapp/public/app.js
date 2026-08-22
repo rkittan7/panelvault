@@ -767,10 +767,8 @@ function renderDashboard() {
   const boardsPanel = panel("Board workload", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
   const pipeline = el("div", "board-pipeline");
   boardCounts.forEach(({ id, label, count }) => {
-    const stage = el("button", "pipeline-stage");
-    stage.type = "button";
+    const stage = el("div", "pipeline-stage");
     stage.append(el("span", `pipeline-label stage-${id}`, label), el("strong", null, String(count)), el("small", null, count === 1 ? "board" : "boards"));
-    stage.addEventListener("click", () => switchView("boards"));
     pipeline.append(stage);
   });
   boardsPanel.body.append(pipeline);
@@ -1099,7 +1097,13 @@ function renderBoards() {
     main.append(el("div", "row-title", title));
     main.append(el("div", "row-sub",
       [b.project !== "No Project" ? b.project : null, b.customer, b.type, b.subtype, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
-    main.append(renderStageTracker(b, true));
+    const progress = el("div", "board-row-progress");
+    const track = el("span", "progress-track");
+    const fill = el("i");
+    fill.style.width = `${b.completion || 0}%`;
+    track.append(fill);
+    progress.append(track, el("strong", null, `${b.completion || 0}% · ${b.currentStage?.label || "Design"}`));
+    main.append(progress);
     row.append(main);
 
     if (canSeeCosts()) {
@@ -1211,16 +1215,19 @@ function recalculateBoardStages(board) {
   board.currentStage = board.stages.find((stage) => stage.id === currentID);
 }
 
-function renderStageTracker(board, compact = false) {
+function renderStageTracker(board) {
   if (!board.stages?.length) recalculateBoardStages(board);
-  const tracker = el("div", `board-stage-tracker${compact ? " compact" : ""}`);
+  const tracker = el("div", "board-stage-tracker");
+  tracker.setAttribute("role", "list");
   tracker.setAttribute("aria-label", `Current stage: ${board.currentStage?.label || "Design"}`);
   (board.stages || []).forEach((stage, index) => {
     const item = el("div", `board-stage stage-${stage.state}`);
+    item.setAttribute("role", "listitem");
+    if (["current", "ready", "attention"].includes(stage.state)) item.setAttribute("aria-current", "step");
     const marker = el("span", "stage-marker", stage.state === "done" ? "✓" : String(index + 1));
     const copy = el("span", "stage-copy");
     copy.append(el("strong", null, stage.label));
-    if (!compact && ["mechanical", "components", "wiring", "finishing"].includes(stage.id)) {
+    if (["mechanical", "components", "wiring", "finishing"].includes(stage.id)) {
       copy.append(el("small", null, `${stage.progress}%`));
     }
     item.append(marker, copy);
