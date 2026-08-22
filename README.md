@@ -174,7 +174,7 @@ scales horizontally.
 PanelVault Cloud exposes the authenticated `POST /api/ai/generate` endpoint for
 its receipt and scheme AI features. Configure `GEMINI_API_KEY` as a server
 environment secret (and optionally `GEMINI_MODEL`, which defaults to
-`gemini-2.5-flash`). The key must never be embedded in either iPhone app,
+`gemini-3.6-flash`). The key must never be embedded in either iPhone app,
 browser JavaScript, or Git. Scanned results must always pass through a user
 review screen before creating boards or changing stock.
 
