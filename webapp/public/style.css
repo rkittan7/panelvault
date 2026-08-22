@@ -737,6 +737,8 @@ img.brand-logo {
 /* Delivery paperwork carries raw OCR text next to matched parts; 400px turns
    every line into three wrapped rows. */
 .modal.wide { max-width: 580px; }
+.creation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+@media (max-width: 620px) { .creation-grid { grid-template-columns: 1fr; } }
 .modal .section-label { margin-top: 2px; }
 .modal .list-scroll { max-height: 220px; }
 

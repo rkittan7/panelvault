@@ -62,6 +62,7 @@ function normalizeCompanies() {
     company.movements ||= [];
     company.customParts ||= [];
     company.partSettings ||= {};
+    company.projects ||= [];
     company.boards ||= [];
     company.barcodeMappings ||= [];
     company.deliveries ||= [];
@@ -536,6 +537,7 @@ async function createCompanyAccount({ companyName, name, password }) {
     movements: [],
     customParts: [],
     partSettings: {},
+    projects: [],
     boards: [],
     barcodeMappings: [],
     deliveries: [],
@@ -701,6 +703,7 @@ const routes = {
           partName: partFor(company, m.partID)?.model || m.partID,
           userName: company.users.find((u) => u.id === m.userID)?.name || "",
         })),
+      projects: company.projects,
       boards: company.boards.map((b) => {
         const board = {
           ...b,
@@ -1119,23 +1122,91 @@ const routes = {
     sendJSON(res, 200, { ok: true });
   },
 
-  // --- boards ------------------------------------------------------------
+  // --- projects & boards -------------------------------------------------
+
+  "POST /api/projects": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can create projects.");
+    const { name, customer, site, dueDate, colorHex } = await readBody(req);
+    if (!name?.trim() || !customer?.trim()) {
+      return fail(res, 400, "Project name and customer are required.");
+    }
+    if (company.projects.some((project) => project.name.toLowerCase() === name.trim().toLowerCase())) {
+      return fail(res, 409, "A project with that name already exists.");
+    }
+    const parsedDueDate = dueDate ? new Date(dueDate) : null;
+    if (parsedDueDate && !Number.isFinite(parsedDueDate.getTime())) {
+      return fail(res, 400, "Enter a valid expected finish date.");
+    }
+    const project = {
+      id: id("project"),
+      name: name.trim(),
+      customer: customer.trim(),
+      site: (site || "").trim(),
+      detail: site?.trim() ? `0 boards • ${site.trim()}` : "0 boards",
+      status: "Design",
+      colorHex: /^#[0-9a-f]{6}$/i.test(colorHex || "") ? colorHex.toUpperCase() : "#5E78FF",
+      dueDate: parsedDueDate?.toISOString() || null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    company.projects.push(project);
+    await save();
+    sendJSON(res, 200, { project });
+  },
 
   "POST /api/boards": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can create boards.");
-    const { number, name, customer, assignedTo } = await readBody(req);
-    if (!number?.trim() && !name?.trim()) return fail(res, 400, "Give the board a number or a name.");
+    const body = await readBody(req);
+    const { number, name, assignedTo } = body;
+    let customer = (body.customer || "").trim();
+    const projectName = (body.project || "No Project").trim() || "No Project";
+    const project = projectName === "No Project"
+      ? null
+      : company.projects.find((item) => item.name === projectName);
+    if (projectName !== "No Project" && !project) return fail(res, 400, "Unknown project.");
+    if (project) customer = project.customer;
+    if (!number?.trim() || !name?.trim() || !customer) {
+      return fail(res, 400, "Board number, name and customer are required.");
+    }
     if (assignedTo && !company.users.some((u) => u.id === assignedTo && u.active)) {
       return fail(res, 400, "Unknown assignee.");
     }
+    const cabinetCount = Math.max(1, Math.min(12, Math.trunc(Number(body.cabinetCount)) || 1));
+    const parseOptionalDate = (value, label) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (!Number.isFinite(parsed.getTime())) {
+        const error = new Error(`Enter a valid ${label}.`);
+        error.statusCode = 400;
+        throw error;
+      }
+      return parsed.toISOString();
+    };
+    const ampere = (body.mainBreakerAmpere || body.ampere || "630A").trim().toUpperCase();
     const board = {
       id: id("board"),
-      number: (number || "").trim(),
-      name: (name || "").trim(),
-      customer: (customer || "").trim(),
+      number: number.trim(),
+      group: (body.group || "").trim(),
+      name: name.trim(),
+      customer,
+      company: (body.company || "").trim(),
+      project: projectName,
+      type: (body.type || "MDB").trim(),
+      subtype: (body.subtype || "Standard").trim(),
+      manufacturer: (body.manufacturer || "Generic").trim(),
+      ampere: ampere.endsWith("A") ? ampere : `${ampere}A`,
+      cabinetCount: String(cabinetCount),
+      buildFormat: ["Panels", "Plate"].includes(body.buildFormat) ? body.buildFormat : "Panels",
+      dateOut: parseOptionalDate(body.dateOut, "out date") || new Date().toISOString(),
+      dueDate: parseOptionalDate(body.dueDate, "due date"),
+      finishDate: parseOptionalDate(body.finishDate, "finish date"),
+      mainBreakerType: (body.mainBreakerType || "Main Breaker").trim(),
+      mainBreakerModel: (body.mainBreakerModel || "").trim(),
+      mainBreakerAmpere: ampere.endsWith("A") ? ampere : `${ampere}A`,
       assignedTo: assignedTo || null,
-      status: "Design",
+      status: "In Progress",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

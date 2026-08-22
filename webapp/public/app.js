@@ -21,6 +21,7 @@ const ICON_PATHS = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   box: '<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
   board: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16"/><path d="M9 3v6"/><path d="M9 14h6"/><path d="M9 17h4"/>',
+  folder: '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   team: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16 15.2c2.6.3 4.5 2 4.5 4.8"/>',
   alert: '<path d="M12 3l10 17H2z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/>',
   pulse: '<path d="M3 12h4l2.5-6 4 12L16 12h5"/>',
@@ -315,6 +316,7 @@ const NAV_ITEMS = [
   { view: "stock", label: "Stock", icon: "box", count: () => state.stock.length },
   { view: "catalog", label: "Catalog", icon: "catalog" },
   { view: "deliveries", label: "Deliveries", icon: "note", count: () => state.deliveries.length },
+  { view: "projects", label: "Projects", icon: "folder", count: () => state.projects.length },
   { view: "boards", label: "Boards", icon: "board", count: () => state.boards.length },
   { view: "team", label: "Team", icon: "team", adminOnly: true, count: () => (state.members || []).length },
 ];
@@ -365,6 +367,7 @@ async function refresh() {
   if (catalog) drawCatalog();
   else if (currentView === "catalog") renderCatalog();
   renderDeliveries();
+  renderProjects();
   renderBoards();
   if (isAdmin()) renderTeam();
 }
@@ -827,7 +830,37 @@ async function openDeliveryModal(deliveryID) {
   });
 }
 
-// ---------------------------------------------------------------- boards
+// ---------------------------------------------------------------- projects & boards
+
+function renderProjects() {
+  const view = $("#view-projects");
+  view.replaceChildren();
+  const actions = [];
+  if (isAdmin()) actions.push(smallBtn("New project", "accent", "plus", openNewProjectModal));
+  view.append(viewHead("Projects", ...actions));
+
+  if (!state.projects.length) {
+    view.append(emptyState("folder", isAdmin()
+      ? "No projects yet. Create the project container, then attach boards to it."
+      : "No projects yet."));
+    return;
+  }
+  const list = el("div", "list");
+  state.projects.forEach((project) => {
+    const linked = state.boards.filter((board) => board.project === project.name);
+    const completed = linked.filter((board) => board.status === "Completed").length;
+    const row = el("div", "row");
+    row.append(chipIcon("folder", project.colorHex || "var(--primary)"));
+    const main = el("div", "row-main");
+    main.append(el("div", "row-title", project.name));
+    main.append(el("div", "row-sub", [project.customer, project.site, `${linked.length} board${linked.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ")));
+    row.append(main);
+    if (project.dueDate) row.append(el("div", "row-sub", `Due ${new Date(project.dueDate).toLocaleString()}`));
+    row.append(statusBadge(linked.length && completed === linked.length ? "Completed" : project.status));
+    list.append(row);
+  });
+  view.append(list);
+}
 
 function renderBoards() {
   const view = $("#view-boards");
@@ -855,7 +888,7 @@ function renderBoards() {
     const title = [b.number, b.name].filter(Boolean).join(" — ");
     main.append(el("div", "row-title", title));
     main.append(el("div", "row-sub",
-      [b.customer, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
+      [b.project !== "No Project" ? b.project : null, b.customer, b.type, b.subtype, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
     row.append(main);
 
     if (canSeeCosts()) {
@@ -1025,6 +1058,14 @@ function field(labelText, placeholder, type = "text") {
   input.type = type;
   label.append(input);
   return { label, input };
+}
+
+function selectField(labelText, values, selected) {
+  const label = el("label", null, labelText);
+  const select = el("select");
+  values.forEach((value) => select.append(new Option(value, value, false, value === selected)));
+  label.append(select);
+  return { label, select };
 }
 
 /** The part a modal is acting on: its photo, its name, and its brand.
@@ -1403,25 +1444,97 @@ function memberSelect(selected) {
 
 function openNewBoardModal() {
   openModal((modal, close) => {
+    modal.classList.add("wide");
     modal.append(el("h3", null, "New board"));
-    const number = field("Board number", "e.g. 2026-114");
-    const name = field("Name", "e.g. Azrieli MDB");
-    const customer = field("Customer", "optional");
+    modal.append(el("div", "modal-sub", "Matches the app's manual board workflow."));
+    const grid = el("div", "creation-grid");
+    const number = field("Board number", "3918.24-1");
+    const group = field("Board group", "optional group");
+    const name = field("Board name", "Main LV Board");
+    const projects = ["No Project", ...state.projects.map((item) => item.name)];
+    const project = selectField("Project", projects, "No Project");
+    const customer = field("Customer name", "search or type customer");
+    const company = field("Company you are doing it for", "optional company");
+    const boardTypes = ["MDB", "SMDB", "MCC", "ATS", "Lighting", "Power", "Generator", "Solar", "UPS", "Fire Pump", "EV Charging"];
+    const type = selectField("Board type", boardTypes, "MDB");
+    const subtype = field("Subtype", "Standard");
+    subtype.input.value = "Standard";
+    const manufacturer = selectField("Board manufacturer", ["Generic", "ABB", "Schneider", "Siemens", "Eaton", "Rittal", "HAGER"], "Generic");
+    const cabinets = selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1");
+    const buildFormat = selectField("Build", ["Panels", "Plate"], "Panels");
+    const dateOut = field("Out date", "", "date");
+    dateOut.input.valueAsDate = new Date();
+    const dueDate = field("Due date/time", "optional", "datetime-local");
+    const finishDate = field("Finished date", "optional", "date");
+    const mainBreakerType = selectField("Main breaker type", ["Main Breaker", "MCB", "MCCB", "ACB", "Isolator", "Fuse Switch"], "Main Breaker");
+    const mainBreakerModel = field("Main breaker model", "ABB");
+    const mainBreakerAmpere = field("Main breaker ampere", "630A");
     const assign = el("label", null, "Give the board to");
     const select = memberSelect(null);
     assign.append(select);
-    modal.append(number.label, name.label, customer.label, assign);
+    project.select.addEventListener("change", () => {
+      const selectedProject = state.projects.find((item) => item.name === project.select.value);
+      if (selectedProject) {
+        customer.input.value = selectedProject.customer;
+        customer.input.disabled = true;
+      } else {
+        customer.input.disabled = false;
+        customer.input.value = "";
+      }
+    });
+    grid.append(number.label, group.label, name.label, project.label, customer.label, company.label,
+      type.label, subtype.label, manufacturer.label, cabinets.label, buildFormat.label, dateOut.label,
+      dueDate.label, finishDate.label, mainBreakerType.label, mainBreakerModel.label, mainBreakerAmpere.label, assign);
+    modal.append(grid);
     modal.append(modalActions(close, "Create", async () => {
-      if (!number.input.value.trim() && !name.input.value.trim()) return;
+      if (!number.input.value.trim() || !name.input.value.trim() || !customer.input.value.trim()) return;
       await api("/api/boards", {
         number: number.input.value,
+        group: group.input.value,
         name: name.input.value,
         customer: customer.input.value,
+        company: company.input.value,
+        project: project.select.value,
+        type: type.select.value,
+        subtype: subtype.input.value,
+        manufacturer: manufacturer.select.value,
+        cabinetCount: cabinets.select.value,
+        buildFormat: buildFormat.select.value,
+        dateOut: dateOut.input.value,
+        dueDate: dueDate.input.value || null,
+        finishDate: finishDate.input.value || null,
+        mainBreakerType: mainBreakerType.select.value,
+        mainBreakerModel: mainBreakerModel.input.value,
+        mainBreakerAmpere: mainBreakerAmpere.input.value,
         assignedTo: select.value || null,
       });
       close();
       await refresh();
       switchView("boards");
+    }));
+  });
+}
+
+function openNewProjectModal() {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, "New project"));
+    modal.append(el("div", "modal-sub", "Create the customer/project container first, then attach boards."));
+    const name = field("Project name", "Azrieli Office Tower");
+    const customer = field("Customer", "search or type customer");
+    const site = field("Site or building", "optional location");
+    const dueDate = field("Expected finish", "optional", "datetime-local");
+    modal.append(name.label, customer.label, site.label, dueDate.label);
+    modal.append(modalActions(close, "Create", async () => {
+      if (!name.input.value.trim() || !customer.input.value.trim()) return;
+      await api("/api/projects", {
+        name: name.input.value,
+        customer: customer.input.value,
+        site: site.input.value,
+        dueDate: dueDate.input.value || null,
+      });
+      close();
+      await refresh();
+      switchView("projects");
     }));
   });
 }

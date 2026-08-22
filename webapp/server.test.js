@@ -183,6 +183,46 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   }
 });
 
+test("projects and boards use the same creation contract as the app", async () => {
+  const server = await startServer();
+  try {
+    const registered = await json(server.baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Synced Panels", name: "Owner", password: "secret12" }),
+    });
+    const headers = { Authorization: `Bearer ${registered.body.token}` };
+    const createdProject = await json(server.baseURL, "/api/projects", {
+      method: "POST", headers,
+      body: JSON.stringify({ name: "Tower A", customer: "Acme", site: "Tel Aviv", dueDate: "2026-09-01T12:00:00Z" }),
+    });
+    assert.equal(createdProject.response.status, 200);
+    assert.equal(createdProject.body.project.customer, "Acme");
+
+    const createdBoard = await json(server.baseURL, "/api/boards", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        number: "3918.24-1", group: "3918.24", name: "Main LV Board",
+        customer: "Wrong customer", project: "Tower A", company: "PanelVault",
+        type: "MDB", subtype: "Form 3b", manufacturer: "ABB", cabinetCount: "3",
+        buildFormat: "Panels", dateOut: "2026-08-22", dueDate: "2026-09-01T12:00:00Z",
+        mainBreakerType: "MCCB", mainBreakerModel: "Tmax XT7", mainBreakerAmpere: "630A",
+      }),
+    });
+    assert.equal(createdBoard.response.status, 200);
+    assert.equal(createdBoard.body.board.customer, "Acme");
+    assert.equal(createdBoard.body.board.project, "Tower A");
+    assert.equal(createdBoard.body.board.cabinetCount, "3");
+    assert.equal(createdBoard.body.board.mainBreakerModel, "Tmax XT7");
+    assert.equal(createdBoard.body.board.status, "In Progress");
+
+    const state = await json(server.baseURL, "/api/state", { headers });
+    assert.equal(state.body.projects.length, 1);
+    assert.equal(state.body.boards[0].group, "3918.24");
+  } finally {
+    server.stop();
+  }
+});
+
 test("a confirmed delivery uploads once and keeps its paperwork", async () => {
   const server = await startServer();
   const { baseURL } = server;
