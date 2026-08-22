@@ -11,6 +11,7 @@ let boardCreationType = null;
 let boardChecklistSyncing = false;
 let boardChecklistRevision = 0;
 let boardChecklistQueue = Promise.resolve();
+let boardChecklistAnimation = null;
 
 // Kept in the same order as AmpereRating and PoleRating in the iPhone app.
 const AMPERE_RATINGS = [
@@ -1017,11 +1018,18 @@ function recalculateBoardProgress(board) {
 }
 
 function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
+  const previousCompletion = Number(board.completion) || 0;
   const selected = new Set(board.cabinetChecklists[cabinetIndex] || []);
   if (checked) selected.add(itemID);
   else selected.delete(itemID);
   board.cabinetChecklists[cabinetIndex] = [...selected];
   recalculateBoardProgress(board);
+  boardChecklistAnimation = {
+    boardID: board.id,
+    cabinetIndex,
+    itemID,
+    from: previousCompletion,
+  };
   boardChecklistSyncing = true;
   const revision = ++boardChecklistRevision;
   renderBoardDetail();
@@ -1046,6 +1054,21 @@ function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
     });
 }
 
+function animateProgressNumber(node, from, to, duration = 560) {
+  if (from === to || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    node.textContent = `${to}%`;
+    return;
+  }
+  const startedAt = performance.now();
+  const frame = (now) => {
+    const elapsed = Math.min((now - startedAt) / duration, 1);
+    const eased = 1 - ((1 - elapsed) ** 3);
+    node.textContent = `${Math.round(from + ((to - from) * eased))}%`;
+    if (elapsed < 1) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
 function boardProperty(iconName, label, value) {
   const card = el("div", "board-property");
   card.append(chipIcon(iconName, "var(--primary)"));
@@ -1065,6 +1088,11 @@ function renderBoardDetail() {
     view.append(emptyState("board", "This board is no longer available."));
     return;
   }
+  const progressAnimation = boardChecklistAnimation?.boardID === board.id
+    ? boardChecklistAnimation
+    : null;
+  const progressFrom = progressAnimation?.from ?? (Number(board.completion) || 0);
+  const progressTo = Number(board.completion) || 0;
 
   const top = el("div", "board-detail-top");
   const identity = el("div", "board-detail-identity");
@@ -1089,14 +1117,16 @@ function renderBoardDetail() {
   progressTitle.append(el("span", "eyebrow", "Production status"), el("h3", null, board.status));
   progressHead.append(progressTitle, el("p", null, boardStatusNote(board)));
   const dial = el("div", "board-progress-dial");
-  dial.style.setProperty("--progress", `${board.completion || 0}%`);
+  dial.style.setProperty("--progress", `${progressFrom}%`);
   const dialInner = el("div");
-  dialInner.append(el("strong", null, `${board.completion || 0}%`), el("span", null, "complete"));
+  const dialValue = el("strong", null, `${progressFrom}%`);
+  dialValue.setAttribute("aria-live", "polite");
+  dialInner.append(dialValue, el("span", null, "complete"));
   dial.append(dialInner);
   progressLayout.append(progressHead, dial);
   const progressTrack = el("div", "board-progress-track");
   const progressFill = el("i");
-  progressFill.style.width = `${board.completion || 0}%`;
+  progressFill.style.width = `${progressFrom}%`;
   progressTrack.append(progressFill);
   progressCard.append(progressLayout, progressTrack);
   view.append(progressCard);
@@ -1146,7 +1176,10 @@ function renderBoardDetail() {
   const checklist = el("div", "board-checklist");
   (board.checklist || []).forEach((item) => {
     const isChecked = checked.has(item.id);
-    const button = el("button", `check-row${isChecked ? " checked" : ""}`);
+    const isChanging = progressAnimation
+      && progressAnimation.cabinetIndex === selectedBoardCabinet
+      && progressAnimation.itemID === item.id;
+    const button = el("button", `check-row${isChecked ? " checked" : ""}${isChanging ? " just-changed" : ""}`);
     button.setAttribute("aria-pressed", String(isChecked));
     button.disabled = !canCheck;
     const mark = el("span", "check-mark", isChecked ? "✓" : "");
@@ -1181,6 +1214,17 @@ function renderBoardDetail() {
   }
   work.append(linkedPanel);
   view.append(work);
+
+  if (progressAnimation) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        dial.style.setProperty("--progress", `${progressTo}%`);
+        progressFill.style.width = `${progressTo}%`;
+        animateProgressNumber(dialValue, progressFrom, progressTo);
+      });
+    });
+    boardChecklistAnimation = null;
+  }
 }
 
 // ---------------------------------------------------------------- team

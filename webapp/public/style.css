@@ -841,16 +841,23 @@ img.brand-logo {
 .page-form-actions button { min-width: 120px; }
 .btn-primary:disabled { opacity: .6; cursor: wait; }
 
+@property --progress {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
 .board-detail-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 2px; }
 .board-detail-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .board-detail-identity h2 { font-size: clamp(25px, 3vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
 .board-detail-identity .mono { color: var(--ink-2); font-size: 12px; }
 .board-detail-actions { display: flex; align-items: center; gap: 8px; padding-top: 3px; }
-.board-save-state { display: inline-flex; align-items: center; gap: 6px; color: var(--positive); font-size: 10.5px; font-weight: 650; }
+.board-save-state { display: inline-flex; align-items: center; gap: 6px; color: var(--positive); font-size: 10.5px; font-weight: 650; transition: color .32s ease; }
 .board-save-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent); }
-.board-save-state.syncing { color: var(--warning); }
-.board-save-state.syncing i { animation: syncPulse .8s ease-in-out infinite alternate; }
-@keyframes syncPulse { to { opacity: .35; transform: scale(.72); } }
+.board-save-state.syncing { color: var(--warning); animation: saveStateIn .34s ease both; }
+.board-save-state.syncing i { animation: syncPulse 1.25s ease-in-out infinite alternate; }
+@keyframes saveStateIn { from { opacity: .45; transform: translateY(2px); } }
+@keyframes syncPulse { to { opacity: .4; transform: scale(.78); } }
 .board-progress-card {
   position: relative; overflow: hidden; padding: 22px 24px;
   border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--line)); border-radius: calc(var(--r) + 5px);
@@ -866,12 +873,13 @@ img.brand-logo {
   display: grid; place-items: center; width: 104px; height: 104px; border-radius: 50%;
   background: conic-gradient(var(--positive) var(--progress), var(--wash-3) 0);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--positive) 16%, transparent);
+  transition: --progress .56s cubic-bezier(.22, .8, .28, 1);
 }
 .board-progress-dial > div { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 82px; height: 82px; border-radius: 50%; background: var(--panel); }
 .board-progress-dial strong { font-size: 22px; line-height: 1; letter-spacing: -.04em; }
 .board-progress-dial span { margin-top: 4px; color: var(--ink-3); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .board-progress-track { height: 12px; margin-top: 16px; overflow: hidden; border-radius: 99px; background: var(--wash-3); }
-.board-progress-track i { display: block; height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--secondary), var(--positive)); box-shadow: 0 0 16px color-mix(in srgb, var(--positive) 35%, transparent); transition: width .25s ease; }
+.board-progress-track i { display: block; height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--secondary), var(--positive)); box-shadow: 0 0 16px color-mix(in srgb, var(--positive) 35%, transparent); transition: width .56s cubic-bezier(.22, .8, .28, 1); }
 .board-property-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .board-property { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); }
 .board-property .chip-icon { width: 34px; height: 34px; flex-shrink: 0; }
@@ -890,13 +898,30 @@ img.brand-logo {
 .cabinet-tabs button.active { color: var(--on-primary); border-color: var(--primary); background: var(--primary); }
 .cabinet-tabs button.active span { color: inherit; opacity: .8; }
 .board-checklist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.check-row { display: flex; align-items: center; gap: 11px; min-height: 64px; padding: 12px; color: var(--ink); text-align: left; border: 1px solid var(--line); border-radius: calc(var(--r-sm) + 2px); background: var(--wash-1); font: inherit; cursor: pointer; transition: border-color .12s, background .12s, transform .08s; touch-action: manipulation; }
+.check-row { display: flex; align-items: center; gap: 11px; min-height: 64px; padding: 12px; color: var(--ink); text-align: left; border: 1px solid var(--line); border-radius: calc(var(--r-sm) + 2px); background: var(--wash-1); font: inherit; cursor: pointer; transition: border-color .34s ease, background .34s ease, transform .18s ease; touch-action: manipulation; }
 .check-row:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 38%, var(--line)); transform: translateY(-1px); }
-.check-row:active:not(:disabled) { transform: scale(.985); }
+.check-row:active:not(:disabled) { transform: scale(.992); }
 .check-row.checked { border-color: color-mix(in srgb, var(--positive) 30%, var(--line)); background: color-mix(in srgb, var(--positive) 9%, var(--panel)); }
+.check-row.just-changed { animation: checkPlateSettle .48s cubic-bezier(.2, .8, .25, 1) both; }
 .check-row:disabled { cursor: not-allowed; opacity: .65; }
-.check-mark { display: grid; place-items: center; width: 23px; height: 23px; flex-shrink: 0; border: 2px solid var(--line-2); border-radius: 50%; color: white; font-size: 12px; font-weight: 900; }
+.check-mark { display: grid; place-items: center; width: 23px; height: 23px; flex-shrink: 0; border: 2px solid var(--line-2); border-radius: 50%; color: white; font-size: 12px; font-weight: 900; transition: border-color .34s ease, background .34s ease; }
 .check-row.checked .check-mark { border-color: var(--positive); background: var(--positive); }
+.check-row.just-changed .check-mark { animation: checkMarkSettle .46s cubic-bezier(.2, .8, .25, 1) both; }
+.check-row.just-changed.checked .check-mark { animation-name: checkMarkComplete; }
+@keyframes checkPlateSettle {
+  0% { transform: scale(.985); }
+  52% { transform: scale(1.008); }
+  100% { transform: scale(1); }
+}
+@keyframes checkMarkSettle {
+  0% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@keyframes checkMarkComplete {
+  0% { opacity: .35; transform: scale(.68); }
+  60% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
 .check-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .check-copy strong { font-size: 11.5px; }
 .check-copy small { color: var(--ink-3); font-size: 9.5px; }
@@ -906,6 +931,15 @@ img.brand-logo {
 .board-linked-panel { position: sticky; top: 18px; }
 .linked-parts { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .linked-parts div { color: var(--ink-2); font-size: 10.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .board-save-state, .board-save-state.syncing, .board-save-state.syncing i,
+  .board-progress-dial, .board-progress-track i, .check-row, .check-row.just-changed,
+  .check-row.just-changed .check-mark, .check-row.just-changed.checked .check-mark {
+    animation: none;
+    transition: none;
+  }
+}
 
 /* ============================================================ invite */
 
