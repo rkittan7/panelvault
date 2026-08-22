@@ -373,16 +373,16 @@ input:focus, select:focus, textarea:focus {
 }
 .sidebar-brand-text span { color: var(--ink-3); font-size: 10.5px; }
 
-.nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
+.nav { display: flex; flex-direction: column; gap: 5px; flex: 1; padding: 4px 0; }
 .nav button {
-  display: flex; align-items: center; gap: 10px;
-  height: 34px; padding: 0 10px;
-  border: 0; background: transparent; border-radius: 8px;
-  color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 550;
-  cursor: pointer; transition: background 0.13s, color 0.13s;
+  display: flex; align-items: center; gap: 11px;
+  height: 42px; padding: 0 12px;
+  border: 0; background: transparent; border-radius: 11px;
+  color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 580;
+  cursor: pointer; transition: background 0.16s, color 0.16s, transform 0.16s;
 }
-.nav button svg { width: 17px; height: 17px; opacity: 0.8; flex-shrink: 0; }
-.nav button:hover { background: var(--wash-1); color: var(--ink); }
+.nav button svg { width: 18px; height: 18px; opacity: 0.78; flex-shrink: 0; }
+.nav button:hover { background: var(--wash-1); color: var(--ink); transform: translateX(2px); }
 .nav button.active { background: var(--primary-dim); color: var(--primary); }
 .nav button.active svg { opacity: 1; }
 .nav .count {
@@ -987,7 +987,6 @@ img.brand-logo {
 .board-type-filter { position: relative; display: flex; align-items: center; min-width: 190px; border-radius: 13px; background: var(--wash-2); }
 .board-type-filter > svg { position: absolute; left: 12px; z-index: 1; color: var(--ink-3); pointer-events: none; }
 .board-type-filter select { height: 42px; padding-left: 38px; border: 0; background: transparent; font-weight: 620; cursor: pointer; }
-
 .board-archive-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .board-archive-metric {
   display: flex; align-items: center; gap: 11px; min-height: 78px; padding: 13px 15px;
@@ -1000,14 +999,12 @@ img.brand-logo {
 .board-archive-metric > span:last-child { display: flex; flex-direction: column; gap: 3px; }
 .board-archive-metric small { color: var(--ink-3); font-size: 10px; font-weight: 750; letter-spacing: .065em; text-transform: uppercase; }
 .board-archive-metric strong { font-size: 24px; line-height: 1; letter-spacing: -.035em; }
-
 .board-status-filters { display: flex; align-items: center; gap: 7px; padding: 3px 1px; }
 .board-status-filters > span { margin-right: 3px; color: var(--ink-3); font-size: 10.5px; font-weight: 750; letter-spacing: .075em; text-transform: uppercase; }
 .board-status-filters button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 650; cursor: pointer; }
 .board-status-filters button span { min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--wash-3); color: var(--ink-3); font-size: 9px; text-align: center; }
 .board-status-filters button.active { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 34%, var(--line)); background: var(--primary-dim); }
 .board-status-filters button.active span { color: var(--primary); background: color-mix(in srgb, var(--primary) 13%, transparent); }
-
 .board-archive-stage { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
 .board-stage-divider { display: grid; grid-template-columns: minmax(44px, 1fr) auto auto; align-items: center; gap: 10px; }
 .board-stage-divider i { display: block; height: 4px; border-radius: 99px; background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 22%, transparent), var(--primary)); }
@@ -1142,11 +1139,36 @@ img.brand-logo {
 .board-stage-tracker.changing .board-stage { animation: stageSettle .58s cubic-bezier(.2, .8, .25, 1) both; }
 @keyframes stageSettle { 0% { opacity: .72; transform: translateY(3px); } 100% { opacity: 1; } }
 .board-property-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.board-property { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); }
+.board-property { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); font: inherit; text-align: left; }
 .board-property .chip-icon { width: 34px; height: 34px; flex-shrink: 0; }
-.board-property > div:last-child { display: flex; flex-direction: column; min-width: 0; }
+.board-property > div:not(.chip-icon) { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .board-property span { color: var(--ink-3); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .board-property strong { margin-top: 2px; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-property.clickable { cursor: pointer; transition: transform .16s, border-color .16s, background .16s, box-shadow .16s; }
+.board-property.clickable:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--primary) 28%, var(--line)); background: var(--raise); box-shadow: var(--apple-shadow); }
+.board-property.clickable > svg { flex-shrink: 0; color: var(--ink-3); }
+
+.worker-drilldown-identity { display: flex; align-items: center; gap: 12px; }
+.worker-drilldown-avatar { display: grid; place-items: center; width: 50px; height: 50px; flex-shrink: 0; border-radius: 15px; color: var(--primary); background: var(--primary-dim); border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent); font-size: 15px; font-weight: 760; }
+.worker-drilldown-identity > div:last-child { min-width: 0; }
+.worker-drilldown-identity h3 { margin-top: 2px; font-size: 20px; }
+.worker-drilldown-identity p { margin-top: 3px; color: var(--ink-3); font-size: 11px; }
+.drilldown-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.drilldown-metrics.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.drilldown-metric { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--wash-1); }
+.drilldown-metric strong { color: var(--metric-color); font-size: 20px; line-height: 1; letter-spacing: -.035em; }
+.drilldown-metric span { color: var(--ink-3); font-size: 8.5px; font-weight: 720; letter-spacing: .045em; text-transform: uppercase; }
+.drilldown-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.drilldown-tags span { padding: 5px 8px; border-radius: 999px; color: var(--ink-2); background: var(--wash-2); font-size: 10px; font-weight: 620; }
+.drilldown-spec { margin-top: 2px; }
+.board-drilldown-list { display: flex; flex-direction: column; gap: 6px; max-height: 330px; overflow-y: auto; padding: 1px; }
+.board-drilldown-row { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 58px; padding: 9px 10px; color: var(--ink); background: var(--wash-1); border: 1px solid var(--line); border-radius: 11px; font: inherit; text-align: left; cursor: pointer; }
+.board-drilldown-row:hover { border-color: var(--line-2); background: var(--raise); }
+.board-drilldown-row > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.board-drilldown-row strong, .board-drilldown-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-drilldown-row strong { font-size: 11.5px; }
+.board-drilldown-row small { margin-top: 2px; color: var(--ink-3); font-size: 9.5px; }
+.board-drilldown-row > svg { flex-shrink: 0; color: var(--ink-3); }
 .board-detail-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 10px; align-items: start; }
 .board-checklist-panel { padding: 16px; border-radius: calc(var(--r) + 2px); }
 .board-checklist-panel .panel-head { align-items: flex-start; margin-bottom: 14px; }
@@ -1371,6 +1393,8 @@ img.brand-logo {
   .board-status-filters button { flex-shrink: 0; }
   .board-file-grid { grid-template-columns: minmax(0, 1fr); }
   .board-component-row { flex-wrap: wrap; }
+  .drilldown-metrics, .drilldown-metrics.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .board-drilldown-row .badge { display: none; }
 }
 
 /* ============================================================ skin picker */

@@ -417,11 +417,11 @@ $("#logout").addEventListener("click", async () => {
 
 const NAV_ITEMS = [
   { view: "dashboard", label: "Dashboard", icon: "grid" },
+  { view: "projects", label: "Projects", icon: "folder", count: () => state.projects.length },
+  { view: "boards", label: "Boards", icon: "board", count: () => state.boards.length },
   { view: "stock", label: "Stock", icon: "box", count: () => state.stock.length },
   { view: "catalog", label: "Catalog", icon: "catalog" },
   { view: "deliveries", label: "Deliveries", icon: "note", count: () => state.deliveries.length },
-  { view: "projects", label: "Projects", icon: "folder", count: () => state.projects.length },
-  { view: "boards", label: "Boards", icon: "board", count: () => state.boards.length },
   { view: "team", label: "Team", icon: "team", adminOnly: true, count: () => (state.members || []).length },
 ];
 
@@ -1341,12 +1341,18 @@ async function updateBoardStage(board, stageID) {
   }
 }
 
-function boardProperty(iconName, label, value) {
-  const card = el("div", "board-property");
+function boardProperty(iconName, label, value, onClick) {
+  const card = el(onClick ? "button" : "div", `board-property${onClick ? " clickable" : ""}`);
+  if (onClick) {
+    card.type = "button";
+    card.setAttribute("aria-label", `${label}: ${value || "Not set"}. Open details`);
+    card.addEventListener("click", onClick);
+  }
   card.append(chipIcon(iconName, "var(--primary)"));
   const copy = el("div");
   copy.append(el("span", null, label), el("strong", null, value || "Not set"));
   card.append(copy);
+  if (onClick) card.append(icon("chevron", 15));
   return card;
 }
 
@@ -1499,6 +1505,114 @@ function boardAttachmentSection(board, kind, title, description) {
   return section;
 }
 
+function boardDrilldownRow(board, close) {
+  const row = el("button", "board-drilldown-row");
+  row.type = "button";
+  row.append(chipIcon("board", board.status === "Completed" ? "var(--positive)" : "var(--secondary)"));
+  const copy = el("span");
+  copy.append(
+    el("strong", null, [board.number, board.name].filter(Boolean).join(" — ")),
+    el("small", null, [board.project !== "No Project" ? board.project : null, board.currentStage?.label || board.status, `${board.completion || 0}%`].filter(Boolean).join(" · ")),
+  );
+  row.append(copy, statusBadge(board.status), icon("chevron", 15));
+  row.addEventListener("click", () => {
+    close();
+    openBoardDetail(board.id);
+  });
+  return row;
+}
+
+function drilldownMetric(label, value, color = "var(--primary)") {
+  const metric = el("div", "drilldown-metric");
+  metric.style.setProperty("--metric-color", color);
+  metric.append(el("strong", null, String(value)), el("span", null, label));
+  return metric;
+}
+
+function openCustomerOverview(customer) {
+  const boards = state.boards.filter((board) => board.customer === customer);
+  const projects = state.projects.filter((project) => project.customer === customer);
+  const completed = boards.filter((board) => board.status === "Completed").length;
+  openModal((modal, close) => {
+    modal.classList.add("wide", "board-drilldown-modal");
+    modal.append(el("span", "eyebrow", "Customer overview"), el("h3", null, customer || "No customer"));
+    modal.append(el("p", "modal-sub", `${projects.length} project${projects.length === 1 ? "" : "s"} · ${boards.length} board${boards.length === 1 ? "" : "s"}`));
+    const metrics = el("div", "drilldown-metrics");
+    metrics.append(
+      drilldownMetric("Projects", projects.length),
+      drilldownMetric("Active boards", boards.length - completed, "var(--secondary)"),
+      drilldownMetric("Finished", completed, "var(--positive)"),
+    );
+    modal.append(metrics);
+    if (projects.length) {
+      modal.append(el("div", "section-label", "Projects"));
+      const projectList = el("div", "drilldown-tags");
+      projects.forEach((project) => projectList.append(el("span", null, project.name)));
+      modal.append(projectList);
+    }
+    modal.append(el("div", "section-label", "Boards"));
+    const list = el("div", "board-drilldown-list");
+    boards.sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
+      .forEach((board) => list.append(boardDrilldownRow(board, close)));
+    modal.append(boards.length ? list : emptyState("board", "No boards are linked to this customer."));
+  });
+}
+
+function openBreakerOverview(sourceBoard) {
+  const breakerLabel = [sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel, sourceBoard.mainBreakerAmpere].filter(Boolean).join(" · ");
+  const matching = state.boards.filter((board) =>
+    board.mainBreakerType === sourceBoard.mainBreakerType
+      && board.mainBreakerModel === sourceBoard.mainBreakerModel
+      && board.mainBreakerAmpere === sourceBoard.mainBreakerAmpere);
+  openModal((modal, close) => {
+    modal.classList.add("wide", "board-drilldown-modal");
+    modal.append(el("span", "eyebrow", "Main breaker"), el("h3", null, sourceBoard.mainBreakerModel || sourceBoard.mainBreakerType || "Not specified"));
+    modal.append(el("p", "modal-sub", breakerLabel || "No main-breaker details recorded."));
+    const specs = el("dl", "spec drilldown-spec");
+    [["Type", sourceBoard.mainBreakerType], ["Model", sourceBoard.mainBreakerModel], ["Ampere", sourceBoard.mainBreakerAmpere]]
+      .forEach(([label, value]) => specs.append(el("dt", null, label), el("dd", null, value || "Not set")));
+    modal.append(specs, el("div", "section-label", `Used on ${matching.length} board${matching.length === 1 ? "" : "s"}`));
+    const list = el("div", "board-drilldown-list");
+    matching.forEach((board) => list.append(boardDrilldownRow(board, close)));
+    modal.append(list);
+  });
+}
+
+function openWorkerOverview(workerID, workerName) {
+  const member = (state.members || []).find((item) => item.id === workerID)
+    || (state.members || []).find((item) => item.name === workerName);
+  const boards = state.boards.filter((board) => workerID ? board.assignedTo === workerID : board.assignedName === workerName);
+  const completed = boards.filter((board) => board.status === "Completed").length;
+  const active = boards.length - completed;
+  const average = boards.length
+    ? Math.round(boards.reduce((sum, board) => sum + (board.completion || 0), 0) / boards.length)
+    : 0;
+  openModal((modal, close) => {
+    modal.classList.add("wide", "board-drilldown-modal");
+    const identity = el("div", "worker-drilldown-identity");
+    const initials = (workerName || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+    identity.append(el("div", "worker-drilldown-avatar", initials || "?"));
+    const copy = el("div");
+    copy.append(el("span", "eyebrow", "Worker lifetime"), el("h3", null, workerName || "Unassigned"));
+    const joined = member?.createdAt ? `Joined ${new Date(member.createdAt).toLocaleDateString()}` : "Board production history";
+    copy.append(el("p", null, [member ? roleLabel(member.role) : null, joined].filter(Boolean).join(" · ")));
+    identity.append(copy);
+    modal.append(identity);
+    const metrics = el("div", "drilldown-metrics four");
+    metrics.append(
+      drilldownMetric("Boards made", completed, "var(--positive)"),
+      drilldownMetric("Active", active, "var(--secondary)"),
+      drilldownMetric("Lifetime boards", boards.length),
+      drilldownMetric("Avg. completion", `${average}%`, "var(--warning)"),
+    );
+    modal.append(metrics, el("div", "section-label", "Board history"));
+    const list = el("div", "board-drilldown-list");
+    boards.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .forEach((board) => list.append(boardDrilldownRow(board, close)));
+    modal.append(boards.length ? list : emptyState("board", "No boards are assigned to this worker yet."));
+  });
+}
+
 function renderBoardDetail() {
   const view = $("#view-board-detail");
   if (!view) return;
@@ -1545,11 +1659,14 @@ function renderBoardDetail() {
   const dueDate = board.dueDate ? new Date(board.dueDate).toLocaleDateString() : "No due date";
   properties.append(
     boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project),
-    boardProperty("team", "Builder", board.assignedName || "Unassigned"),
-    boardProperty("shield", "QA reviewer", board.qaAssignedName || "Unassigned"),
+    boardProperty("team", "Builder", board.assignedName || "Unassigned", board.assignedName
+      ? () => openWorkerOverview(board.assignedTo, board.assignedName) : null),
+    boardProperty("shield", "QA reviewer", board.qaAssignedName || "Unassigned", board.qaAssignedName
+      ? () => openWorkerOverview(board.qaAssignedTo, board.qaAssignedName) : null),
     boardProperty("cabinet", "Build", `${board.cabinetCount} cabinet${String(board.cabinetCount) === "1" ? "" : "s"} · ${board.buildFormat}`),
-    boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")),
-    boardProperty("hash", "Customer", board.customer),
+    boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · "),
+      () => openBreakerOverview(board)),
+    boardProperty("hash", "Customer", board.customer, () => openCustomerOverview(board.customer)),
     boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
   );
   view.append(properties);
