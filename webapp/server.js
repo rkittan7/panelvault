@@ -66,6 +66,7 @@ function normalizeCompanies() {
     company.boards ||= [];
     company.barcodeMappings ||= [];
     company.deliveries ||= [];
+    company.workspaceVersion = Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0;
     // The role set gained Staff Manager and QA, and "worker" was renamed to
     // "staff". Migrate on load so existing sessions keep their access.
     for (const user of company.users || []) {
@@ -211,6 +212,11 @@ function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
 }
 
+function bumpWorkspace(company) {
+  company.workspaceVersion = (Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0) + 1;
+  return company.workspaceVersion;
+}
+
 // Matches ChecklistTemplate in the iPhone app. The weights are the actual
 // production progress, not an equal count of ticks.
 const SINGLE_CABINET_CHECKLIST = [
@@ -287,6 +293,131 @@ function boardProgressPayload(board) {
     checklist: checklist.map(([title, weight]) => ({ id: title, title, weight })),
     cabinetChecklists,
     cabinetProgress,
+  };
+}
+
+function cloudID(value, label) {
+  const clean = String(value || "").trim();
+  if (!clean || clean.length > 140 || /[\r\n]/.test(clean)) {
+    const error = new Error(`${label} has an invalid id.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return clean;
+}
+
+function cloudDate(value, label, fallback = null) {
+  if (value == null || value === "") return fallback;
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) {
+    const error = new Error(`${label} has an invalid date.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return parsed.toISOString();
+}
+
+function cloudColor(value) {
+  if (/^#[0-9a-f]{6}$/i.test(String(value || ""))) return String(value).toUpperCase();
+  const number = Number(value);
+  if (Number.isInteger(number) && number >= 0 && number <= 0xFFFFFF) {
+    return `#${number.toString(16).padStart(6, "0").toUpperCase()}`;
+  }
+  return "#5E78FF";
+}
+
+function normalizeCloudProject(incoming, existing) {
+  const name = String(incoming.name || "").trim().slice(0, 160);
+  const customer = String(incoming.customer || "").trim().slice(0, 160);
+  if (!name || !customer) {
+    const error = new Error("Every synced project needs a name and customer.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    id: cloudID(incoming.id, "A project"),
+    name,
+    customer,
+    site: String(incoming.site || "").trim().slice(0, 200),
+    detail: String(incoming.detail || "").trim().slice(0, 1000),
+    status: ["Design", "In Progress", "Completed"].includes(incoming.status) ? incoming.status : "Design",
+    colorHex: cloudColor(incoming.colorHex),
+    dueDate: cloudDate(incoming.dueDate, "A project", null),
+    createdAt: existing?.createdAt || cloudDate(incoming.createdAt, "A project", new Date().toISOString()),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeCloudBoard(incoming, existing, projects) {
+  const number = String(incoming.number || "").trim().slice(0, 120);
+  const name = String(incoming.name || "").trim().slice(0, 160);
+  let customer = String(incoming.customer || "").trim().slice(0, 160);
+  if (!number || !name || !customer) {
+    const error = new Error("Every synced board needs a number, name, and customer.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const projectName = String(incoming.project || "No Project").trim().slice(0, 160) || "No Project";
+  const project = projectName === "No Project" ? null : projects.find((item) => item.name === projectName);
+  if (projectName !== "No Project" && !project) {
+    const error = new Error(`A synced board references unknown project ${projectName}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (project) customer = project.customer;
+  const cabinetCount = Math.max(1, Math.min(12, Math.trunc(Number(incoming.cabinetCount)) || 1));
+  const ampere = String(incoming.mainBreakerAmpere || incoming.ampere || "630A").trim().toUpperCase();
+  const board = {
+    id: cloudID(incoming.id, "A board"),
+    number,
+    group: String(incoming.group || "").trim().slice(0, 120),
+    name,
+    customer,
+    company: String(incoming.company || "").trim().slice(0, 160),
+    project: projectName,
+    type: String(incoming.type || "MDB").trim().slice(0, 100),
+    subtype: String(incoming.subtype || "Standard").trim().slice(0, 100),
+    manufacturer: String(incoming.manufacturer || "Generic").trim().slice(0, 100),
+    ampere: String(incoming.ampere || ampere).trim().slice(0, 100),
+    cabinetCount: String(cabinetCount),
+    buildFormat: ["Panels", "Plate"].includes(incoming.buildFormat) ? incoming.buildFormat : "Panels",
+    dateOut: cloudDate(incoming.dateOut, "A board", new Date().toISOString()),
+    dueDate: cloudDate(incoming.dueDate, "A board", null),
+    finishDate: cloudDate(incoming.finishDate, "A board", null),
+    finishTimeHours: String(incoming.finishTimeHours || "").trim().slice(0, 40),
+    mainBreakerType: String(incoming.mainBreakerType || "Main Breaker").trim().slice(0, 100),
+    mainBreakerModel: String(incoming.mainBreakerModel || "").trim().slice(0, 140),
+    mainBreakerAmpere: ampere.endsWith("A") ? ampere : `${ampere}A`,
+    componentTypes: Array.isArray(incoming.componentTypes)
+      ? incoming.componentTypes.map(String).map((item) => item.trim().slice(0, 100)).filter(Boolean).slice(0, 100)
+      : [],
+    colorHex: cloudColor(incoming.colorHex),
+    assignedTo: existing?.assignedTo || incoming.assignedTo || null,
+    personalChecklistItems: Array.isArray(incoming.personalChecklistItems)
+      ? incoming.personalChecklistItems.slice(0, 100).map((item) => ({
+          id: cloudID(item.id, "A personal checklist item"),
+          title: String(item.title || "").trim().slice(0, 200),
+          isDone: item.isDone === true,
+        })).filter((item) => item.title)
+      : [],
+    cabinetChecklists: Array.isArray(incoming.cabinetChecklists) ? incoming.cabinetChecklists : [],
+    createdAt: existing?.createdAt || cloudDate(incoming.createdAt, "A board", new Date().toISOString()),
+    updatedAt: new Date().toISOString(),
+  };
+  board.cabinetChecklists = normalizedBoardChecklists(board);
+  board.status = boardStatus(board);
+  return board;
+}
+
+function workspacePayload(company) {
+  return {
+    version: Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0,
+    projects: company.projects,
+    boards: company.boards.map((board) => ({
+      ...board,
+      ...boardProgressPayload(board),
+      assignedName: company.users.find((user) => user.id === board.assignedTo)?.name || "",
+    })),
   };
 }
 
@@ -622,6 +753,7 @@ async function createCompanyAccount({ companyName, name, password }) {
     partSettings: {},
     projects: [],
     boards: [],
+    workspaceVersion: 0,
     barcodeMappings: [],
     deliveries: [],
   };
@@ -1227,6 +1359,92 @@ const routes = {
 
   // --- projects & boards -------------------------------------------------
 
+  "GET /api/sync/workspace": async (req, res, session) => {
+    sendJSON(res, 200, workspacePayload(session.company));
+  },
+
+  "POST /api/sync/workspace": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can sync the full workspace.");
+    const { expectedVersion, projects, boards } = await readBody(req);
+    if (!Number.isInteger(expectedVersion) || expectedVersion !== company.workspaceVersion) {
+      return fail(res, 409, "The workspace changed elsewhere. Pull the latest version and merge first.");
+    }
+    if (!Array.isArray(projects) || projects.length > 500 || !Array.isArray(boards) || boards.length > 1000) {
+      return fail(res, 400, "Send at most 500 projects and 1000 boards.");
+    }
+    const existingProjects = new Map(company.projects.map((item) => [item.id, item]));
+    const syncedProjects = projects.map((item) => normalizeCloudProject(item, existingProjects.get(String(item.id || "").trim())));
+    if (new Set(syncedProjects.map((item) => item.id)).size !== syncedProjects.length
+        || new Set(syncedProjects.map((item) => item.name.toLowerCase())).size !== syncedProjects.length) {
+      return fail(res, 400, "Synced projects must have unique ids and names.");
+    }
+    const existingBoards = new Map(company.boards.map((item) => [item.id, item]));
+    const syncedBoards = boards.map((item) => normalizeCloudBoard(
+      item, existingBoards.get(String(item.id || "").trim()), syncedProjects));
+    if (new Set(syncedBoards.map((item) => item.id)).size !== syncedBoards.length) {
+      return fail(res, 400, "Synced boards must have unique ids.");
+    }
+    if (syncedBoards.some((board) => board.assignedTo
+        && !company.users.some((member) => member.id === board.assignedTo && member.active))) {
+      return fail(res, 400, "A synced board references an unknown assignee.");
+    }
+    company.projects = syncedProjects;
+    company.boards = syncedBoards;
+    bumpWorkspace(company);
+    await save();
+    sendJSON(res, 200, workspacePayload(company));
+  },
+
+  "POST /api/sync/board-progress": async (req, res, session) => {
+    const { company, user } = session;
+    const { expectedVersion, boards } = await readBody(req);
+    if (!Number.isInteger(expectedVersion) || expectedVersion !== company.workspaceVersion) {
+      return fail(res, 409, "The workspace changed elsewhere. Pull the latest version and merge first.");
+    }
+    if (!Array.isArray(boards) || boards.length > 1000) {
+      return fail(res, 400, "Send at most 1000 board progress records.");
+    }
+    const updates = boards.map((incoming) => {
+      const board = company.boards.find((item) => item.id === String(incoming.id || ""));
+      if (!board) {
+        const error = new Error("A synced board was not found.");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!isAdmin(user) && board.assignedTo !== user.id) {
+        const error = new Error("Only the assigned builder or a manager can sync this checklist.");
+        error.statusCode = 403;
+        throw error;
+      }
+      const candidate = {
+        ...board,
+        cabinetChecklists: Array.isArray(incoming.cabinetChecklists) ? incoming.cabinetChecklists : [],
+      };
+      const personalChecklistItems = Array.isArray(incoming.personalChecklistItems)
+        ? incoming.personalChecklistItems.slice(0, 100).map((item) => ({
+            id: cloudID(item.id, "A personal checklist item"),
+            title: String(item.title || "").trim().slice(0, 200),
+            isDone: item.isDone === true,
+          })).filter((item) => item.title)
+        : [];
+      return {
+        board,
+        cabinetChecklists: normalizedBoardChecklists(candidate),
+        personalChecklistItems,
+      };
+    });
+    for (const update of updates) {
+      update.board.cabinetChecklists = update.cabinetChecklists;
+      update.board.personalChecklistItems = update.personalChecklistItems;
+      update.board.status = boardStatus(update.board);
+      update.board.updatedAt = new Date().toISOString();
+    }
+    if (updates.length) bumpWorkspace(company);
+    await save();
+    sendJSON(res, 200, workspacePayload(company));
+  },
+
   "POST /api/projects": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can create projects.");
@@ -1254,6 +1472,7 @@ const routes = {
       updatedAt: new Date().toISOString(),
     };
     company.projects.push(project);
+    bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { project });
   },
@@ -1315,6 +1534,7 @@ const routes = {
       updatedAt: new Date().toISOString(),
     };
     company.boards.push(board);
+    bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { board: { ...board, ...boardProgressPayload(board) } });
   },
@@ -1339,6 +1559,7 @@ const routes = {
     }
     board.status = boardStatus(board);
     board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { ok: true, status: board.status, completion: boardProgress(board) });
   },
@@ -1366,6 +1587,7 @@ const routes = {
     board.cabinetChecklists = lists;
     board.status = boardStatus(board);
     board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { ok: true, ...boardProgressPayload(board) });
   },

@@ -53,6 +53,12 @@ struct PanelVaultAppView: View {
   @State private var loadedSnapshot = false
   @State private var pendingPersistWorkItem: DispatchWorkItem?
   @State private var cloudAccount = PanelCloudAccountKeychain.load()
+  @State private var cloudWorkspaceVersion = 0
+  @State private var cloudWorkspaceReady = false
+  @State private var cloudWorkspaceDirty = false
+  @State private var cloudSyncedSignature = ""
+  @State private var applyingCloudWorkspace = false
+  @State private var pendingCloudSyncWorkItem: DispatchWorkItem?
 
   private var selectedTheme: PanelTheme {
     PanelTheme.all.first { $0.id == selectedThemeID } ?? .cupertino
@@ -87,15 +93,19 @@ struct PanelVaultAppView: View {
     .onChange(of: scenePhase) { phase in
       if phase != .active {
         persistSnapshot(synchronously: true)
+      } else {
+        Task { await pullCloudWorkspace() }
       }
     }
     .onChange(of: projectPersistenceSignature) { _ in
       applyCustomerColors()
       schedulePersistSnapshot()
+      scheduleCloudWorkspacePush()
     }
     .onChange(of: boardPersistenceSignature) { _ in
       applyCustomerColors()
       schedulePersistSnapshot()
+      scheduleCloudWorkspacePush()
     }
     .onChange(of: customerPersistenceSignature) { _ in
       applyCustomerColors()
@@ -109,6 +119,19 @@ struct PanelVaultAppView: View {
     }
     .onChange(of: boardTypePersistenceSignature) { _ in
       schedulePersistSnapshot()
+    }
+    .onChange(of: cloudAccount?.token) { _ in
+      pendingCloudSyncWorkItem?.cancel()
+      cloudWorkspaceReady = false
+      cloudWorkspaceDirty = false
+      cloudSyncedSignature = ""
+    }
+    .task(id: cloudAccount?.token) {
+      guard cloudAccount != nil else { return }
+      while !Task.isCancelled {
+        await pullCloudWorkspace()
+        try? await Task.sleep(nanoseconds: 20_000_000_000)
+      }
     }
   }
 
@@ -320,6 +343,132 @@ struct PanelVaultAppView: View {
     }
     pendingPersistWorkItem = workItem
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+  }
+
+  private var cloudWorkspaceSignature: String {
+    "\(projectPersistenceSignature)##\(boardPersistenceSignature)"
+  }
+
+  private var cloudAccountCanAdminister: Bool {
+    guard let role = cloudAccount?.role.lowercased() else { return false }
+    return ["owner", "manager", "staff-manager"].contains(role)
+  }
+
+  private func scheduleCloudWorkspacePush() {
+    guard loadedSnapshot, cloudWorkspaceReady, !applyingCloudWorkspace,
+          cloudAccount != nil, cloudWorkspaceSignature != cloudSyncedSignature else { return }
+    cloudWorkspaceDirty = true
+    pendingCloudSyncWorkItem?.cancel()
+    let workItem = DispatchWorkItem {
+      Task { await pushCloudWorkspace() }
+    }
+    pendingCloudSyncWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
+  }
+
+  private func pullCloudWorkspace() async {
+    guard loadedSnapshot, let account = cloudAccount,
+          !cloudWorkspaceDirty, !applyingCloudWorkspace else { return }
+    do {
+      let remote = try await PanelCloudClient().downloadWorkspace(account: account)
+      guard cloudAccount?.token == account.token else { return }
+
+      // The first connection of an existing phone archive migrates it only into
+      // an empty company. A populated company always wins, preventing records
+      // from one account being copied into another after an account switch.
+      if remote.projects.isEmpty, remote.boards.isEmpty,
+         (!projects.isEmpty || !createdBoards.isEmpty), cloudAccountCanAdminister {
+        let migrated = try await PanelCloudClient().uploadWorkspace(
+          account: account,
+          expectedVersion: remote.version,
+          projects: projects,
+          boards: createdBoards
+        )
+        applyCloudWorkspace(migrated)
+      } else {
+        applyCloudWorkspace(remote)
+      }
+    } catch {
+      // Keep the phone fully usable offline. The task retries on foreground and
+      // every polling interval, while local snapshot persistence continues.
+    }
+  }
+
+  private func pushCloudWorkspace() async {
+    guard let account = cloudAccount, cloudWorkspaceReady,
+          cloudWorkspaceDirty, !applyingCloudWorkspace else { return }
+    let localProjects = projects
+    let localBoards = createdBoards
+    let localSignature = cloudWorkspaceSignature
+    do {
+      let result: PanelCloudWorkspace
+      if cloudAccountCanAdminister {
+        do {
+          result = try await PanelCloudClient().uploadWorkspace(
+            account: account,
+            expectedVersion: cloudWorkspaceVersion,
+            projects: localProjects,
+            boards: localBoards
+          )
+        } catch {
+          // Optimistic versioning prevents a stale phone from overwriting a web
+          // edit. Pull the new version and replay this local edit once.
+          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
+          result = try await PanelCloudClient().uploadWorkspace(
+            account: account,
+            expectedVersion: latest.version,
+            projects: localProjects,
+            boards: localBoards
+          )
+        }
+      } else {
+        do {
+          result = try await PanelCloudClient().uploadBoardProgress(
+            account: account,
+            expectedVersion: cloudWorkspaceVersion,
+            boards: localBoards
+          )
+        } catch {
+          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
+          result = try await PanelCloudClient().uploadBoardProgress(
+            account: account,
+            expectedVersion: latest.version,
+            boards: localBoards
+          )
+        }
+      }
+      guard cloudAccount?.token == account.token else { return }
+      if cloudWorkspaceSignature == localSignature {
+        applyCloudWorkspace(result)
+      } else {
+        // A second tap landed while the first upload was in flight. Keep that
+        // newer local state and send it against the version we just received.
+        cloudWorkspaceVersion = result.version
+        cloudWorkspaceDirty = true
+        pendingCloudSyncWorkItem?.cancel()
+        let workItem = DispatchWorkItem { Task { await pushCloudWorkspace() } }
+        pendingCloudSyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+      }
+    } catch {
+      // Leave the dirty flag set; the next foreground/poll or local edit retries.
+    }
+  }
+
+  private func applyCloudWorkspace(_ workspace: PanelCloudWorkspace) {
+    let existingProjects = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+    let existingBoards = Dictionary(uniqueKeysWithValues: createdBoards.map { ($0.id, $0) })
+    applyingCloudWorkspace = true
+    projects = workspace.projects.map { $0.project(preserving: existingProjects[$0.id]) }
+    createdBoards = workspace.boards.map { $0.board(preserving: existingBoards[$0.id]) }
+    cloudWorkspaceVersion = workspace.version
+    cloudWorkspaceReady = true
+    cloudWorkspaceDirty = false
+    cloudSyncedSignature = cloudWorkspaceSignature
+    persistSnapshot()
+    DispatchQueue.main.async {
+      applyingCloudWorkspace = false
+    }
   }
 
   private var projectPersistenceSignature: String {
@@ -1190,7 +1339,7 @@ struct ProjectsView: View {
   @State private var selectedBoardID: String?
 
   private var statuses: [String] {
-    archiveMode == .projects ? ["All", "In Progress", "Completed", "Design"] : ["All", "In Progress", "Finished"]
+    archiveMode == .projects ? ["All", "In Progress", "Completed", "Design"] : ["All", "Design", "In Progress", "Finished"]
   }
 
   /// Projects carry the primary accent and boards the secondary one, matching
@@ -7852,6 +8001,206 @@ private struct PanelCloudInvite {
   }
 }
 
+private enum PanelCloudDate {
+  static func decode(_ value: String?) -> Date? {
+    guard let value else { return nil }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) { return date }
+    return ISO8601DateFormatter().date(from: value)
+  }
+
+  static func encode(_ value: Date?) -> String? {
+    guard let value else { return nil }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: value)
+  }
+}
+
+private func panelCloudColor(_ value: String?) -> UInt32 {
+  guard let value else { return 0x5E78FF }
+  let clean = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+  return UInt32(clean, radix: 16) ?? 0x5E78FF
+}
+
+private struct PanelCloudWorkspace: Codable {
+  let version: Int
+  let projects: [PanelCloudProject]
+  let boards: [PanelCloudBoard]
+}
+
+private struct PanelCloudWorkspaceUpload: Encodable {
+  let expectedVersion: Int
+  let projects: [PanelCloudProject]
+  let boards: [PanelCloudBoard]
+}
+
+private struct PanelCloudBoardProgressUpload: Encodable {
+  let expectedVersion: Int
+  let boards: [PanelCloudBoardProgress]
+}
+
+private struct PanelCloudBoardProgress: Encodable {
+  let id: String
+  let cabinetChecklists: [[String]]
+  let personalChecklistItems: [PanelCloudPersonalChecklistItem]
+
+  init(board: BoardDraft) {
+    id = board.id
+    cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0).sorted() }
+    personalChecklistItems = board.personalChecklistItems.map(PanelCloudPersonalChecklistItem.init(item:))
+  }
+}
+
+private struct PanelCloudProject: Codable {
+  let id: String
+  let name: String
+  let customer: String
+  let site: String?
+  let detail: String
+  let status: String
+  let colorHex: String?
+  let dueDate: String?
+  let createdAt: String?
+
+  init(project: ProjectItem) {
+    id = project.id
+    name = project.name
+    customer = project.customer
+    site = nil
+    detail = project.detail
+    status = project.status
+    colorHex = String(format: "#%06X", project.color.archiveHex)
+    dueDate = PanelCloudDate.encode(project.dueDate)
+    createdAt = nil
+  }
+
+  func project(preserving existing: ProjectItem?) -> ProjectItem {
+    ProjectItem(
+      id: id,
+      name: name,
+      customer: customer,
+      detail: detail,
+      status: status,
+      color: Color(hex: panelCloudColor(colorHex)),
+      dueDate: PanelCloudDate.decode(dueDate),
+      schemeAttachments: existing?.schemeAttachments ?? [],
+      coverToken: existing?.coverToken,
+      photoTokens: existing?.photoTokens ?? []
+    )
+  }
+}
+
+private struct PanelCloudPersonalChecklistItem: Codable {
+  let id: String
+  let title: String
+  let isDone: Bool
+
+  init(item: PersonalChecklistItem) {
+    id = item.id
+    title = item.title
+    isDone = item.isDone
+  }
+}
+
+private struct PanelCloudBoard: Codable {
+  let id: String
+  let number: String
+  let group: String?
+  let name: String
+  let customer: String
+  let company: String?
+  let project: String
+  let type: String
+  let subtype: String?
+  let manufacturer: String?
+  let ampere: String?
+  let cabinetCount: String
+  let buildFormat: String?
+  let dateOut: String?
+  let dueDate: String?
+  let finishDate: String?
+  let finishTimeHours: String?
+  let mainBreakerType: String?
+  let mainBreakerModel: String?
+  let mainBreakerAmpere: String?
+  let componentTypes: [String]?
+  let colorHex: String?
+  let assignedTo: String?
+  let assignedName: String?
+  let cabinetChecklists: [[String]]?
+  let personalChecklistItems: [PanelCloudPersonalChecklistItem]?
+  let createdAt: String?
+
+  init(board: BoardDraft) {
+    id = board.id
+    number = board.number
+    group = board.group
+    name = board.name
+    customer = board.customer
+    company = board.company
+    project = board.project
+    type = board.type
+    subtype = board.subtype
+    manufacturer = board.manufacturer
+    ampere = board.ampere
+    cabinetCount = board.cabinetCount
+    buildFormat = board.buildFormat
+    dateOut = PanelCloudDate.encode(board.dateOut)
+    dueDate = PanelCloudDate.encode(board.dueDate)
+    finishDate = PanelCloudDate.encode(board.finishDate)
+    finishTimeHours = board.finishTimeHours
+    mainBreakerType = board.mainBreakerType
+    mainBreakerModel = board.mainBreakerModel
+    mainBreakerAmpere = board.mainBreakerAmpere
+    componentTypes = board.componentTypes
+    colorHex = String(format: "#%06X", board.color.archiveHex)
+    assignedTo = board.assignedTo
+    assignedName = board.assignedName
+    cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0).sorted() }
+    personalChecklistItems = board.personalChecklistItems.map(PanelCloudPersonalChecklistItem.init(item:))
+    createdAt = nil
+  }
+
+  func board(preserving existing: BoardDraft?) -> BoardDraft {
+    BoardDraft(
+      id: id,
+      number: number,
+      group: group ?? "",
+      name: name,
+      customer: customer,
+      company: company ?? "",
+      project: project,
+      type: type,
+      subtype: subtype ?? BoardSubtypeCatalog.defaultSubtype,
+      manufacturer: manufacturer ?? "Generic",
+      ampere: ampere ?? mainBreakerAmpere ?? "630A",
+      cabinetCount: cabinetCount,
+      buildFormat: buildFormat ?? "Panels",
+      dateOut: PanelCloudDate.decode(dateOut) ?? Date(),
+      dueDate: PanelCloudDate.decode(dueDate),
+      finishDate: PanelCloudDate.decode(finishDate),
+      finishTimeHours: finishTimeHours ?? "",
+      mainBreakerType: mainBreakerType ?? "Main Breaker",
+      mainBreakerModel: mainBreakerModel ?? "",
+      mainBreakerAmpere: mainBreakerAmpere ?? ampere ?? "630A",
+      componentTypes: componentTypes ?? [],
+      color: Color(hex: panelCloudColor(colorHex)),
+      coverToken: existing?.coverToken,
+      photoTokens: existing?.photoTokens ?? [],
+      schemeAttachments: existing?.schemeAttachments ?? [],
+      completedChecklistItems: [],
+      personalChecklistItems: (personalChecklistItems ?? []).map {
+        PersonalChecklistItem(id: $0.id, title: $0.title, isDone: $0.isDone)
+      },
+      cabinetChecklists: (cabinetChecklists ?? []).map(Set.init),
+      assignedTo: assignedTo,
+      assignedName: assignedName ?? ""
+    )
+  }
+}
+
 private struct PanelCloudClient {
   func signIn(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
     try await accountRequest(
@@ -7889,6 +8238,47 @@ private struct PanelCloudClient {
     )
   }
 
+  func downloadWorkspace(account: PanelCloudAccount) async throws -> PanelCloudWorkspace {
+    try await authenticatedRequest(account: account, path: "/api/sync/workspace", method: "GET", body: nil)
+  }
+
+  func uploadWorkspace(
+    account: PanelCloudAccount,
+    expectedVersion: Int,
+    projects: [ProjectItem],
+    boards: [BoardDraft]
+  ) async throws -> PanelCloudWorkspace {
+    let payload = PanelCloudWorkspaceUpload(
+      expectedVersion: expectedVersion,
+      projects: projects.map(PanelCloudProject.init(project:)),
+      boards: boards.map(PanelCloudBoard.init(board:))
+    )
+    return try await authenticatedRequest(
+      account: account,
+      path: "/api/sync/workspace",
+      method: "POST",
+      body: try JSONEncoder().encode(payload)
+    )
+  }
+
+  func uploadBoardProgress(
+    account: PanelCloudAccount,
+    expectedVersion: Int,
+    boards: [BoardDraft]
+  ) async throws -> PanelCloudWorkspace {
+    let assignedBoards = boards.filter { $0.assignedTo == account.userID }
+    let payload = PanelCloudBoardProgressUpload(
+      expectedVersion: expectedVersion,
+      boards: assignedBoards.map(PanelCloudBoardProgress.init(board:))
+    )
+    return try await authenticatedRequest(
+      account: account,
+      path: "/api/sync/board-progress",
+      method: "POST",
+      body: try JSONEncoder().encode(payload)
+    )
+  }
+
   private func accountRequest(baseURL: String, path: String, body: [String: String]) async throws -> PanelCloudAccount {
     let base = try normalizedBaseURL(baseURL)
     guard let url = URL(string: path, relativeTo: base) else { throw PanelCloudError.invalidServer }
@@ -7919,6 +8309,36 @@ private struct PanelCloudClient {
       userName: result.user.name,
       role: result.user.role
     )
+  }
+
+  private func authenticatedRequest<Result: Decodable>(
+    account: PanelCloudAccount,
+    path: String,
+    method: String,
+    body: Data?
+  ) async throws -> Result {
+    let base = try normalizedBaseURL(account.baseURL)
+    guard let url = URL(string: path, relativeTo: base) else { throw PanelCloudError.invalidServer }
+    var request = URLRequest(url: url)
+    request.httpMethod = method
+    request.timeoutInterval = 30
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("Bearer \(account.token)", forHTTPHeaderField: "Authorization")
+    if let body {
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = body
+    }
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse else { throw PanelCloudError.invalidResponse }
+    guard 200..<300 ~= http.statusCode else {
+      let detail = (try? JSONDecoder().decode(PanelCloudErrorResponse.self, from: data).error)
+        ?? "PanelVault Cloud request failed (\(http.statusCode))."
+      throw PanelCloudError.server(detail)
+    }
+    guard let result = try? JSONDecoder().decode(Result.self, from: data) else {
+      throw PanelCloudError.invalidResponse
+    }
+    return result
   }
 
   private func normalizedBaseURL(_ value: String) throws -> URL {
@@ -11966,6 +12386,10 @@ struct BoardDraft: Identifiable {
   /// Completed checklist item IDs per cabinet, index 0 = cabinet 1. Each cabinet
   /// is built and tracked on its own; the board's completion averages them.
   var cabinetChecklists: [Set<String>] = []
+  /// Cloud assignment is shared with the manager website. Local-only boards
+  /// leave this nil and stay in Design until checklist work begins.
+  var assignedTo: String? = nil
+  var assignedName: String = ""
 
   var coverImage: UIImage? {
     get { ImageStore.shared.image(for: coverToken) }
@@ -12027,7 +12451,8 @@ struct BoardDraft: Identifiable {
       coverSignature, photoSignature,
       schemeSignature,
       normalizedCabinetChecklists.map { $0.sorted().joined(separator: ",") }.joined(separator: ";"),
-      personalChecklistItems.map { "\($0.id):\($0.title):\($0.isDone)" }.joined(separator: ",")
+      personalChecklistItems.map { "\($0.id):\($0.title):\($0.isDone)" }.joined(separator: ","),
+      assignedTo ?? "", assignedName
     ].joined(separator: "||")
   }
 
@@ -12056,7 +12481,9 @@ struct BoardDraft: Identifiable {
   }
 
   var statusTitle: String {
-    isCompleted ? "Finished" : "In Progress"
+    if isCompleted { return "Finished" }
+    if assignedTo == nil && completion == 0 { return "Design" }
+    return "In Progress"
   }
 }
 
@@ -12865,6 +13292,8 @@ struct BoardRecord: Codable {
   let completedChecklistItems: [String]
   let cabinetChecklists: [[String]]?
   let personalChecklistItems: [PersonalChecklistRecord]
+  let assignedTo: String?
+  let assignedName: String?
 
   init(board: BoardDraft) {
     id = board.id
@@ -12895,6 +13324,8 @@ struct BoardRecord: Codable {
     completedChecklistItems = Array(board.completedChecklistItems)
     cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0) }
     personalChecklistItems = board.personalChecklistItems.map(PersonalChecklistRecord.init(item:))
+    assignedTo = board.assignedTo
+    assignedName = board.assignedName
   }
 
   var board: BoardDraft {
@@ -12926,7 +13357,9 @@ struct BoardRecord: Codable {
       schemeAttachments: schemes.map(\.attachment),
       completedChecklistItems: Set(completedChecklistItems),
       personalChecklistItems: personalChecklistItems.map(\.item),
-      cabinetChecklists: (cabinetChecklists ?? []).map(Set.init)
+      cabinetChecklists: (cabinetChecklists ?? []).map(Set.init),
+      assignedTo: assignedTo,
+      assignedName: assignedName ?? ""
     )
   }
 }

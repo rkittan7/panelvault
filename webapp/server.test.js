@@ -296,6 +296,36 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(state.body.boards[0].group, "3918.24");
     assert.equal(state.body.boards[0].completion, 100);
     assert.equal(state.body.boards[0].status, "Completed");
+
+    const workspace = await json(server.baseURL, "/api/sync/workspace", { headers });
+    assert.equal(workspace.response.status, 200);
+    assert.equal(workspace.body.boards[0].cabinetChecklists.length, 3);
+    const synced = await json(server.baseURL, "/api/sync/workspace", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        expectedVersion: workspace.body.version,
+        projects: workspace.body.projects,
+        boards: workspace.body.boards.map((board) => ({ ...board, name: "Main LV Board synced from phone" })),
+      }),
+    });
+    assert.equal(synced.response.status, 200);
+    assert.equal(synced.body.version, workspace.body.version + 1);
+    assert.equal(synced.body.boards[0].name, "Main LV Board synced from phone");
+    const phoneProgress = await json(server.baseURL, "/api/sync/board-progress", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        expectedVersion: synced.body.version,
+        boards: [{
+          id: synced.body.boards[0].id,
+          cabinetChecklists: [[], [], []],
+          personalChecklistItems: [{ id: "personal-phone", title: "Phone QA", isDone: true }],
+        }],
+      }),
+    });
+    assert.equal(phoneProgress.response.status, 200);
+    assert.equal(phoneProgress.body.version, synced.body.version + 1);
+    assert.equal(phoneProgress.body.boards[0].completion, 0);
+    assert.equal(phoneProgress.body.boards[0].personalChecklistItems[0].title, "Phone QA");
   } finally {
     server.stop();
   }
@@ -453,6 +483,42 @@ test("mobile company creation and invite join share the website account database
     assert.equal(workerLogin.response.status, 200);
     assert.equal(workerLogin.body.user.id, worker.body.user.id);
     assert.equal(workerLogin.body.company.code, owner.body.company.code);
+
+    const assignedBoard = await json(baseURL, "/api/boards", {
+      method: "POST",
+      headers: ownerAuthorization,
+      body: JSON.stringify({
+        number: "PV-WORKER-1", name: "Worker board", customer: "Factory",
+        project: "No Project", cabinetCount: "1", assignedTo: worker.body.user.id,
+      }),
+    });
+    assert.equal(assignedBoard.response.status, 200);
+    const workerAuthorization = { Authorization: `Bearer ${workerLogin.body.token}` };
+    const workerWorkspace = await json(baseURL, "/api/sync/workspace", { headers: workerAuthorization });
+    const workerProgress = await json(baseURL, "/api/sync/board-progress", {
+      method: "POST",
+      headers: workerAuthorization,
+      body: JSON.stringify({
+        expectedVersion: workerWorkspace.body.version,
+        boards: [{
+          id: assignedBoard.body.board.id,
+          cabinetChecklists: [[assignedBoard.body.board.checklist[0].id]],
+          personalChecklistItems: [],
+        }],
+      }),
+    });
+    assert.equal(workerProgress.response.status, 200);
+    assert.ok(workerProgress.body.boards[0].completion > 0);
+    const forbiddenFullSync = await json(baseURL, "/api/sync/workspace", {
+      method: "POST",
+      headers: workerAuthorization,
+      body: JSON.stringify({
+        expectedVersion: workerProgress.body.version,
+        projects: workerProgress.body.projects,
+        boards: workerProgress.body.boards,
+      }),
+    });
+    assert.equal(forbiddenFullSync.response.status, 403);
 
     const websiteState = await json(baseURL, "/api/state", { headers: ownerAuthorization });
     assert.equal(websiteState.response.status, 200);

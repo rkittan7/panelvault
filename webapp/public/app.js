@@ -8,6 +8,9 @@ let currentView = "dashboard";
 let selectedBoardID = null;
 let selectedBoardCabinet = 0;
 let boardCreationType = null;
+let boardChecklistSyncing = false;
+let boardChecklistRevision = 0;
+let boardChecklistQueue = Promise.resolve();
 
 // Kept in the same order as AmpereRating and PoleRating in the iPhone app.
 const AMPERE_RATINGS = [
@@ -998,6 +1001,51 @@ function boardStatusNote(board) {
   return "Unassigned with no checklist work, so it remains in Design.";
 }
 
+function recalculateBoardProgress(board) {
+  const totalWeight = Math.max(1, (board.checklist || []).reduce((sum, item) => sum + item.weight, 0));
+  board.cabinetProgress = (board.cabinetChecklists || []).map((items) => {
+    const checked = new Set(items);
+    const done = (board.checklist || []).reduce((sum, item) => sum + (checked.has(item.id) ? item.weight : 0), 0);
+    return Math.round((done / totalWeight) * 100);
+  });
+  board.completion = board.cabinetProgress.length
+    ? Math.round(board.cabinetProgress.reduce((sum, value) => sum + value, 0) / board.cabinetProgress.length)
+    : 0;
+  board.status = board.completion >= 100
+    ? "Completed"
+    : (!board.assignedTo && board.completion === 0 ? "Design" : "In Progress");
+}
+
+function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
+  const selected = new Set(board.cabinetChecklists[cabinetIndex] || []);
+  if (checked) selected.add(itemID);
+  else selected.delete(itemID);
+  board.cabinetChecklists[cabinetIndex] = [...selected];
+  recalculateBoardProgress(board);
+  boardChecklistSyncing = true;
+  const revision = ++boardChecklistRevision;
+  renderBoardDetail();
+
+  boardChecklistQueue = boardChecklistQueue
+    .catch(() => {})
+    .then(() => api("/api/board-checklist", {
+      boardID: board.id,
+      cabinetIndex,
+      itemID,
+      checked,
+    }))
+    .then(async () => {
+      if (revision !== boardChecklistRevision) return;
+      boardChecklistSyncing = false;
+      await refresh();
+    })
+    .catch(async () => {
+      if (revision !== boardChecklistRevision) return;
+      boardChecklistSyncing = false;
+      await refresh();
+    });
+}
+
 function boardProperty(iconName, label, value) {
   const card = el("div", "board-property");
   card.append(chipIcon(iconName, "var(--primary)"));
@@ -1025,21 +1073,32 @@ function renderBoardDetail() {
   identity.append(el("h2", null, board.name));
   identity.append(el("p", "mono", board.number));
   const actions = el("div", "board-detail-actions");
+  const saveState = el("span", `board-save-state${boardChecklistSyncing ? " syncing" : ""}`,
+    boardChecklistSyncing ? "Saving…" : "Cloud synced");
+  saveState.prepend(el("i"));
+  actions.append(saveState);
   actions.append(statusBadge(board.status));
   if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", null, () => openAssignModal(board)));
   top.append(identity, actions);
   view.append(top);
 
   const progressCard = el("section", "board-progress-card");
+  const progressLayout = el("div", "board-progress-layout");
   const progressHead = el("div", "board-progress-head");
   const progressTitle = el("div");
-  progressTitle.append(el("span", "eyebrow", "Build completion"), el("h3", null, `${board.completion || 0}% complete`));
+  progressTitle.append(el("span", "eyebrow", "Production status"), el("h3", null, board.status));
   progressHead.append(progressTitle, el("p", null, boardStatusNote(board)));
+  const dial = el("div", "board-progress-dial");
+  dial.style.setProperty("--progress", `${board.completion || 0}%`);
+  const dialInner = el("div");
+  dialInner.append(el("strong", null, `${board.completion || 0}%`), el("span", null, "complete"));
+  dial.append(dialInner);
+  progressLayout.append(progressHead, dial);
   const progressTrack = el("div", "board-progress-track");
   const progressFill = el("i");
   progressFill.style.width = `${board.completion || 0}%`;
   progressTrack.append(progressFill);
-  progressCard.append(progressHead, progressTrack);
+  progressCard.append(progressLayout, progressTrack);
   view.append(progressCard);
 
   const properties = el("div", "board-property-grid");
@@ -1057,13 +1116,16 @@ function renderBoardDetail() {
 
   const work = el("div", "board-detail-grid");
   const checklistPanel = el("section", "panel board-checklist-panel");
+  const cabinetCount = Math.max(1, Number(board.cabinetCount) || 1);
   const checklistHead = el("div", "panel-head");
   const heading = el("div");
-  heading.append(el("h3", null, "Build checklist"), el("p", null, "The same weighted checks used by the app."));
-  checklistHead.append(heading);
+  heading.append(el("span", "eyebrow", "Workshop progress"), el("h3", null, "Build checklist"),
+    el("p", null, "Tap a plate once—the update is instant and syncs in the background."));
+  checklistHead.append(heading, el("strong", "checklist-cabinet-label", cabinetCount > 1
+    ? `Cabinet ${selectedBoardCabinet + 1} of ${cabinetCount}`
+    : "Single cabinet"));
   checklistPanel.append(checklistHead);
 
-  const cabinetCount = Math.max(1, Number(board.cabinetCount) || 1);
   selectedBoardCabinet = Math.min(Math.max(selectedBoardCabinet, 0), cabinetCount - 1);
   if (cabinetCount > 1) {
     const tabs = el("div", "cabinet-tabs");
@@ -1091,15 +1153,8 @@ function renderBoardDetail() {
     const text = el("span", "check-copy");
     text.append(el("strong", null, item.title), el("small", null, `${item.weight}% weight`));
     button.append(mark, text);
-    button.addEventListener("click", async () => {
-      await api("/api/board-checklist", {
-        boardID: board.id,
-        cabinetIndex: selectedBoardCabinet,
-        itemID: item.id,
-        checked: !isChecked,
-      });
-      await refresh();
-    });
+    button.addEventListener("click", () => updateBoardChecklist(
+      board, selectedBoardCabinet, item.id, !isChecked));
     checklist.append(button);
   });
   checklistPanel.append(checklist);
