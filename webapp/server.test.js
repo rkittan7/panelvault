@@ -237,6 +237,7 @@ test("projects and boards use the same creation contract as the app", async () =
         type: "MDB", subtype: "Form 3b", manufacturer: "ABB", cabinetCount: "3",
         buildFormat: "Panels", dateOut: "2026-08-22", dueDate: "2026-09-01T12:00:00Z",
         mainBreakerType: "MCCB", mainBreakerModel: "Tmax XT7", mainBreakerAmpere: "630A",
+        qaAssignedTo: registered.body.user.id,
       }),
     });
     assert.equal(createdBoard.response.status, 200);
@@ -295,7 +296,57 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(state.body.projects.length, 1);
     assert.equal(state.body.boards[0].group, "3918.24");
     assert.equal(state.body.boards[0].completion, 100);
-    assert.equal(state.body.boards[0].status, "Completed");
+    assert.equal(state.body.boards[0].status, "QA Ready");
+    assert.equal(state.body.boards[0].currentStage.id, "qa");
+    assert.deepEqual(state.body.boards[0].stages.map((stage) => stage.label), [
+      "Design", "Mechanical Build", "Components", "Wiring", "Finishing", "QA", "Complete",
+    ]);
+
+    const notifications = await json(server.baseURL, "/api/notifications", { headers });
+    assert.equal(notifications.response.status, 200);
+    assert.equal(notifications.body.notifications.length, 1);
+    assert.equal(notifications.body.notifications[0].type, "board_ready_for_qa");
+
+    const approved = await json(server.baseURL, "/api/board-qa", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, action: "approve", note: "QA passed" }),
+    });
+    assert.equal(approved.response.status, 200);
+    assert.equal(approved.body.status, "Completed");
+    assert.equal(approved.body.currentStage.id, "complete");
+
+    const corrections = await json(server.baseURL, "/api/board-qa", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, action: "request_changes", note: "Replace one label" }),
+    });
+    assert.equal(corrections.response.status, 200);
+    assert.equal(corrections.body.status, "QA Changes");
+    assert.equal(corrections.body.currentStage.id, "finishing");
+
+    const finishingItem = createdBoard.body.board.checklist.find((item) => item.id === "Scheme holder");
+    assert.ok(finishingItem);
+    const rework = await json(server.baseURL, "/api/board-checklist", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id, cabinetIndex: 0, itemID: finishingItem.id, checked: false,
+      }),
+    });
+    assert.equal(rework.body.status, "QA Changes");
+    const resubmitted = await json(server.baseURL, "/api/board-checklist", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id, cabinetIndex: 0, itemID: finishingItem.id, checked: true,
+      }),
+    });
+    assert.equal(resubmitted.body.status, "QA Ready");
+    const resubmissionNotifications = await json(server.baseURL, "/api/notifications", { headers });
+    assert.equal(resubmissionNotifications.body.notifications.length, 2);
+
+    const reapproved = await json(server.baseURL, "/api/board-qa", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: createdBoard.body.board.id, action: "approve", note: "Corrections passed" }),
+    });
+    assert.equal(reapproved.body.status, "Completed");
 
     const workspace = await json(server.baseURL, "/api/sync/workspace", { headers });
     assert.equal(workspace.response.status, 200);
@@ -325,6 +376,8 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(phoneProgress.response.status, 200);
     assert.equal(phoneProgress.body.version, synced.body.version + 1);
     assert.equal(phoneProgress.body.boards[0].completion, 0);
+    assert.equal(phoneProgress.body.boards[0].status, "Design");
+    assert.equal(phoneProgress.body.boards[0].qaStatus, "pending");
     assert.equal(phoneProgress.body.boards[0].personalChecklistItems[0].title, "Phone QA");
   } finally {
     server.stop();

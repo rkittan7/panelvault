@@ -75,6 +75,7 @@ function normalizeCompanies() {
     company.boards ||= [];
     company.barcodeMappings ||= [];
     company.deliveries ||= [];
+    company.notifications ||= [];
     company.workspaceVersion = Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0;
     // The role set gained Staff Manager and QA, and "worker" was renamed to
     // "staff". Migrate on load so existing sessions keep their access.
@@ -86,6 +87,12 @@ function normalizeCompanies() {
     }
     for (const board of company.boards) {
       board.cabinetChecklists = normalizedBoardChecklists(board);
+      board.qaAssignedTo ||= null;
+      board.qaStatus = ["pending", "ready", "changes_requested", "approved"].includes(board.qaStatus)
+        ? board.qaStatus
+        : "pending";
+      board.qaNote ||= "";
+      board.qaReadyVersion = Number.isInteger(board.qaReadyVersion) ? board.qaReadyVersion : 0;
       board.status = boardStatus(board);
     }
   }
@@ -280,9 +287,136 @@ function boardProgress(board) {
   return Math.round(average * 100);
 }
 
+const BOARD_STAGE_LABELS = [
+  ["design", "Design"],
+  ["mechanical", "Mechanical Build"],
+  ["components", "Components"],
+  ["wiring", "Wiring"],
+  ["finishing", "Finishing"],
+  ["qa", "QA"],
+  ["complete", "Complete"],
+];
+
+function productionStageItems(board) {
+  const multi = Math.max(1, Math.trunc(Number(board.cabinetCount)) || 1) > 1;
+  return multi
+    ? {
+        mechanical: ["Building - Busbars", "Building - DIN and cable holders"],
+        components: ["Building - Components"],
+        wiring: ["Wiring", "N + PE bars"],
+        finishing: ["Naming and finishing", "Stickers", "Scheme holder"],
+      }
+    : {
+        mechanical: ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"],
+        components: ["Components"],
+        wiring: ["Wiring", "N + PE bars"],
+        finishing: ["Ground door", "Naming", "Scheme holder"],
+      };
+}
+
+function productionStageProgress(board, itemIDs) {
+  const weights = new Map(checklistFor(board));
+  const total = Math.max(1, itemIDs.reduce((sum, itemID) => sum + (weights.get(itemID) || 0), 0));
+  const lists = normalizedBoardChecklists(board);
+  const fraction = lists.reduce((sum, items) => {
+    const checked = new Set(items);
+    const completed = itemIDs.reduce((weight, itemID) =>
+      weight + (checked.has(itemID) ? (weights.get(itemID) || 0) : 0), 0);
+    return sum + completed / total;
+  }, 0) / Math.max(lists.length, 1);
+  return Math.round(fraction * 100);
+}
+
+function boardStagePayload(board) {
+  const production = productionStageItems(board);
+  const productionProgress = {
+    mechanical: productionStageProgress(board, production.mechanical),
+    components: productionStageProgress(board, production.components),
+    wiring: productionStageProgress(board, production.wiring),
+    finishing: productionStageProgress(board, production.finishing),
+  };
+  let currentStageID = "design";
+  if (board.assignedTo || boardProgress(board) > 0) {
+    currentStageID = ["mechanical", "components", "wiring", "finishing"]
+      .find((stageID) => productionProgress[stageID] < 100) || "qa";
+  }
+  if (board.qaStatus === "changes_requested") currentStageID = "finishing";
+  if (board.qaStatus === "approved") currentStageID = "complete";
+
+  const currentIndex = BOARD_STAGE_LABELS.findIndex(([id]) => id === currentStageID);
+  const stages = BOARD_STAGE_LABELS.map(([id, label], index) => {
+    let progress = 0;
+    if (id === "design") progress = currentStageID === "design" ? 0 : 100;
+    else if (productionProgress[id] !== undefined) progress = productionProgress[id];
+    else if (id === "qa") progress = board.qaStatus === "approved" ? 100 : 0;
+    else if (id === "complete") progress = board.qaStatus === "approved" ? 100 : 0;
+    let state = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
+    if (id === "finishing" && board.qaStatus === "changes_requested") state = "attention";
+    if (id === "qa" && currentStageID === "qa") state = "ready";
+    return { id, label, progress, state };
+  });
+  return {
+    stages,
+    currentStage: stages.find((stage) => stage.id === currentStageID),
+    qaStatus: board.qaStatus || "pending",
+  };
+}
+
+function checklistSignature(board) {
+  return normalizedBoardChecklists(board).map((items) => [...items].sort().join("|")).join("||");
+}
+
+function queueQAReadyNotification(company, board) {
+  if (!board.qaAssignedTo) return;
+  board.qaReadyVersion = (Number.isInteger(board.qaReadyVersion) ? board.qaReadyVersion : 0) + 1;
+  const notification = {
+    id: id("notification"),
+    key: `${board.id}:qa-ready:${board.qaReadyVersion}`,
+    userID: board.qaAssignedTo,
+    type: "board_ready_for_qa",
+    boardID: board.id,
+    boardName: board.name,
+    createdAt: new Date().toISOString(),
+    readAt: null,
+  };
+  company.notifications.push(notification);
+  board.qaNotifiedAt = notification.createdAt;
+}
+
+function reconcileBoardQA(company, board, previous = {}) {
+  const productionComplete = boardProgress(board) >= 100;
+  const changedChecklist = previous.checklistSignature !== undefined
+    && previous.checklistSignature !== checklistSignature(board);
+  if (changedChecklist && board.qaStatus === "approved") {
+    board.qaStatus = productionComplete ? "ready" : "pending";
+    board.qaApprovedAt = null;
+    board.qaApprovedBy = null;
+  }
+  if (!productionComplete && board.qaStatus === "ready") board.qaStatus = "pending";
+  if (board.qaStatus === "changes_requested" && changedChecklist && !productionComplete) {
+    board.qaReworkStarted = true;
+  }
+  const becameReady = productionComplete
+    && board.qaStatus !== "approved"
+    && board.qaStatus !== "ready"
+    && (board.qaStatus !== "changes_requested" || board.qaReworkStarted);
+  if (becameReady) {
+    board.qaStatus = "ready";
+    board.qaReadyAt = new Date().toISOString();
+    board.qaReworkStarted = false;
+    queueQAReadyNotification(company, board);
+  } else if (productionComplete && board.qaStatus === "ready"
+      && previous.qaAssignedTo !== board.qaAssignedTo && board.qaAssignedTo) {
+    queueQAReadyNotification(company, board);
+  }
+  board.status = boardStatus(board);
+}
+
 function boardStatus(board) {
   const completion = boardProgress(board);
-  if (completion >= 100) return "Completed";
+  if (board.qaStatus === "approved") return "Completed";
+  if (board.qaStatus === "changes_requested") return "QA Changes";
+  if (completion >= 100) return "QA Ready";
   if (!board.assignedTo && completion === 0) return "Design";
   return "In Progress";
 }
@@ -302,6 +436,7 @@ function boardProgressPayload(board) {
     checklist: checklist.map(([title, weight]) => ({ id: title, title, weight })),
     cabinetChecklists,
     cabinetProgress,
+    ...boardStagePayload(board),
   };
 }
 
@@ -402,6 +537,15 @@ function normalizeCloudBoard(incoming, existing, projects) {
       : [],
     colorHex: cloudColor(incoming.colorHex),
     assignedTo: existing?.assignedTo || incoming.assignedTo || null,
+    qaAssignedTo: existing?.qaAssignedTo || incoming.qaAssignedTo || null,
+    qaStatus: existing?.qaStatus || (["pending", "ready", "changes_requested", "approved"].includes(incoming.qaStatus)
+      ? incoming.qaStatus
+      : "pending"),
+    qaNote: String(existing?.qaNote || incoming.qaNote || "").trim().slice(0, 1000),
+    qaReadyAt: existing?.qaReadyAt || incoming.qaReadyAt || null,
+    qaApprovedAt: existing?.qaApprovedAt || incoming.qaApprovedAt || null,
+    qaApprovedBy: existing?.qaApprovedBy || incoming.qaApprovedBy || null,
+    qaReadyVersion: Number.isInteger(existing?.qaReadyVersion) ? existing.qaReadyVersion : 0,
     personalChecklistItems: Array.isArray(incoming.personalChecklistItems)
       ? incoming.personalChecklistItems.slice(0, 100).map((item) => ({
           id: cloudID(item.id, "A personal checklist item"),
@@ -426,6 +570,7 @@ function workspacePayload(company) {
       ...board,
       ...boardProgressPayload(board),
       assignedName: company.users.find((user) => user.id === board.assignedTo)?.name || "",
+      qaAssignedName: company.users.find((user) => user.id === board.qaAssignedTo)?.name || "",
     })),
   };
 }
@@ -785,6 +930,7 @@ async function createCompanyAccount({ companyName, name, password }) {
     workspaceVersion: 0,
     barcodeMappings: [],
     deliveries: [],
+    notifications: [],
   };
   db.companies[code] = company;
   await save();
@@ -976,6 +1122,7 @@ const routes = {
           ...b,
           ...boardProgressPayload(b),
           assignedName: company.users.find((u) => u.id === b.assignedTo)?.name || "",
+          qaAssignedName: company.users.find((u) => u.id === b.qaAssignedTo)?.name || "",
         };
         if (withCosts) {
           const cost = boardCost(company, b);
@@ -1441,6 +1588,18 @@ const routes = {
         && !company.users.some((member) => member.id === board.assignedTo && member.active))) {
       return fail(res, 400, "A synced board references an unknown assignee.");
     }
+    if (syncedBoards.some((board) => board.qaAssignedTo
+        && !company.users.some((member) => member.id === board.qaAssignedTo && member.active
+          && canSignOffQA(member)))) {
+      return fail(res, 400, "A synced board references an unknown QA reviewer.");
+    }
+    for (const board of syncedBoards) {
+      const existing = existingBoards.get(board.id);
+      reconcileBoardQA(company, board, existing ? {
+        checklistSignature: checklistSignature(existing),
+        qaAssignedTo: existing.qaAssignedTo,
+      } : {});
+    }
     company.projects = syncedProjects;
     company.boards = syncedBoards;
     bumpWorkspace(company);
@@ -1484,12 +1643,16 @@ const routes = {
         board,
         cabinetChecklists: normalizedBoardChecklists(candidate),
         personalChecklistItems,
+        previous: {
+          checklistSignature: checklistSignature(board),
+          qaAssignedTo: board.qaAssignedTo,
+        },
       };
     });
     for (const update of updates) {
       update.board.cabinetChecklists = update.cabinetChecklists;
       update.board.personalChecklistItems = update.personalChecklistItems;
-      update.board.status = boardStatus(update.board);
+      reconcileBoardQA(company, update.board, update.previous);
       update.board.updatedAt = new Date().toISOString();
     }
     if (updates.length) bumpWorkspace(company);
@@ -1533,7 +1696,7 @@ const routes = {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can create boards.");
     const body = await readBody(req);
-    const { number, name, assignedTo } = body;
+    const { number, name, assignedTo, qaAssignedTo } = body;
     let customer = (body.customer || "").trim();
     const projectName = (body.project || "No Project").trim() || "No Project";
     const project = projectName === "No Project"
@@ -1546,6 +1709,9 @@ const routes = {
     }
     if (assignedTo && !company.users.some((u) => u.id === assignedTo && u.active)) {
       return fail(res, 400, "Unknown assignee.");
+    }
+    if (qaAssignedTo && !company.users.some((u) => u.id === qaAssignedTo && u.active && canSignOffQA(u))) {
+      return fail(res, 400, "Unknown QA reviewer.");
     }
     const cabinetCount = Math.max(1, Math.min(12, Math.trunc(Number(body.cabinetCount)) || 1));
     const parseOptionalDate = (value, label) => {
@@ -1580,6 +1746,10 @@ const routes = {
       mainBreakerModel: (body.mainBreakerModel || "").trim(),
       mainBreakerAmpere: ampere.endsWith("A") ? ampere : `${ampere}A`,
       assignedTo: assignedTo || null,
+      qaAssignedTo: qaAssignedTo || null,
+      qaStatus: "pending",
+      qaNote: "",
+      qaReadyVersion: 0,
       cabinetChecklists: Array.from({ length: cabinetCount }, () => []),
       status: assignedTo ? "In Progress" : "Design",
       createdAt: new Date().toISOString(),
@@ -1593,7 +1763,7 @@ const routes = {
 
   "POST /api/board-update": async (req, res, session) => {
     const { company, user } = session;
-    const { boardID, status, assignedTo } = await readBody(req);
+    const { boardID, status, assignedTo, qaAssignedTo } = await readBody(req);
     const board = company.boards.find((b) => b.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
 
@@ -1606,14 +1776,26 @@ const routes = {
         return fail(res, 400, "Unknown assignee.");
       }
     }
+    if (qaAssignedTo !== undefined) {
+      if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can assign QA.");
+      if (qaAssignedTo && !company.users.some((u) => u.id === qaAssignedTo && u.active && canSignOffQA(u))) {
+        return fail(res, 400, "Unknown QA reviewer.");
+      }
+    }
+    const previous = {
+      checklistSignature: checklistSignature(board),
+      qaAssignedTo: board.qaAssignedTo,
+    };
     if (assignedTo !== undefined) {
       board.assignedTo = assignedTo || null;
     }
-    board.status = boardStatus(board);
+    if (qaAssignedTo !== undefined) board.qaAssignedTo = qaAssignedTo || null;
+    reconcileBoardQA(company, board, previous);
     board.updatedAt = new Date().toISOString();
     bumpWorkspace(company);
     await save();
-    sendJSON(res, 200, { ok: true, status: board.status, completion: boardProgress(board) });
+    const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
+    sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
   },
 
   "POST /api/board-checklist": async (req, res, session) => {
@@ -1635,13 +1817,59 @@ const routes = {
     if (checked === true) selected.add(itemID);
     else if (checked === false) selected.delete(itemID);
     else return fail(res, 400, "Checked must be true or false.");
+    const previous = {
+      checklistSignature: checklistSignature(board),
+      qaAssignedTo: board.qaAssignedTo,
+    };
     lists[index] = [...selected];
     board.cabinetChecklists = lists;
-    board.status = boardStatus(board);
+    reconcileBoardQA(company, board, previous);
     board.updatedAt = new Date().toISOString();
     bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { ok: true, ...boardProgressPayload(board) });
+  },
+
+  "POST /api/board-qa": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID, action, note } = await readBody(req);
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    if (!canSignOffQA(user)) return fail(res, 403, "Only an assigned QA reviewer or manager can sign off QA.");
+    if (!isAdmin(user) && board.qaAssignedTo && board.qaAssignedTo !== user.id) {
+      return fail(res, 403, "This board is assigned to another QA reviewer.");
+    }
+    if (!isAdmin(user) && !board.qaAssignedTo) {
+      return fail(res, 403, "A manager must assign this board to QA first.");
+    }
+    if (!["approve", "request_changes"].includes(action)) return fail(res, 400, "Choose approve or request changes.");
+    if (boardProgress(board) < 100) return fail(res, 400, "Finish every production stage before QA sign-off.");
+    board.qaNote = String(note || "").trim().slice(0, 1000);
+    if (action === "approve") {
+      board.qaStatus = "approved";
+      board.qaApprovedAt = new Date().toISOString();
+      board.qaApprovedBy = user.id;
+      board.qaReworkStarted = false;
+    } else {
+      board.qaStatus = "changes_requested";
+      board.qaApprovedAt = null;
+      board.qaApprovedBy = null;
+      board.qaReworkStarted = false;
+    }
+    board.status = boardStatus(board);
+    board.updatedAt = new Date().toISOString();
+    bumpWorkspace(company);
+    await save();
+    const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
+    sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
+  },
+
+  "GET /api/notifications": async (req, res, session) => {
+    const notifications = (session.company.notifications || [])
+      .filter((item) => item.userID === session.user.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100);
+    sendJSON(res, 200, { notifications });
   },
 
   // --- team (admin only) -------------------------------------------------

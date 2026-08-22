@@ -83,6 +83,7 @@ struct PanelVaultAppView: View {
     .ignoresSafeArea(.keyboard, edges: .bottom)
     .tint(selectedTheme.primary)
     .preferredColorScheme(selectedTheme.colorScheme)
+    .environment(\.panelCloudAccount, cloudAccount)
     .onAppear {
       if !standardSizeMigration {
         selectedInterfaceSizeID = InterfaceSize.standard.id
@@ -1354,7 +1355,9 @@ struct ProjectsView: View {
   @State private var selectedBoardID: String?
 
   private var statuses: [String] {
-    archiveMode == .projects ? ["All", "In Progress", "Completed", "Design"] : ["All", "Design", "In Progress", "Finished"]
+    archiveMode == .projects
+      ? ["All", "In Progress", "Completed", "Design"]
+      : ["All", "Design", "In Progress", "QA Ready", "QA Changes", "Finished"]
   }
 
   /// Projects carry the primary accent and boards the secondary one, matching
@@ -2371,10 +2374,10 @@ struct DashboardBoardProgressRow: View {
               DueDateBadge(date: dueDate, compact: true)
             }
             Spacer(minLength: 5)
-            Text("\(board.completion)%")
-              .font(.system(size: 17, weight: .black))
+            Text(board.currentProductionStage.title)
+              .font(.system(size: 11, weight: .heavy))
               .foregroundStyle(progressColor)
-              .monospacedDigit()
+              .lineLimit(1)
             Image(systemName: "chevron.right")
               .font(.system(size: 13, weight: .bold))
               .foregroundStyle(.secondary)
@@ -2385,23 +2388,7 @@ struct DashboardBoardProgressRow: View {
             RecentManufacturerChip(manufacturer: manufacturer, fallbackName: board.manufacturer)
           }
           .fixedSize(horizontal: false, vertical: true)
-          GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-              Capsule()
-                .fill(theme.surface.opacity(0.82))
-              Capsule()
-                .fill(
-                  LinearGradient(
-                    colors: [progressColor.opacity(0.70), progressColor],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                  )
-                )
-                .frame(width: max(proxy.size.width * progress, progress > 0 ? 12 : 0))
-                .shadow(color: progressColor.opacity(0.28), radius: 5, y: 1)
-            }
-          }
-          .frame(height: 7)
+          BoardCompactStageRow(theme: theme, board: board)
           }
         }
       }
@@ -2637,6 +2624,10 @@ struct RecentStatusBadge: View {
       return Color(hex: 0xD85CFF)
     case "In Progress", "Active":
       return Color(hex: 0x2F8CFF)
+    case "QA Ready":
+      return Color(hex: 0x8B4DFF)
+    case "QA Changes":
+      return Color.red
     case "Completed", "Done", "Finished":
       return Color(hex: 0x35E177)
     default:
@@ -2811,6 +2802,10 @@ struct StatusBadge: View {
       return Color(hex: 0xD85CFF)
     case "In Progress", "Active":
       return Color(hex: 0x2F8CFF)
+    case "QA Ready":
+      return Color(hex: 0x8B4DFF)
+    case "QA Changes":
+      return Color.red
     case "Completed", "Done", "Finished":
       return Color(hex: 0x35E177)
     default:
@@ -2833,47 +2828,8 @@ struct StatusBadge: View {
 struct BoardProgressStatusBadge: View {
   let board: BoardDraft
 
-  private var progress: CGFloat {
-    min(max(CGFloat(board.completion) / 100, 0), 1)
-  }
-
   var body: some View {
-    if board.isCompleted {
-      StatusBadge(status: board.statusTitle)
-    } else {
-      ZStack(alignment: .leading) {
-        Capsule()
-          .fill(progressColor.opacity(0.18))
-        GeometryReader { proxy in
-          Capsule()
-            .fill(
-              LinearGradient(
-                colors: [progressColor.opacity(0.78), progressColor],
-                startPoint: .leading,
-                endPoint: .trailing
-              )
-            )
-            .frame(width: max(proxy.size.width * progress, progress > 0 ? 12 : 0))
-        }
-        Text("\(board.completion)%")
-          .font(.system(size: 10, weight: .black))
-          .frame(maxWidth: .infinity)
-        .foregroundStyle(.white)
-        .padding(.horizontal, 9)
-      }
-      .frame(width: 62, height: 26)
-      .clipShape(Capsule())
-      .overlay(
-        Capsule()
-          .stroke(progressColor.opacity(0.28), lineWidth: 1)
-      )
-      .shadow(color: progressColor.opacity(0.26), radius: 10, y: 2)
-    }
-  }
-
-  private var progressColor: Color {
-    let value = min(max(Double(board.completion) / 100, 0), 1)
-    return Color(red: 1.0 - value * 0.78, green: 0.22 + value * 0.66, blue: 0.20 + value * 0.08)
+    StatusBadge(status: board.statusTitle)
   }
 }
 
@@ -3477,6 +3433,8 @@ struct BoardPropertiesOverview: View {
             ProjectPropertyPill(symbol: "building.2.fill", title: "Company", value: board.company, color: board.color)
           }
           ProjectPropertyPill(symbol: "folder.fill", title: "Project", value: board.project.isEmpty ? "No Project" : board.project, color: board.color)
+          ProjectPropertyPill(symbol: "hammer.fill", title: "Builder", value: board.assignedName.isEmpty ? "Unassigned" : board.assignedName, color: board.color)
+          ProjectPropertyPill(symbol: "checkmark.shield.fill", title: "QA Reviewer", value: board.qaAssignedName.isEmpty ? "Unassigned" : board.qaAssignedName, color: theme.secondary)
           ProjectPropertyPill(symbol: "square.grid.2x2.fill", title: "Type", value: board.type, color: board.color)
           if BoardSubtypeCatalog.isVisible(board.subtype) {
             ProjectPropertyPill(symbol: "rectangle.grid.1x2.fill", title: "Subtype", value: board.subtype, color: board.color)
@@ -5699,6 +5657,98 @@ struct NewBoardStepIndicator: View {
   }
 }
 
+struct BoardProductionStageTracker: View {
+  let theme: PanelTheme
+  let board: BoardDraft
+
+  private func color(for stage: BoardProductionStage) -> Color {
+    switch stage.state {
+    case "done": return Color(hex: 0x35E177)
+    case "attention": return Color.red
+    case "current", "ready": return theme.primary
+    default: return .secondary
+    }
+  }
+
+  var body: some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 13) {
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Production Workflow")
+              .font(.caption.weight(.bold))
+              .foregroundStyle(.secondary)
+              .textCase(.uppercase)
+            Text(board.currentProductionStage.title)
+              .font(.title3.bold())
+          }
+          Spacer()
+          StatusBadge(status: board.statusTitle)
+        }
+
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 7) {
+            ForEach(board.productionStages) { stage in
+              let index = board.productionStages.firstIndex(where: { $0.id == stage.id }) ?? 0
+              let stageColor = color(for: stage)
+              VStack(alignment: .leading, spacing: 7) {
+                ZStack {
+                  Circle()
+                    .fill(stage.state == "upcoming" ? theme.surface : stageColor)
+                    .frame(width: 27, height: 27)
+                  Image(systemName: stage.state == "done" ? "checkmark" : "\(index + 1).circle.fill")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(stage.state == "upcoming" ? Color.secondary : Color.white)
+                }
+                Text(stage.title)
+                  .font(.system(size: 10, weight: .heavy))
+                  .lineLimit(2)
+                  .frame(width: 76, alignment: .leading)
+                if ["mechanical", "components", "wiring", "finishing"].contains(stage.id) {
+                  Text("\(stage.progress)%")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                }
+              }
+              .padding(10)
+              .frame(minHeight: 105, alignment: .topLeading)
+              .background(stageColor.opacity(stage.state == "upcoming" ? 0.035 : 0.11))
+              .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                  .stroke(stageColor.opacity(stage.state == "upcoming" ? 0.16 : 0.42), lineWidth: 1)
+              )
+              .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            }
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+    .animation(.easeInOut(duration: 0.38), value: board.currentProductionStage.id)
+  }
+}
+
+struct BoardCompactStageRow: View {
+  let theme: PanelTheme
+  let board: BoardDraft
+
+  var body: some View {
+    HStack(spacing: 5) {
+      ForEach(board.productionStages) { stage in
+        Circle()
+          .fill(stage.state == "done" ? Color(hex: 0x35E177) : (["current", "ready"].contains(stage.state) ? theme.primary : (stage.state == "attention" ? Color.red : Color.secondary.opacity(0.22))))
+          .frame(width: 7, height: 7)
+      }
+      Text(board.currentProductionStage.title)
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+    }
+  }
+}
+
 struct CreatedBoardScreen: View {
   let theme: PanelTheme
   @Binding var board: BoardDraft
@@ -5717,6 +5767,10 @@ struct CreatedBoardScreen: View {
   @State private var pendingBoardSyncWorkItem: DispatchWorkItem?
   @State private var selectedComponentType: String?
   @State private var editOpen = false
+  @Environment(\.panelCloudAccount) private var cloudAccount
+  @State private var qaNote = ""
+  @State private var qaSubmitting = false
+  @State private var qaError = ""
 
   private var displayBoard: BoardDraft {
     var copy = board
@@ -5814,6 +5868,9 @@ struct CreatedBoardScreen: View {
         BoardPropertiesOverview(theme: theme, board: displayBoard, manufacturers: manufacturers) {
           editOpen = true
         }
+
+        BoardProductionStageTracker(theme: theme, board: displayBoard)
+        qaReviewSection
 
         cabinetChecklistSection
           .onChange(of: board.cabinetCount) { _ in
@@ -5990,6 +6047,106 @@ struct CreatedBoardScreen: View {
     }
   }
 
+  private var canReviewQA: Bool {
+    guard let account = cloudAccount,
+          ["owner", "manager", "staff-manager", "qa"].contains(account.role.lowercased()),
+          displayBoard.completion >= 100,
+          displayBoard.qaStatus != "approved" else { return false }
+    if ["owner", "manager", "staff-manager"].contains(account.role.lowercased()) { return true }
+    return displayBoard.qaAssignedTo == account.userID
+  }
+
+  @ViewBuilder
+  private var qaReviewSection: some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 11) {
+        HStack {
+          Label("Quality Assurance", systemImage: "checkmark.shield.fill")
+            .font(.headline)
+          Spacer()
+          Text(displayBoard.qaAssignedName.isEmpty ? "Unassigned" : displayBoard.qaAssignedName)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+        }
+
+        if displayBoard.qaStatus == "approved" {
+          Label("QA approved — Complete is unlocked", systemImage: "checkmark.seal.fill")
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(Color(hex: 0x35E177))
+        } else if displayBoard.qaStatus == "changes_requested" {
+          Label("Corrections requested — returned to Finishing", systemImage: "arrow.uturn.backward.circle.fill")
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(.red)
+          if !displayBoard.qaNote.isEmpty {
+            Text(displayBoard.qaNote)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        } else if displayBoard.completion >= 100 {
+          Label("Production is finished and ready for QA", systemImage: "bell.badge.fill")
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(theme.primary)
+        } else {
+          Text("Complete the Finishing stage before QA can approve this board.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+        if canReviewQA {
+          TextField("QA note or requested correction", text: $qaNote, axis: .vertical)
+            .lineLimit(2...5)
+            .textFieldStyle(.roundedBorder)
+          if !qaError.isEmpty {
+            Text(qaError)
+              .font(.caption)
+              .foregroundStyle(.red)
+          }
+          HStack {
+            Button("Request Corrections", role: .destructive) {
+              Task { await submitQA(action: "request_changes") }
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+            Button {
+              Task { await submitQA(action: "approve") }
+            } label: {
+              Label("Approve QA", systemImage: "checkmark.shield.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(theme.primary)
+          }
+          .disabled(qaSubmitting)
+        }
+      }
+    }
+  }
+
+  @MainActor
+  private func submitQA(action: String) async {
+    guard let account = cloudAccount else { return }
+    qaSubmitting = true
+    qaError = ""
+    do {
+      let remote = try await PanelCloudClient().submitQA(
+        account: account,
+        boardID: board.id,
+        action: action,
+        note: qaNote
+      )
+      let synced = remote.board(preserving: board)
+      board.qaAssignedTo = synced.qaAssignedTo
+      board.qaAssignedName = synced.qaAssignedName
+      board.qaStatus = synced.qaStatus
+      board.qaNote = synced.qaNote
+      board.qaReadyAt = synced.qaReadyAt
+      board.qaApprovedAt = synced.qaApprovedAt
+      qaNote = synced.qaNote
+    } catch {
+      qaError = error.localizedDescription
+    }
+    qaSubmitting = false
+  }
+
   private func components(for type: String) -> [PanelComponent] {
     if let components = addedComponentsByType[type], !components.isEmpty {
       return components
@@ -6011,6 +6168,7 @@ struct CreatedBoardScreen: View {
     cabinetChecklists = board.normalizedCabinetChecklists
     selectedCabinet = min(max(selectedCabinet, 0), max(board.cabinetCountValue - 1, 0))
     personalChecklistItems = board.personalChecklistItems
+    qaNote = board.qaNote
   }
 
   private func scheduleBoardSync() {
@@ -6827,26 +6985,6 @@ struct ChecklistProgressSection: View {
             .contentTransition(.numericText())
             .animation(.easeOut(duration: 0.22), value: completion)
         }
-
-        GeometryReader { proxy in
-          ZStack(alignment: .leading) {
-            Capsule()
-              .fill(theme.background.opacity(0.72))
-            Capsule()
-              .fill(
-                LinearGradient(
-                  colors: [progressColor.opacity(0.72), progressColor],
-                  startPoint: .leading,
-                  endPoint: .trailing
-                )
-              )
-              .frame(width: max(proxy.size.width * progress, progress > 0 ? 14 : 0))
-              .shadow(color: progressColor.opacity(0.32), radius: 8, y: 2)
-              .animation(.easeOut(duration: 0.22), value: progress)
-              .animation(.easeOut(duration: 0.22), value: completion)
-          }
-        }
-        .frame(height: 10)
 
         VStack(spacing: 8) {
           ForEach(sortedItems) { item in
@@ -8340,6 +8478,17 @@ struct PanelCloudAccount: Codable, Equatable {
   let role: String
 }
 
+private struct PanelCloudAccountEnvironmentKey: EnvironmentKey {
+  static let defaultValue: PanelCloudAccount? = nil
+}
+
+extension EnvironmentValues {
+  var panelCloudAccount: PanelCloudAccount? {
+    get { self[PanelCloudAccountEnvironmentKey.self] }
+    set { self[PanelCloudAccountEnvironmentKey.self] = newValue }
+  }
+}
+
 private struct PanelCloudAccountResponse: Decodable {
   struct Company: Decodable { let code: String; let name: String }
   struct User: Decodable { let id: String; let name: String; let role: String }
@@ -8518,6 +8667,12 @@ private struct PanelCloudBoard: Codable {
   let colorHex: String?
   let assignedTo: String?
   let assignedName: String?
+  let qaAssignedTo: String?
+  let qaAssignedName: String?
+  let qaStatus: String?
+  let qaNote: String?
+  let qaReadyAt: String?
+  let qaApprovedAt: String?
   let cabinetChecklists: [[String]]?
   let personalChecklistItems: [PanelCloudPersonalChecklistItem]?
   let createdAt: String?
@@ -8547,6 +8702,12 @@ private struct PanelCloudBoard: Codable {
     colorHex = String(format: "#%06X", board.color.archiveHex)
     assignedTo = board.assignedTo
     assignedName = board.assignedName
+    qaAssignedTo = board.qaAssignedTo
+    qaAssignedName = board.qaAssignedName
+    qaStatus = board.qaStatus
+    qaNote = board.qaNote
+    qaReadyAt = PanelCloudDate.encode(board.qaReadyAt)
+    qaApprovedAt = PanelCloudDate.encode(board.qaApprovedAt)
     cabinetChecklists = board.normalizedCabinetChecklists.map { Array($0).sorted() }
     personalChecklistItems = board.personalChecklistItems.map(PanelCloudPersonalChecklistItem.init(item:))
     createdAt = nil
@@ -8585,9 +8746,25 @@ private struct PanelCloudBoard: Codable {
       },
       cabinetChecklists: (cabinetChecklists ?? []).map(Set.init),
       assignedTo: assignedTo,
-      assignedName: assignedName ?? ""
+      assignedName: assignedName ?? "",
+      qaAssignedTo: qaAssignedTo,
+      qaAssignedName: qaAssignedName ?? "",
+      qaStatus: qaStatus ?? "pending",
+      qaNote: qaNote ?? "",
+      qaReadyAt: PanelCloudDate.decode(qaReadyAt),
+      qaApprovedAt: PanelCloudDate.decode(qaApprovedAt)
     )
   }
+}
+
+private struct PanelCloudQARequest: Encodable {
+  let boardID: String
+  let action: String
+  let note: String
+}
+
+private struct PanelCloudQAResponse: Decodable {
+  let board: PanelCloudBoard
 }
 
 private struct PanelCloudClient {
@@ -8666,6 +8843,17 @@ private struct PanelCloudClient {
       method: "POST",
       body: try JSONEncoder().encode(payload)
     )
+  }
+
+  func submitQA(account: PanelCloudAccount, boardID: String, action: String, note: String) async throws -> PanelCloudBoard {
+    let payload = PanelCloudQARequest(boardID: boardID, action: action, note: note)
+    let response: PanelCloudQAResponse = try await authenticatedRequest(
+      account: account,
+      path: "/api/board-qa",
+      method: "POST",
+      body: try JSONEncoder().encode(payload)
+    )
+    return response.board
   }
 
   private func accountRequest(baseURL: String, path: String, body: [String: String]) async throws -> PanelCloudAccount {
@@ -12742,6 +12930,13 @@ struct PanelComponent: Identifiable {
   }
 }
 
+struct BoardProductionStage: Identifiable, Equatable {
+  let id: String
+  let title: String
+  let progress: Int
+  let state: String
+}
+
 struct BoardDraft: Identifiable {
   let id: String
   var number: String
@@ -12779,6 +12974,14 @@ struct BoardDraft: Identifiable {
   /// leave this nil and stay in Design until checklist work begins.
   var assignedTo: String? = nil
   var assignedName: String = ""
+  /// QA is deliberately separate from finishing: production can be ready while
+  /// final completion remains locked until the reviewer approves it.
+  var qaAssignedTo: String? = nil
+  var qaAssignedName: String = ""
+  var qaStatus: String = "pending"
+  var qaNote: String = ""
+  var qaReadyAt: Date? = nil
+  var qaApprovedAt: Date? = nil
 
   var coverImage: UIImage? {
     get { ImageStore.shared.image(for: coverToken) }
@@ -12841,7 +13044,9 @@ struct BoardDraft: Identifiable {
       schemeSignature,
       normalizedCabinetChecklists.map { $0.sorted().joined(separator: ",") }.joined(separator: ";"),
       personalChecklistItems.map { "\($0.id):\($0.title):\($0.isDone)" }.joined(separator: ","),
-      assignedTo ?? "", assignedName
+      assignedTo ?? "", assignedName, qaAssignedTo ?? "", qaAssignedName,
+      qaStatus, qaNote, "\(qaReadyAt?.timeIntervalSince1970 ?? 0)",
+      "\(qaApprovedAt?.timeIntervalSince1970 ?? 0)"
     ].joined(separator: "||")
   }
 
@@ -12865,12 +13070,71 @@ struct BoardDraft: Identifiable {
     return Int((averageFraction * 100).rounded())
   }
 
+  private var productionStageItemIDs: [(String, String, [String])] {
+    if cabinetCountValue > 1 {
+      return [
+        ("mechanical", "Mechanical Build", ["Building - Busbars", "Building - DIN and cable holders"]),
+        ("components", "Components", ["Building - Components"]),
+        ("wiring", "Wiring", ["Wiring", "N + PE bars"]),
+        ("finishing", "Finishing", ["Naming and finishing", "Stickers", "Scheme holder"]),
+      ]
+    }
+    return [
+      ("mechanical", "Mechanical Build", ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"]),
+      ("components", "Components", ["Components"]),
+      ("wiring", "Wiring", ["Wiring", "N + PE bars"]),
+      ("finishing", "Finishing", ["Ground door", "Naming", "Scheme holder"]),
+    ]
+  }
+
+  private func productionStageProgress(itemIDs: [String]) -> Int {
+    let checklist = ChecklistTemplate.items(for: cabinetCount)
+    let weights = Dictionary(uniqueKeysWithValues: checklist.map { ($0.id, $0.weight) })
+    let total = max(itemIDs.map { weights[$0] ?? 0 }.reduce(0, +), 1)
+    let lists = normalizedCabinetChecklists
+    guard !lists.isEmpty else { return 0 }
+    let fraction = lists.map { checked in
+      Double(itemIDs.filter { checked.contains($0) }.map { weights[$0] ?? 0 }.reduce(0, +)) / Double(total)
+    }.reduce(0, +) / Double(lists.count)
+    return Int((fraction * 100).rounded())
+  }
+
+  var productionStages: [BoardProductionStage] {
+    let production = productionStageItemIDs.map { (id: $0.0, title: $0.1, progress: productionStageProgress(itemIDs: $0.2)) }
+    var currentID = "design"
+    if assignedTo != nil || completion > 0 {
+      currentID = production.first { $0.progress < 100 }?.id ?? "qa"
+    }
+    if qaStatus == "changes_requested" { currentID = "finishing" }
+    if qaStatus == "approved" { currentID = "complete" }
+    let definitions = [("design", "Design")] + production.map { ($0.id, $0.title) } + [("qa", "QA"), ("complete", "Complete")]
+    let currentIndex = definitions.firstIndex { $0.0 == currentID } ?? 0
+    return definitions.enumerated().map { index, definition in
+      let id = definition.0
+      let progress: Int
+      if id == "design" { progress = currentID == "design" ? 0 : 100 }
+      else if let stage = production.first(where: { $0.id == id }) { progress = stage.progress }
+      else { progress = qaStatus == "approved" ? 100 : 0 }
+      var state = index < currentIndex ? "done" : (index == currentIndex ? "current" : "upcoming")
+      if id == "finishing" && qaStatus == "changes_requested" { state = "attention" }
+      if id == "qa" && currentID == "qa" { state = "ready" }
+      return BoardProductionStage(id: id, title: definition.1, progress: progress, state: state)
+    }
+  }
+
+  var currentProductionStage: BoardProductionStage {
+    productionStages.first { ["current", "ready", "attention"].contains($0.state) }
+      ?? BoardProductionStage(id: "design", title: "Design", progress: 0, state: "current")
+  }
+
   var isCompleted: Bool {
-    completion >= 100
+    qaStatus == "approved"
   }
 
   var statusTitle: String {
     if isCompleted { return "Finished" }
+    if qaStatus == "changes_requested" { return "QA Changes" }
+    if completion >= 100 { return "QA Ready" }
     if assignedTo == nil && completion == 0 { return "Design" }
     return "In Progress"
   }
@@ -13683,6 +13947,12 @@ struct BoardRecord: Codable {
   let personalChecklistItems: [PersonalChecklistRecord]
   let assignedTo: String?
   let assignedName: String?
+  let qaAssignedTo: String?
+  let qaAssignedName: String?
+  let qaStatus: String?
+  let qaNote: String?
+  let qaReadyAt: Date?
+  let qaApprovedAt: Date?
 
   init(board: BoardDraft) {
     id = board.id
@@ -13715,6 +13985,12 @@ struct BoardRecord: Codable {
     personalChecklistItems = board.personalChecklistItems.map(PersonalChecklistRecord.init(item:))
     assignedTo = board.assignedTo
     assignedName = board.assignedName
+    qaAssignedTo = board.qaAssignedTo
+    qaAssignedName = board.qaAssignedName
+    qaStatus = board.qaStatus
+    qaNote = board.qaNote
+    qaReadyAt = board.qaReadyAt
+    qaApprovedAt = board.qaApprovedAt
   }
 
   var board: BoardDraft {
@@ -13748,7 +14024,13 @@ struct BoardRecord: Codable {
       personalChecklistItems: personalChecklistItems.map(\.item),
       cabinetChecklists: (cabinetChecklists ?? []).map(Set.init),
       assignedTo: assignedTo,
-      assignedName: assignedName ?? ""
+      assignedName: assignedName ?? "",
+      qaAssignedTo: qaAssignedTo,
+      qaAssignedName: qaAssignedName ?? "",
+      qaStatus: qaStatus ?? "pending",
+      qaNote: qaNote ?? "",
+      qaReadyAt: qaReadyAt,
+      qaApprovedAt: qaApprovedAt
     )
   }
 }

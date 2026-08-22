@@ -521,8 +521,20 @@ function smallBtn(label, cls, iconName, onClick) {
 const STATUS_META = {
   "Design": { cls: "s-design" },
   "In Progress": { cls: "s-progress" },
+  "QA Ready": { cls: "s-qa" },
+  "QA Changes": { cls: "s-attention" },
   "Completed": { cls: "s-done" },
 };
+
+const BOARD_STAGES = [
+  ["design", "Design"],
+  ["mechanical", "Mechanical Build"],
+  ["components", "Components"],
+  ["wiring", "Wiring"],
+  ["finishing", "Finishing"],
+  ["qa", "QA"],
+  ["complete", "Complete"],
+];
 
 function statusBadge(status) {
   const meta = STATUS_META[status] || { cls: "" };
@@ -620,6 +632,66 @@ function renderDashboard() {
   );
   view.append(kpis);
 
+  const inProgressBoards = state.boards
+    .filter((board) => board.status === "In Progress")
+    .sort((a, b) => (b.completion || 0) - (a.completion || 0));
+  const productionPanel = panel(
+    "In progress boards",
+    `${inProgressBoards.length} active`,
+    smallBtn("View all", "", null, () => switchView("boards")),
+  );
+  productionPanel.classList.add("production-board-panel");
+  productionPanel.body.classList.add("production-board-wrap");
+  if (!inProgressBoards.length) {
+    productionPanel.body.append(el("div", "manager-clear compact", "No boards are currently in production."));
+  } else {
+    const table = el("div", "production-board-table");
+    const tableHead = el("div", "production-board-head");
+    ["Board", "Project", "Assigned to", "Progress", "Status"].forEach((label) => tableHead.append(el("span", null, label)));
+    table.append(tableHead);
+    inProgressBoards.slice(0, 8).forEach((board) => {
+      const row = el("button", "production-board-row");
+      row.type = "button";
+
+      const identity = el("span", "production-board-identity");
+      const identityCopy = el("span");
+      identityCopy.append(
+        el("strong", null, board.number || "Untitled board"),
+        el("small", null, board.name || board.type || "Board"),
+      );
+      identity.append(
+        chipIcon("board", "var(--secondary)"),
+        identityCopy,
+      );
+
+      const project = el("span", "production-board-cell");
+      project.append(
+        el("strong", null, board.project && board.project !== "No Project" ? board.project : "No project"),
+        el("small", null, board.customer || board.type || "—"),
+      );
+
+      const owner = el("span", "production-board-owner");
+      const ownerInitials = (board.assignedName || "?")
+        .split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+      owner.append(el("i", null, ownerInitials || "?"), el("span", null, board.assignedName || "Unassigned"));
+
+      const progress = el("span", "production-board-progress");
+      const progressCopy = el("span");
+      progressCopy.append(el("span", null, "Build completion"), el("strong", null, `${board.completion || 0}%`));
+      const track = el("span", "manager-meter");
+      const fill = el("i");
+      fill.style.width = `${board.completion || 0}%`;
+      track.append(fill);
+      progress.append(progressCopy, track);
+
+      row.append(identity, project, owner, progress, statusBadge(board.status), icon("chevron", 15));
+      row.addEventListener("click", () => openBoardDetail(board.id));
+      table.append(row);
+    });
+    productionPanel.body.append(table);
+  }
+  view.append(productionPanel);
+
   const managerGrid = el("div", "manager-grid");
   const mainColumn = el("div", "manager-main");
   const sideColumn = el("div", "manager-side");
@@ -687,16 +759,17 @@ function renderDashboard() {
   }
   mainColumn.append(projectsPanel);
 
-  const boardCounts = ["Design", "In Progress", "Completed"].map((status) => ({
-    status,
-    count: state.boards.filter((board) => board.status === status).length,
+  const boardCounts = BOARD_STAGES.map(([id, label]) => ({
+    id,
+    label,
+    count: state.boards.filter((board) => board.currentStage?.id === id).length,
   }));
   const boardsPanel = panel("Board workload", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
   const pipeline = el("div", "board-pipeline");
-  boardCounts.forEach(({ status, count }) => {
+  boardCounts.forEach(({ id, label, count }) => {
     const stage = el("button", "pipeline-stage");
     stage.type = "button";
-    stage.append(statusBadge(status), el("strong", null, String(count)), el("small", null, status === "Completed" ? "finished" : "boards"));
+    stage.append(el("span", `pipeline-label stage-${id}`, label), el("strong", null, String(count)), el("small", null, count === 1 ? "board" : "boards"));
     stage.addEventListener("click", () => switchView("boards"));
     pipeline.append(stage);
   });
@@ -1026,13 +1099,7 @@ function renderBoards() {
     main.append(el("div", "row-title", title));
     main.append(el("div", "row-sub",
       [b.project !== "No Project" ? b.project : null, b.customer, b.type, b.subtype, b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"].filter(Boolean).join(" · ")));
-    const progress = el("div", "board-row-progress");
-    const track = el("span", "progress-track");
-    const fill = el("i");
-    fill.style.width = `${b.completion || 0}%`;
-    track.append(fill);
-    progress.append(track, el("strong", null, `${b.completion || 0}%`));
-    main.append(progress);
+    main.append(renderStageTracker(b, true));
     row.append(main);
 
     if (canSeeCosts()) {
@@ -1080,12 +1147,86 @@ function openBoardDetail(boardID) {
 }
 
 function boardStatusNote(board) {
-  if (board.status === "Completed") return "Every required build check is complete.";
+  if (board.status === "Completed") return "QA approved this board. Production is complete.";
+  if (board.status === "QA Ready") return board.qaAssignedName
+    ? `Production is finished and ${board.qaAssignedName} can now perform QA.`
+    : "Production is finished. Assign a QA reviewer before sign-off.";
+  if (board.status === "QA Changes") return board.qaNote
+    ? `QA returned this board to Finishing: ${board.qaNote}`
+    : "QA returned this board to Finishing for corrections.";
   if (board.completion > 0) return board.assignedName
     ? `Work is underway with ${board.assignedName}.`
     : "Checklist work has started; this board still needs an assignee.";
   if (board.assignedName) return `Assigned to ${board.assignedName}; ready for the first build check.`;
   return "Unassigned with no checklist work, so it remains in Design.";
+}
+
+function boardProductionStageItems(board) {
+  return Number(board.cabinetCount) > 1
+    ? {
+        mechanical: ["Building - Busbars", "Building - DIN and cable holders"],
+        components: ["Building - Components"],
+        wiring: ["Wiring", "N + PE bars"],
+        finishing: ["Naming and finishing", "Stickers", "Scheme holder"],
+      }
+    : {
+        mechanical: ["Cable holders", "DIN rails", "Mask busbars", "Tray ears and cylinder"],
+        components: ["Components"],
+        wiring: ["Wiring", "N + PE bars"],
+        finishing: ["Ground door", "Naming", "Scheme holder"],
+      };
+}
+
+function boardStageProgress(board, itemIDs) {
+  const weights = new Map((board.checklist || []).map((item) => [item.id, Number(item.weight) || 0]));
+  const total = Math.max(1, itemIDs.reduce((sum, id) => sum + (weights.get(id) || 0), 0));
+  const lists = board.cabinetChecklists || [[]];
+  const fraction = lists.reduce((sum, list) => {
+    const checked = new Set(list);
+    return sum + itemIDs.reduce((done, id) => done + (checked.has(id) ? (weights.get(id) || 0) : 0), 0) / total;
+  }, 0) / Math.max(lists.length, 1);
+  return Math.round(fraction * 100);
+}
+
+function recalculateBoardStages(board) {
+  const items = boardProductionStageItems(board);
+  const production = Object.fromEntries(Object.entries(items).map(([id, ids]) => [id, boardStageProgress(board, ids)]));
+  let currentID = "design";
+  if (board.assignedTo || board.completion > 0) {
+    currentID = ["mechanical", "components", "wiring", "finishing"].find((id) => production[id] < 100) || "qa";
+  }
+  if (board.qaStatus === "changes_requested") currentID = "finishing";
+  if (board.qaStatus === "approved") currentID = "complete";
+  const currentIndex = BOARD_STAGES.findIndex(([id]) => id === currentID);
+  board.stages = BOARD_STAGES.map(([id, label], index) => {
+    let progress = 0;
+    if (id === "design") progress = currentID === "design" ? 0 : 100;
+    else if (production[id] !== undefined) progress = production[id];
+    else if (id === "qa" || id === "complete") progress = board.qaStatus === "approved" ? 100 : 0;
+    let stageState = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
+    if (id === "finishing" && board.qaStatus === "changes_requested") stageState = "attention";
+    if (id === "qa" && currentID === "qa") stageState = "ready";
+    return { id, label, progress, state: stageState };
+  });
+  board.currentStage = board.stages.find((stage) => stage.id === currentID);
+}
+
+function renderStageTracker(board, compact = false) {
+  if (!board.stages?.length) recalculateBoardStages(board);
+  const tracker = el("div", `board-stage-tracker${compact ? " compact" : ""}`);
+  tracker.setAttribute("aria-label", `Current stage: ${board.currentStage?.label || "Design"}`);
+  (board.stages || []).forEach((stage, index) => {
+    const item = el("div", `board-stage stage-${stage.state}`);
+    const marker = el("span", "stage-marker", stage.state === "done" ? "✓" : String(index + 1));
+    const copy = el("span", "stage-copy");
+    copy.append(el("strong", null, stage.label));
+    if (!compact && ["mechanical", "components", "wiring", "finishing"].includes(stage.id)) {
+      copy.append(el("small", null, `${stage.progress}%`));
+    }
+    item.append(marker, copy);
+    tracker.append(item);
+  });
+  return tracker;
 }
 
 function recalculateBoardProgress(board) {
@@ -1098,9 +1239,16 @@ function recalculateBoardProgress(board) {
   board.completion = board.cabinetProgress.length
     ? Math.round(board.cabinetProgress.reduce((sum, value) => sum + value, 0) / board.cabinetProgress.length)
     : 0;
-  board.status = board.completion >= 100
-    ? "Completed"
-    : (!board.assignedTo && board.completion === 0 ? "Design" : "In Progress");
+  if (board.qaStatus === "approved") board.qaStatus = board.completion >= 100 ? "ready" : "pending";
+  if (board.qaStatus === "changes_requested" && board.completion < 100) board.qaReworkStarted = true;
+  if (board.completion >= 100 && board.qaStatus !== "approved"
+      && (board.qaStatus !== "changes_requested" || board.qaReworkStarted)) board.qaStatus = "ready";
+  if (board.completion < 100 && board.qaStatus === "ready") board.qaStatus = "pending";
+  board.status = board.qaStatus === "approved" ? "Completed"
+    : board.qaStatus === "changes_requested" ? "QA Changes"
+      : board.completion >= 100 ? "QA Ready"
+        : (!board.assignedTo && board.completion === 0 ? "Design" : "In Progress");
+  recalculateBoardStages(board);
 }
 
 function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
@@ -1140,21 +1288,6 @@ function updateBoardChecklist(board, cabinetIndex, itemID, checked) {
     });
 }
 
-function animateProgressNumber(node, from, to, duration = 560) {
-  if (from === to || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    node.textContent = `${to}%`;
-    return;
-  }
-  const startedAt = performance.now();
-  const frame = (now) => {
-    const elapsed = Math.min((now - startedAt) / duration, 1);
-    const eased = 1 - ((1 - elapsed) ** 3);
-    node.textContent = `${Math.round(from + ((to - from) * eased))}%`;
-    if (elapsed < 1) requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
-}
-
 function boardProperty(iconName, label, value) {
   const card = el("div", "board-property");
   card.append(chipIcon(iconName, "var(--primary)"));
@@ -1174,11 +1307,7 @@ function renderBoardDetail() {
     view.append(emptyState("board", "This board is no longer available."));
     return;
   }
-  const progressAnimation = boardChecklistAnimation?.boardID === board.id
-    ? boardChecklistAnimation
-    : null;
-  const progressFrom = progressAnimation?.from ?? (Number(board.completion) || 0);
-  const progressTo = Number(board.completion) || 0;
+  const progressAnimation = boardChecklistAnimation?.boardID === board.id ? boardChecklistAnimation : null;
 
   const top = el("div", "board-detail-top");
   const identity = el("div", "board-detail-identity");
@@ -1192,29 +1321,21 @@ function renderBoardDetail() {
   saveState.prepend(el("i"));
   actions.append(saveState);
   actions.append(statusBadge(board.status));
+  if (state.me.can?.signOffQA && board.completion >= 100 && board.qaStatus !== "approved") {
+    actions.append(smallBtn("Review QA", "accent", null, () => openQAModal(board)));
+  }
   if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", null, () => openAssignModal(board)));
   top.append(identity, actions);
   view.append(top);
 
   const progressCard = el("section", "board-progress-card");
-  const progressLayout = el("div", "board-progress-layout");
   const progressHead = el("div", "board-progress-head");
   const progressTitle = el("div");
-  progressTitle.append(el("span", "eyebrow", "Production status"), el("h3", null, board.status));
+  progressTitle.append(el("span", "eyebrow", "Production workflow"), el("h3", null, board.currentStage?.label || board.status));
   progressHead.append(progressTitle, el("p", null, boardStatusNote(board)));
-  const dial = el("div", "board-progress-dial");
-  dial.style.setProperty("--progress", `${progressFrom}%`);
-  const dialInner = el("div");
-  const dialValue = el("strong", null, `${progressFrom}%`);
-  dialValue.setAttribute("aria-live", "polite");
-  dialInner.append(dialValue, el("span", null, "complete"));
-  dial.append(dialInner);
-  progressLayout.append(progressHead, dial);
-  const progressTrack = el("div", "board-progress-track");
-  const progressFill = el("i");
-  progressFill.style.width = `${progressFrom}%`;
-  progressTrack.append(progressFill);
-  progressCard.append(progressLayout, progressTrack);
+  const tracker = renderStageTracker(board);
+  if (progressAnimation) tracker.classList.add("changing");
+  progressCard.append(progressHead, tracker);
   view.append(progressCard);
 
   const properties = el("div", "board-property-grid");
@@ -1223,6 +1344,7 @@ function renderBoardDetail() {
   properties.append(
     boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project),
     boardProperty("team", "Builder", board.assignedName || "Unassigned"),
+    boardProperty("shield", "QA reviewer", board.qaAssignedName || "Unassigned"),
     boardProperty("cabinet", "Build", `${board.cabinetCount} cabinet${String(board.cabinetCount) === "1" ? "" : "s"} · ${board.buildFormat}`),
     boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")),
     boardProperty("hash", "Customer", board.customer),
@@ -1301,16 +1423,7 @@ function renderBoardDetail() {
   work.append(linkedPanel);
   view.append(work);
 
-  if (progressAnimation) {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        dial.style.setProperty("--progress", `${progressTo}%`);
-        progressFill.style.width = `${progressTo}%`;
-        animateProgressNumber(dialValue, progressFrom, progressTo);
-      });
-    });
-    boardChecklistAnimation = null;
-  }
+  if (progressAnimation) boardChecklistAnimation = null;
 }
 
 // ---------------------------------------------------------------- team
@@ -1986,11 +2099,11 @@ function openNewPartModal() {
   });
 }
 
-function memberSelect(selected) {
+function memberSelect(selected, predicate = () => true, emptyLabel = "Unassigned") {
   const select = el("select");
-  select.append(new Option("Unassigned", ""));
+  select.append(new Option(emptyLabel, ""));
   (state.members || [])
-    .filter((m) => m.active)
+    .filter((m) => m.active && predicate(m))
     .forEach((m) => select.append(new Option(`${m.name} (${m.role})`, m.id, false, m.id === selected)));
   return select;
 }
@@ -2099,6 +2212,9 @@ function renderBoardCreate() {
   const assign = el("label", "page-field", "Give the board to");
   const assignee = memberSelect(null);
   assign.append(assignee);
+  const qaAssign = el("label", "page-field", "QA reviewer");
+  const qaAssignee = memberSelect(null, (member) => ["owner", "manager", "staff-manager", "qa"].includes(member.role), "Assign later");
+  qaAssign.append(qaAssignee);
 
   project.select.addEventListener("change", () => {
     const selectedProject = state.projects.find((item) => item.name === project.select.value);
@@ -2118,7 +2234,7 @@ function renderBoardCreate() {
   form.append(
     section("Identity", "Name it and connect it to the right customer and project.", number, group, name, project, customer, company),
     section("Build specification", "These fields appear on the board record and in the app.", subtype, manufacturer, cabinets, buildFormat),
-    section("Schedule & ownership", "An unassigned board with 0% progress stays in Design.", dateOut, dueDate, assign),
+    section("Schedule & ownership", "The builder completes production. QA is a separate approval stage.", dateOut, dueDate, assign, qaAssign),
     section("Main breaker", "Record the protection device at the head of the board.", mainBreakerType, mainBreakerModel, mainBreakerAmpere),
   );
   const error = el("div", "form-error hidden");
@@ -2159,6 +2275,7 @@ function renderBoardCreate() {
         mainBreakerModel: mainBreakerModel.input.value,
         mainBreakerAmpere: mainBreakerAmpere.input.value,
         assignedTo: assignee.value || null,
+        qaAssignedTo: qaAssignee.value || null,
       });
       selectedBoardID = board.id;
       selectedBoardCabinet = 0;
@@ -2204,16 +2321,65 @@ function openAssignModal(board) {
   openModal((modal, close) => {
     modal.append(el("h3", null, "Assign board"));
     modal.append(el("div", "modal-sub", [board.number, board.name].filter(Boolean).join(" — ")));
-    const label = el("label", null, "Assigned to");
+    const label = el("label", null, "Builder");
     const select = memberSelect(board.assignedTo);
     label.append(select);
-    modal.append(label);
+    const qaLabel = el("label", null, "QA reviewer");
+    const qaSelect = memberSelect(board.qaAssignedTo, (member) => ["owner", "manager", "staff-manager", "qa"].includes(member.role), "Assign later");
+    qaLabel.append(qaSelect);
+    modal.append(label, qaLabel);
     modal.append(modalActions(close, "Save", async () => {
-      await api("/api/board-update", { boardID: board.id, assignedTo: select.value || null });
+      await api("/api/board-update", {
+        boardID: board.id,
+        assignedTo: select.value || null,
+        qaAssignedTo: qaSelect.value || null,
+      });
       close();
       await refresh();
       switchView(returnView === "board-detail" ? "board-detail" : "boards");
     }));
+  });
+}
+
+function openQAModal(board) {
+  const returnView = currentView;
+  openModal((modal, close) => {
+    modal.append(el("span", "eyebrow", "Quality assurance"), el("h3", null, `Review ${board.number}`));
+    modal.append(el("div", "modal-sub", "Approval unlocks Complete. A correction request returns the board to Finishing."));
+    const note = field("QA note", "What passed, or what needs correction");
+    note.input.value = board.qaNote || "";
+    const error = el("div", "form-error hidden");
+    modal.append(note.label, error);
+    const actions = el("div", "modal-actions qa-modal-actions");
+    const cancel = el("button", "btn-ghost", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", close);
+    const changes = el("button", "btn-danger", "Request corrections");
+    changes.type = "button";
+    const approve = el("button", "btn-primary", "Approve QA");
+    approve.type = "button";
+    const submit = async (action, button) => {
+      changes.disabled = true;
+      approve.disabled = true;
+      button.textContent = action === "approve" ? "Approving…" : "Sending…";
+      try {
+        await api("/api/board-qa", { boardID: board.id, action, note: note.input.value });
+        close();
+        await refresh();
+        switchView(returnView === "board-detail" ? "board-detail" : "boards");
+      } catch (caught) {
+        error.textContent = caught.message || "QA could not be updated.";
+        error.classList.remove("hidden");
+        changes.disabled = false;
+        approve.disabled = false;
+        changes.textContent = "Request corrections";
+        approve.textContent = "Approve QA";
+      }
+    };
+    changes.addEventListener("click", () => submit("request_changes", changes));
+    approve.addEventListener("click", () => submit("approve", approve));
+    actions.append(cancel, changes, approve);
+    modal.append(actions);
   });
 }
 
