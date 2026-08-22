@@ -420,6 +420,77 @@ input:focus, select:focus, textarea:focus {
 
 /* ============================================================ dashboard grid */
 
+.manager-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 22px 24px; margin-bottom: 2px;
+  border: 1px solid var(--line); border-radius: calc(var(--r) + 4px);
+  background:
+    radial-gradient(circle at 88% 10%, color-mix(in srgb, var(--primary) 18%, transparent), transparent 34%),
+    linear-gradient(135deg, var(--panel), color-mix(in srgb, var(--panel) 90%, var(--primary)));
+  overflow: hidden;
+}
+.manager-hero-copy { min-width: 0; }
+.manager-eyebrow { color: var(--primary); font-size: 10.5px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; margin-bottom: 5px; }
+.manager-hero h2 { font-size: clamp(23px, 3vw, 32px); line-height: 1.08; letter-spacing: -.035em; }
+.manager-hero p { color: var(--ink-2); font-size: 13px; margin-top: 7px; }
+.manager-quick-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.manager-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.manager-kpi {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 13px; text-align: left; color: var(--ink); font: inherit; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  transition: border-color .13s, transform .13s, background .13s;
+}
+.manager-kpi:hover { border-color: var(--line-2); background: var(--raise); transform: translateY(-1px); }
+.manager-kpi > svg { color: var(--ink-3); flex-shrink: 0; }
+.manager-kpi-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.manager-kpi-copy span { color: var(--ink-3); font-size: 10px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.manager-kpi-copy strong { font-size: 24px; line-height: 1.1; letter-spacing: -.03em; margin: 3px 0 2px; }
+.manager-kpi-copy small { color: var(--ink-3); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.manager-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, .85fr); gap: 10px; align-items: start; }
+.manager-main, .manager-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.attention-panel { border-color: color-mix(in srgb, var(--warning) 30%, var(--line)); }
+.manager-attention-list { display: flex; flex-direction: column; gap: 6px; }
+.attention-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px;
+  color: var(--ink); background: transparent; border: 0; border-radius: var(--r-sm); font: inherit; text-align: left; cursor: pointer;
+}
+.attention-item:hover { background: var(--wash-1); }
+.attention-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.attention-copy strong { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention-copy small { color: var(--ink-3); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention-action { color: var(--primary); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.manager-clear { padding: 22px; color: var(--positive); font-size: 12px; text-align: center; }
+.manager-clear.compact { padding: 18px 12px; }
+
+.project-snapshot { padding: 5px; }
+.project-snapshot-row {
+  display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(130px, .8fr) 42px 16px;
+  align-items: center; gap: 12px; width: 100%; padding: 10px;
+  color: var(--ink); background: transparent; border: 0; border-radius: var(--r-sm); font: inherit; text-align: left; cursor: pointer;
+}
+.project-snapshot-row + .project-snapshot-row { border-top: 1px solid var(--line); }
+.project-snapshot-row:hover { background: var(--wash-1); }
+.project-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.project-identity > i { width: 9px; height: 34px; border-radius: 4px; flex-shrink: 0; }
+.project-identity > span { display: flex; flex-direction: column; min-width: 0; }
+.project-identity strong, .project-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-identity strong { font-size: 12.5px; }
+.project-identity small, .project-progress small { color: var(--ink-3); font-size: 10.5px; }
+.project-progress { display: flex; flex-direction: column; gap: 5px; }
+.manager-meter { display: block; height: 5px; border-radius: 99px; background: var(--wash-2); overflow: hidden; }
+.manager-meter i { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--primary); }
+.project-percent { font-size: 11px; text-align: right; }
+
+.board-pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.pipeline-stage { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 11px; color: var(--ink); background: var(--wash-1); border: 1px solid var(--line); border-radius: var(--r-sm); font: inherit; cursor: pointer; }
+.pipeline-stage:hover { border-color: var(--line-2); }
+.pipeline-stage strong { font-size: 25px; line-height: 1; letter-spacing: -.03em; }
+.pipeline-stage small { color: var(--ink-3); font-size: 10px; }
+.financial-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+
 .dash-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
@@ -749,6 +820,8 @@ img.brand-logo {
 
 @media (max-width: 1080px) {
   .dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .manager-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -767,6 +840,19 @@ img.brand-logo {
   .user-chip-text { display: none; }
   .content { padding: 16px 14px 44px; }
   .view-head h2 { font-size: 18px; }
+  .manager-hero { align-items: flex-start; flex-direction: column; padding: 18px; }
+  .manager-quick-actions { width: 100%; }
+  .manager-quick-actions button { flex: 1; justify-content: center; }
+  .project-snapshot-row { grid-template-columns: minmax(0, 1fr) 40px 16px; }
+  .project-progress { display: none; }
+  .attention-action { display: none; }
+}
+@media (max-width: 480px) {
+  .manager-kpis { grid-template-columns: 1fr; }
+  .board-pipeline { grid-template-columns: 1fr; }
+  .pipeline-stage { flex-direction: row; align-items: center; }
+  .pipeline-stage strong { margin-left: auto; }
+  .financial-summary { grid-template-columns: 1fr; }
 }
 
 /* ============================================================ skin picker */

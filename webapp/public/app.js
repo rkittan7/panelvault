@@ -466,149 +466,178 @@ function panel(title, meta, ...actions) {
 function renderDashboard() {
   const view = $("#view-dashboard");
   view.replaceChildren();
-  view.append(viewHead("Dashboard"));
+  const today = new Date();
+  const low = state.stock
+    .filter((item) => item.minimumLevel != null && item.onHand <= item.minimumLevel)
+    .sort((a, b) => (a.onHand - a.minimumLevel) - (b.onHand - b.minimumLevel));
+  const activeProjects = state.projects.filter((project) => project.status !== "Completed");
+  const openBoards = state.boards.filter((board) => board.status !== "Completed");
+  const unassignedBoards = openBoards.filter((board) => !board.assignedTo);
+  const overdueProjects = activeProjects.filter((project) => project.dueDate && new Date(project.dueDate) < today);
+  const units = state.stock.reduce((sum, item) => sum + Math.max(item.onHand, 0), 0);
 
-  const low = state.stock.filter((s) => s.minimumLevel != null && s.onHand <= s.minimumLevel);
-  const units = state.stock.reduce((sum, s) => sum + s.onHand, 0);
-  const open = state.boards.filter((b) => b.status !== "Completed").length;
-  const movedIn = state.movements.filter((m) => m.kind !== "consume").length;
-
-  const stats = el("div", "stats");
-  stats.append(
-    statTile("var(--primary)", "Parts", state.stock.length, "tracked in stock"),
-    statTile("var(--secondary)", "Units", units.toLocaleString(), "total on hand"),
-    statTile(low.length ? "var(--warning)" : "var(--positive)", "Low stock", low.length,
-      low.length ? "need ordering" : "all levels ok"),
-    statTile("var(--positive)", "Open boards", open, `${state.boards.length} total`),
+  const hero = el("section", "manager-hero");
+  const heroCopy = el("div", "manager-hero-copy");
+  heroCopy.append(
+    el("div", "manager-eyebrow", today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
+    el("h2", null, `Good ${today.getHours() < 12 ? "morning" : today.getHours() < 18 ? "afternoon" : "evening"}, ${state.me.name.split(/\s+/)[0]}`),
+    el("p", null, "Projects, production and stock—one clear view of what needs your attention."),
   );
-  view.append(stats);
-
-  if (canSeeCosts() && state.costSummary) {
-    const c = state.costSummary;
-    const moneyStats = el("div", "stats");
-    moneyStats.append(
-      statTile("var(--primary)", "Stock value", money(c.stockValueMinor), "on the shelf"),
-      statTile("var(--secondary)", "Board cost", money(c.boardCostMinor), "parts consumed"),
-      statTile(
-        c.unpricedParts ? "var(--warning)" : "var(--positive)",
-        "Priced parts",
-        `${c.pricedParts}/${c.pricedParts + c.unpricedParts}`,
-        c.unpricedParts ? `${c.unpricedParts} need a price` : "all parts priced",
-      ),
+  hero.append(heroCopy);
+  if (isAdmin()) {
+    const quick = el("div", "manager-quick-actions");
+    quick.append(
+      smallBtn("New project", "accent", "plus", openNewProjectModal),
+      smallBtn("New board", "", "plus", openNewBoardModal),
     );
-    view.append(el("div", "money-head", "Costs \u00b7 visible to you only"), moneyStats);
+    hero.append(quick);
   }
+  view.append(hero);
 
-  const grid = el("div", "dash-grid");
-  const left = el("div", "dash-col");
-  const right = el("div", "dash-col");
-  grid.append(left, right);
-  view.append(grid);
+  const kpis = el("div", "manager-kpis");
+  const managerKpi = (iconName, color, label, value, note, target) => {
+    const card = el("button", "manager-kpi");
+    card.type = "button";
+    card.append(chipIcon(iconName, color));
+    const copy = el("div", "manager-kpi-copy");
+    copy.append(el("span", null, label), el("strong", null, String(value)), el("small", null, note));
+    card.append(copy, icon("chevron", 16));
+    card.addEventListener("click", () => switchView(target));
+    return card;
+  };
+  kpis.append(
+    managerKpi("folder", "var(--primary)", "Active projects", activeProjects.length, `${state.projects.length} total`, "projects"),
+    managerKpi("board", "var(--secondary)", "Boards in production", openBoards.length, `${unassignedBoards.length} unassigned`, "boards"),
+    managerKpi("alert", low.length ? "var(--warning)" : "var(--positive)", "Low stock", low.length, low.length ? "needs ordering" : "stock is healthy", "stock"),
+    managerKpi("box", "var(--positive)", "Parts on hand", units.toLocaleString(), `${state.stock.length} tracked types`, "stock"),
+  );
+  view.append(kpis);
 
-  // --- movement chart
-  const chartPanel = panel("Stock movement", "last 14 days");
-  const legend = el("div", "chart-legend");
-  legend.innerHTML =
-    '<span><i style="background:var(--positive)"></i>In</span>' +
-    '<span><i style="background:var(--secondary)"></i>Out</span>';
-  chartPanel.querySelector(".panel-head").append(legend);
-  const chartHost = el("div", "chart-wrap");
-  chartPanel.body.append(chartHost);
-  left.append(chartPanel);
-  if (state.movements.length) {
-    renderMovementChart(chartHost, state.movements);
-  } else {
-    chartHost.append(emptyState("pulse", "No movement yet. Receiving stock or using it on a board will chart here."));
+  const managerGrid = el("div", "manager-grid");
+  const mainColumn = el("div", "manager-main");
+  const sideColumn = el("div", "manager-side");
+  managerGrid.append(mainColumn, sideColumn);
+  view.append(managerGrid);
+
+  const attentionCount = low.length + unassignedBoards.length + overdueProjects.length;
+  const attentionPanel = panel("Needs attention", attentionCount ? `${attentionCount} items` : "All clear");
+  attentionPanel.classList.add("attention-panel");
+  attentionPanel.body.classList.add("manager-attention-list");
+  const attentionItem = (iconName, color, title, detail, actionLabel, action) => {
+    const item = el("button", "attention-item");
+    item.type = "button";
+    item.append(chipIcon(iconName, color));
+    const copy = el("span", "attention-copy");
+    copy.append(el("strong", null, title), el("small", null, detail));
+    item.append(copy, el("span", "attention-action", actionLabel), icon("chevron", 15));
+    item.addEventListener("click", action);
+    return item;
+  };
+  overdueProjects.slice(0, 2).forEach((project) => attentionPanel.body.append(attentionItem(
+    "folder", "var(--warning)", `${project.name} is overdue`,
+    `${project.customer} · due ${new Date(project.dueDate).toLocaleDateString()}`, "Open projects", () => switchView("projects"),
+  )));
+  unassignedBoards.slice(0, 2).forEach((board) => attentionPanel.body.append(attentionItem(
+    "board", "var(--secondary)", `${board.number} needs an owner`,
+    [board.name, board.project !== "No Project" ? board.project : board.customer].filter(Boolean).join(" · "), "Assign", () => openAssignModal(board),
+  )));
+  low.slice(0, 3).forEach((item) => attentionPanel.body.append(attentionItem(
+    "alert", "var(--warning)", `${item.part.manufacturer} ${item.part.model}`,
+    `${item.onHand} on hand · minimum ${item.minimumLevel}${item.location ? ` · ${item.location}` : ""}`, "Review stock", () => switchView("stock"),
+  )));
+  if (!attentionCount) {
+    attentionPanel.body.append(el("div", "manager-clear", "No overdue projects, unassigned boards or low-stock parts."));
   }
+  mainColumn.append(attentionPanel);
 
-  // --- stock levels with meters
-  const levelsPanel = panel("Stock levels", `${state.stock.length} parts`);
-  levelsPanel.body.classList.add("flush");
-  const rows = el("div", "rows");
-  const top = [...state.stock].sort((a, b) => b.onHand - a.onHand).slice(0, 6);
-  const peak = Math.max(1, ...top.map((s) => s.onHand));
-  if (!top.length) {
-    levelsPanel.body.append(emptyState("box", isAdmin()
-      ? "No parts tracked yet. Add one from the Stock page."
-      : "No parts tracked yet."));
+  const projectsPanel = panel("Projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
+  projectsPanel.body.classList.add("project-snapshot");
+  if (!state.projects.length) {
+    projectsPanel.body.append(emptyState("folder", isAdmin() ? "Create your first project to organize its boards and customer." : "No projects yet."));
   } else {
-    top.forEach((s) => {
-      const isLow = s.minimumLevel != null && s.onHand <= s.minimumLevel;
-      const row = el("div", "row click");
-      row.append(partChip(s.part));
-      const main = el("div", "row-main");
-      main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
-      const meter = el("div", "meter");
+    state.projects.slice(0, 5).forEach((project) => {
+      const projectBoards = state.boards.filter((board) => board.project === project.name);
+      const completed = projectBoards.filter((board) => board.status === "Completed").length;
+      const progress = projectBoards.length ? Math.round((completed / projectBoards.length) * 100) : 0;
+      const row = el("button", "project-snapshot-row");
+      row.type = "button";
+      const identity = el("span", "project-identity");
+      const color = el("i");
+      color.style.background = project.colorHex || "var(--primary)";
+      const names = el("span");
+      names.append(el("strong", null, project.name), el("small", null, [project.customer, project.site].filter(Boolean).join(" · ")));
+      identity.append(color, names);
+      const progressWrap = el("span", "project-progress");
+      const meter = el("span", "manager-meter");
       const fill = el("i");
-      fill.style.width = `${Math.max(3, (s.onHand / peak) * 100)}%`;
-      fill.style.background = isLow ? "var(--warning)" : "var(--primary)";
+      fill.style.width = `${progress}%`;
       meter.append(fill);
-      main.append(meter);
-      const qty = el("div", "qty-col");
-      qty.append(el("div", `num ${isLow ? "low" : "ok"}`, String(s.onHand)));
-      row.append(main, qty);
+      progressWrap.append(el("small", null, `${completed}/${projectBoards.length} boards complete`), meter);
+      row.append(identity, progressWrap, el("strong", "project-percent", `${progress}%`), icon("chevron", 15));
+      row.addEventListener("click", () => switchView("projects"));
+      projectsPanel.body.append(row);
+    });
+  }
+  mainColumn.append(projectsPanel);
+
+  const boardCounts = ["Design", "In Progress", "Completed"].map((status) => ({
+    status,
+    count: state.boards.filter((board) => board.status === status).length,
+  }));
+  const boardsPanel = panel("Board workload", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
+  const pipeline = el("div", "board-pipeline");
+  boardCounts.forEach(({ status, count }) => {
+    const stage = el("button", "pipeline-stage");
+    stage.type = "button";
+    stage.append(statusBadge(status), el("strong", null, String(count)), el("small", null, status === "Completed" ? "finished" : "boards"));
+    stage.addEventListener("click", () => switchView("boards"));
+    pipeline.append(stage);
+  });
+  boardsPanel.body.append(pipeline);
+  sideColumn.append(boardsPanel);
+
+  const stockPanel = panel("Low stock", low.length ? `${low.length} to review` : "Healthy", smallBtn("All stock", "", null, () => switchView("stock")));
+  stockPanel.body.classList.add("flush");
+  if (!low.length) {
+    stockPanel.body.append(el("div", "manager-clear compact", "Every tracked part is above its minimum."));
+  } else {
+    const rows = el("div", "rows");
+    low.slice(0, 5).forEach((item) => {
+      const row = el("div", "row click");
+      row.append(partChip(item.part));
+      const copy = el("div", "row-main");
+      copy.append(el("div", "row-title", `${item.part.manufacturer} ${item.part.model}`), el("div", "row-sub", item.location || item.part.type));
+      const quantity = el("div", "qty-col");
+      quantity.append(el("div", "num low", String(item.onHand)), el("div", "cap", `min ${item.minimumLevel}`));
+      row.append(copy, quantity);
       row.addEventListener("click", () => switchView("stock"));
       rows.append(row);
     });
-    levelsPanel.body.append(rows);
+    stockPanel.body.append(rows);
   }
-  left.append(levelsPanel);
+  sideColumn.append(stockPanel);
 
-  // --- right rail: activity
-  const activity = panel("Recent activity", movedIn ? `${state.movements.length} events` : "");
+  if (canSeeCosts() && state.costSummary) {
+    const costs = panel("Financial snapshot", "Private to managers");
+    const financials = el("div", "financial-summary");
+    financials.append(
+      statTile("var(--primary)", "Stock value", money(state.costSummary.stockValueMinor), "current shelf value"),
+      statTile("var(--secondary)", "Board parts", money(state.costSummary.boardCostMinor), "consumed on boards"),
+    );
+    costs.body.append(financials);
+    sideColumn.append(costs);
+  }
+
+  const activity = panel("Latest stock activity", state.movements.length ? `${state.movements.length} recent events` : "");
   activity.body.classList.add("flush");
   if (!state.movements.length) {
-    activity.body.append(emptyState("pulse", "Nothing has moved yet."));
+    activity.body.append(el("div", "manager-clear compact", "No warehouse activity yet."));
   } else {
     const feed = el("div", "rows");
-    state.movements.slice(0, 7).forEach((m) => feed.append(movementRow(m)));
+    state.movements.slice(0, 5).forEach((movement) => feed.append(movementRow(movement)));
     activity.body.append(feed);
   }
-  right.append(activity);
-
-  // --- right rail: deliveries
-  const deliveriesPanel = panel("Deliveries", state.deliveries.length ? `${state.deliveries.length} confirmed` : "");
-  deliveriesPanel.body.classList.add("flush");
-  if (!state.deliveries.length) {
-    deliveriesPanel.body.append(emptyState("note", "No delivery notes confirmed yet."));
-  } else {
-    const feed = el("div", "rows");
-    state.deliveries.slice(0, 5).forEach((d) => {
-      const row = el("div", "row click");
-      row.append(chipIcon(d.source === "scan" ? "scan" : "note", "var(--primary)"));
-      const main = el("div", "row-main");
-      main.append(el("div", "row-title", deliveryTitle(d)));
-      main.append(el("div", "row-sub",
-        [d.userName, when(d.confirmedAt)].filter(Boolean).join(" · ")));
-      row.append(main, el("div", "delta pos", `+${d.unitCount}`));
-      row.addEventListener("click", () => openDeliveryModal(d.id));
-      feed.append(row);
-    });
-    deliveriesPanel.body.append(feed);
-  }
-  right.append(deliveriesPanel);
-
-  // --- right rail: boards snapshot
-  const boardsPanel = panel("Boards", `${open} open`);
-  boardsPanel.body.classList.add("flush");
-  if (!state.boards.length) {
-    boardsPanel.body.append(emptyState("board", isAdmin()
-      ? "Create a board and assign it to whoever builds it."
-      : "No boards assigned yet."));
-  } else {
-    const feed = el("div", "rows");
-    state.boards.slice(0, 5).forEach((b) => {
-      const row = el("div", "row click");
-      const main = el("div", "row-main");
-      main.append(el("div", "row-title", [b.number, b.name].filter(Boolean).join(" \u2014 ")));
-      main.append(el("div", "row-sub", b.assignedName ? `assigned to ${b.assignedName}` : "unassigned"));
-      row.append(main, statusBadge(b.status));
-      row.addEventListener("click", () => switchView("boards"));
-      feed.append(row);
-    });
-    boardsPanel.body.append(feed);
-  }
-  right.append(boardsPanel);
+  mainColumn.append(activity);
 }
 
 // ---------------------------------------------------------------- stock
