@@ -115,6 +115,37 @@ test("mobile movement sync is authenticated, atomic, and idempotent", async () =
   });
   assert.equal(websitePart.response.status, 200);
   assert.equal(websitePart.body.part.serialNumber, "SN-WEB-0099");
+  const mcbTemplate = JSON.parse(fs.readFileSync(path.join(webapp, "catalog.json"), "utf8"))
+    .find((part) => String(part.type).toUpperCase().includes("MCB")
+      && !String(part.type).toUpperCase().includes("MCCB"));
+  assert.ok(mcbTemplate, "catalog should contain an MCB template");
+  const ratedVariant = {
+    manufacturer: mcbTemplate.manufacturer,
+    type: mcbTemplate.type,
+    model: mcbTemplate.model,
+    rating: "16A",
+    poles: "1P",
+    curve: "C Curve",
+    sourceID: mcbTemplate.id,
+  };
+  const firstVariant = await json(baseURL, "/api/parts", {
+    method: "POST",
+    headers: authorization,
+    body: JSON.stringify(ratedVariant),
+  });
+  assert.equal(firstVariant.response.status, 200);
+  assert.equal(firstVariant.body.part.rating, "16A");
+  assert.equal(firstVariant.body.part.poles, "1P");
+  assert.equal(firstVariant.body.part.curve, "C Curve");
+  assert.equal(firstVariant.body.part.sourceID, mcbTemplate.id);
+  const duplicateVariant = await json(baseURL, "/api/parts", {
+    method: "POST",
+    headers: authorization,
+    body: JSON.stringify(ratedVariant),
+  });
+  assert.equal(duplicateVariant.response.status, 200);
+  assert.equal(duplicateVariant.body.part.id, firstVariant.body.part.id);
+  assert.equal(duplicateVariant.body.existing, true);
   const barcode = {
     code: "7612270934765",
     symbology: "EAN-13",

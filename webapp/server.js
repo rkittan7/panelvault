@@ -1064,6 +1064,7 @@ const routes = {
         rating: String(incoming.rating || "").trim().slice(0, 100),
         poles: String(incoming.poles || "").trim().slice(0, 60),
         curve: String(incoming.curve || "").trim().slice(0, 80),
+        sourceID: String(incoming.sourceID || "").trim().slice(0, 140) || null,
         about: String(incoming.about || "").trim().slice(0, 500),
         serialNumber: String(incoming.serialNumber || "").trim().slice(0, 160),
       });
@@ -1079,18 +1080,36 @@ const routes = {
   "POST /api/parts": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add parts.");
-    const { manufacturer, type, model, rating, poles, about, serialNumber } = await readBody(req);
+    const { manufacturer, type, model, rating, poles, curve, about, serialNumber, sourceID } = await readBody(req);
     if (!model?.trim() || !type?.trim()) return fail(res, 400, "Model and type are required.");
+    const cleanSourceID = String(sourceID || "").trim().slice(0, 140);
+    if (cleanSourceID && !partFor(company, cleanSourceID)) {
+      return fail(res, 400, "The stock variant references an unknown catalog part.");
+    }
+    const normalized = {
+      manufacturer: String(manufacturer || "Generic").trim().slice(0, 100),
+      type: String(type).trim().slice(0, 100),
+      model: String(model).trim().slice(0, 140),
+      rating: String(rating || "").trim().slice(0, 100),
+      poles: String(poles || "").trim().slice(0, 60),
+      curve: String(curve || "").trim().slice(0, 80),
+      sourceID: cleanSourceID || null,
+      serialNumber: String(serialNumber || "").trim().slice(0, 160),
+    };
+    const existing = cleanSourceID && company.customParts.find((item) =>
+      item.sourceID === normalized.sourceID
+      && item.manufacturer === normalized.manufacturer
+      && item.type === normalized.type
+      && item.model === normalized.model
+      && item.rating === normalized.rating
+      && item.poles === normalized.poles
+      && item.curve === normalized.curve
+      && String(item.serialNumber || "") === normalized.serialNumber);
+    if (existing) return sendJSON(res, 200, { part: existing, existing: true });
     const part = {
       id: id("custom"),
-      manufacturer: (manufacturer || "Generic").trim(),
-      type: type.trim(),
-      model: model.trim(),
-      rating: (rating || "").trim(),
-      poles: (poles || "").trim(),
-      curve: "",
+      ...normalized,
       about: (about || "").trim(),
-      serialNumber: String(serialNumber || "").trim().slice(0, 160),
     };
     company.customParts.push(part);
     await save();

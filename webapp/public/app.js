@@ -6,6 +6,15 @@ let state = null; // last /api/state payload
 let catalog = null; // lazy-loaded parts list
 let currentView = "dashboard";
 
+// Kept in the same order as AmpereRating and PoleRating in the iPhone app.
+const AMPERE_RATINGS = [
+  "0.5A", "1A", "2A", "3A", "4A", "6A", "10A", "13A", "16A", "20A", "25A", "32A",
+  "40A", "50A", "63A", "80A", "100A", "125A", "160A", "200A", "225A", "250A",
+  "315A", "400A", "500A", "630A", "800A", "1000A", "1250A", "1600A", "2000A",
+  "2500A", "3200A", "4000A", "5000A", "6300A",
+];
+const POLE_RATINGS = ["1P", "1P+N", "2P", "3P", "3P+N", "4P", "3PH", "1PH", "DIN"];
+
 const $ = (sel) => document.querySelector(sel);
 
 const el = (tag, cls, text) => {
@@ -124,7 +133,7 @@ function imageURL(file) {
 }
 
 function partPhotoURL(part) {
-  return imageURL(catalogImages.components[part && part.id]);
+  return imageURL(catalogImages.components[part && (part.sourceID || part.id)]);
 }
 
 function brandLogoURL(name) {
@@ -669,7 +678,7 @@ function renderStock() {
     list.replaceChildren();
     const q = search.value.trim().toLowerCase();
     const rows = state.stock.filter((s) =>
-      !q || `${s.part.manufacturer} ${s.part.model} ${s.part.type} ${s.part.serialNumber || ""} ${s.location}`.toLowerCase().includes(q));
+      !q || `${s.part.manufacturer} ${s.part.model} ${s.part.type} ${s.part.rating || ""} ${s.part.poles || ""} ${s.part.curve || ""} ${s.part.serialNumber || ""} ${s.location}`.toLowerCase().includes(q));
     if (!rows.length) {
       list.append(emptyState("box", state.stock.length
         ? "Nothing matches that search."
@@ -683,7 +692,8 @@ function renderStock() {
       row.append(partChip(s.part));
       const main = el("div", "row-main");
       main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
-      const bits = [s.part.type, s.part.rating, s.part.serialNumber && `Serial: ${s.part.serialNumber}`, s.location].filter(Boolean).join(" · ");
+      const bits = [s.part.type, s.part.rating, s.part.poles, s.part.curve,
+        s.part.serialNumber && `Serial: ${s.part.serialNumber}`, s.location].filter(Boolean).join(" · ");
       main.append(partSubLine(s.part, bits));
       row.append(main);
 
@@ -1183,6 +1193,112 @@ function openSettingsModal(entry) {
   });
 }
 
+function stockCurveOptions(part) {
+  const type = String(part.type || "").toUpperCase();
+  if (type.includes("RCBO")) {
+    return ["B Curve · 30mA", "C Curve · 30mA", "D Curve · 30mA", "C Curve · 100mA", "C Curve · 300mA"];
+  }
+  if (type.includes("RCD") || type.includes("RCCB")) {
+    return ["30mA Type AC", "30mA Type A", "30mA Type F", "100mA Type A", "300mA Type A"];
+  }
+  if (type.includes("MCCB") || type.includes("ACB")) {
+    return ["Thermal-magnetic", "Electronic trip", "LSI", "LSIG"];
+  }
+  if (type.includes("MCB")) return ["B Curve", "C Curve", "D Curve"];
+  return [];
+}
+
+function exactChoiceField(labelText, placeholder, values, selected = "") {
+  const field = selectField(labelText, [placeholder, ...values], values.includes(selected) ? selected : placeholder);
+  field.placeholder = placeholder;
+  return field;
+}
+
+/** Turn a generic catalog model into the exact item a manager physically stocks. */
+function openStockVariantModal(template) {
+  openModal((modal, close) => {
+    modal.classList.add("wide");
+    modal.append(partModalHead(template, "Choose the exact stock variant", true));
+
+    const grid = el("div", "creation-grid stock-variant-grid");
+    const ratingValues = [...AMPERE_RATINGS];
+    if (template.rating && template.rating !== "Set A" && !ratingValues.includes(template.rating)) {
+      ratingValues.unshift(template.rating);
+    }
+    const poleValues = [...POLE_RATINGS];
+    if (template.poles && !poleValues.includes(template.poles)) poleValues.unshift(template.poles);
+    const rating = exactChoiceField("Amp / rating", "Select amp rating", ratingValues, template.rating);
+    const poles = exactChoiceField("Poles / phase", "Select poles", poleValues, template.poles);
+    const curveValues = stockCurveOptions(template);
+    if (template.curve && !curveValues.includes(template.curve)) curveValues.unshift(template.curve);
+    const curve = curveValues.length
+      ? exactChoiceField("Curve / trip", "Select curve or trip", curveValues, template.curve)
+      : null;
+    const serialNumber = field("Serial number", "optional");
+    const quantity = field("Opening quantity", "0", "number");
+    quantity.input.min = "0";
+    quantity.input.step = "1";
+    quantity.input.value = "0";
+    const minimum = field("Low-stock level", "optional", "number");
+    minimum.input.min = "0";
+    minimum.input.step = "1";
+    const location = field("Stock location", "e.g. Rack A3");
+    grid.append(rating.label, poles.label);
+    if (curve) grid.append(curve.label);
+    grid.append(serialNumber.label, quantity.label, minimum.label, location.label);
+    modal.append(grid);
+
+    const error = el("div", "form-error hidden");
+    error.setAttribute("role", "alert");
+    modal.append(error);
+    modal.append(modalActions(close, "Add exact variant", async () => {
+      error.classList.add("hidden");
+      if (rating.select.value === rating.placeholder || poles.select.value === poles.placeholder
+          || (curve && curve.select.value === curve.placeholder)) {
+        error.textContent = "Choose the amp rating, poles, and curve/trip for this item.";
+        error.classList.remove("hidden");
+        return;
+      }
+      const openingQuantity = Math.max(0, Math.trunc(Number(quantity.input.value) || 0));
+      const minimumRaw = minimum.input.value.trim();
+      const minimumLevel = minimumRaw === "" ? null : Math.max(0, Math.trunc(Number(minimumRaw) || 0));
+      try {
+        const { part } = await api("/api/parts", {
+          manufacturer: template.manufacturer,
+          type: template.type,
+          model: template.model,
+          rating: rating.select.value,
+          poles: poles.select.value,
+          curve: curve ? curve.select.value : "",
+          serialNumber: serialNumber.input.value,
+          about: template.about || "",
+          sourceID: template.sourceID || template.id,
+        });
+        await api("/api/part-settings", {
+          partID: part.id,
+          minimumLevel,
+          location: location.input.value,
+        });
+        if (openingQuantity > 0) {
+          await api("/api/movements", {
+            partID: part.id,
+            kind: "receive",
+            quantity: openingQuantity,
+            reference: "Opening stock",
+          });
+        }
+        catalog = null;
+        close();
+        await refresh();
+        switchView("stock");
+      } catch (caught) {
+        error.textContent = caught.message || "Could not add this stock variant.";
+        error.classList.remove("hidden");
+      }
+    }));
+  });
+}
+
 async function openPartPicker() {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
@@ -1201,22 +1317,18 @@ async function openPartPicker() {
       list.replaceChildren();
       const q = search.value.trim().toLowerCase();
       catalog
-        .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type} ${p.serialNumber || ""}`.toLowerCase().includes(q))
+        .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type} ${p.rating || ""} ${p.poles || ""} ${p.curve || ""} ${p.serialNumber || ""}`.toLowerCase().includes(q))
         .slice(0, 40)
         .forEach((p) => {
           const row = el("div", "row click");
           row.append(partChip(p));
           const main = el("div", "row-main");
           main.append(el("div", "row-title", `${p.manufacturer} ${p.model}`));
-          const bits = [p.type, p.rating, p.serialNumber && `Serial: ${p.serialNumber}`].filter(Boolean).join(" · ");
+          const bits = [p.type, p.rating, p.poles, p.curve, p.serialNumber && `Serial: ${p.serialNumber}`]
+            .filter(Boolean).join(" · ");
           main.append(partSubLine(p, bits));
           row.append(main);
-          row.addEventListener("click", async () => {
-            await api("/api/part-settings", { partID: p.id, minimumLevel: null, location: "" });
-            close();
-            await refresh();
-            switchView("stock");
-          });
+          row.addEventListener("click", () => openStockVariantModal(p));
           list.append(row);
         });
     };
@@ -1415,14 +1527,7 @@ function openCatalogPartModal(part) {
         switchView("stock");
       }));
     } else if (isAdmin()) {
-      // The same call the "Add part to stock" picker makes: tracking a part
-      // with no minimum and no location, ready to receive against.
-      modal.append(modalActions(close, "Track in stock", async () => {
-        await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
-        close();
-        await refresh();
-        switchView("stock");
-      }));
+      modal.append(modalActions(close, "Choose variant", () => openStockVariantModal(part)));
     } else {
       // Staff can read the catalog but not decide what the company tracks.
       const actions = el("div", "actions");
@@ -1442,8 +1547,10 @@ function openNewPartModal() {
     const manufacturer = field("Manufacturer", "optional");
     const type = field("Type", "e.g. Cable Tray");
     const rating = field("Rating", "optional");
+    const poles = selectField("Poles / phase", ["", ...POLE_RATINGS], "");
+    const curve = field("Curve / trip", "e.g. C Curve or 30mA Type A");
     const serialNumber = field("Serial number", "optional");
-    modal.append(model.label, manufacturer.label, type.label, rating.label, serialNumber.label);
+    modal.append(model.label, manufacturer.label, type.label, rating.label, poles.label, curve.label, serialNumber.label);
     modal.append(modalActions(close, "Add part", async () => {
       if (!model.input.value.trim() || !type.input.value.trim()) return;
       const { part } = await api("/api/parts", {
@@ -1451,6 +1558,8 @@ function openNewPartModal() {
         manufacturer: manufacturer.input.value,
         type: type.input.value,
         rating: rating.input.value,
+        poles: poles.select.value,
+        curve: curve.input.value,
         serialNumber: serialNumber.input.value,
       });
       await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
