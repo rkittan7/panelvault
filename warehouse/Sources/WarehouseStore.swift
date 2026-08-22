@@ -300,7 +300,7 @@ final class WarehouseStore: ObservableObject {
         let response = try await cloud.uploadCustomParts(customParts, account: account)
         mergeCustomParts(response.customParts)
       }
-      let canManageCatalog = account.role == "owner" || account.role == "manager"
+      let canManageCatalog = account.permissions.administer
       if canManageCatalog && !barcodeMappings.isEmpty {
         let response = try await cloud.uploadBarcodeMappings(barcodeMappings, account: account)
         mergeBarcodeMappings(response.barcodeMappings)

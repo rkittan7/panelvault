@@ -14,6 +14,8 @@ targets:
     platform: iOS
     sources:
       - Sources
+      # The app icon, cut from assets/brand by tools/make_app_icons.swift.
+      - Assets.xcassets
       # The shared catalog photos, bundled as a folder reference rather than
       # copied in: one set of files in the repo serves this app, PanelVault,
       # the Warehouse app and the website. Arrives in the bundle as `catalog/`,
@@ -23,6 +25,7 @@ targets:
         buildPhase: resources
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.panelvault.worker
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1

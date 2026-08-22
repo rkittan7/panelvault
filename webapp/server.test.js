@@ -8,11 +8,11 @@ const test = require("node:test");
 
 const webapp = __dirname;
 
-async function startServer() {
+async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {
     cwd: webapp,
-    env: { ...process.env, PORT: "0", DATA_DIR: dataDir },
+    env: { ...process.env, PORT: "0", DATA_DIR: dataDir, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const stop = () => {
@@ -597,6 +597,68 @@ test("a worker joins from the invite code alone, with no company code", async ()
       }),
     });
     assert.equal(revoked.response.status, 400);
+  } finally {
+    server.stop();
+  }
+});
+
+test("scheme reading is authenticated, guarded, and allowed a document-sized body", async () => {
+  // No key on purpose: this exercises the route, the auth gate and the size
+  // gate without reaching Gemini. The env is forced rather than inherited so
+  // the test behaves the same on a machine that has a key configured.
+  const server = await startServer({ GEMINI_API_KEY: "" });
+  const { baseURL } = server;
+  try {
+    const registered = await json(baseURL, "/api/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Kittan Electric", name: "Rawe", password: "secret12" }),
+    });
+    const login = await json(baseURL, "/api/mobile/login", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: registered.body.companyCode,
+        name: "Rawe",
+        password: "secret12",
+      }),
+    });
+    const authorization = { Authorization: `Bearer ${login.body.token}` };
+
+    const anonymous = await json(baseURL, "/api/ai/board-scheme", {
+      method: "POST",
+      body: JSON.stringify({ data: "JVBERi0=" }),
+    });
+    assert.equal(anonymous.response.status, 401);
+
+    const empty = await json(baseURL, "/api/ai/board-scheme", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({}),
+    });
+    assert.equal(empty.response.status, 400);
+
+    // A scheme PDF is far bigger than the megabyte every other route accepts.
+    // Reaching the Gemini check proves the body was not cut off by the size
+    // gate on the way in.
+    const large = await json(baseURL, "/api/ai/board-scheme", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        data: "A".repeat(2_000_000),
+        mimeType: "application/pdf",
+        fileName: "3918.24-1 MDB.pdf",
+      }),
+    });
+    assert.equal(large.response.status, 503);
+    assert.match(large.body.error, /not configured/i);
+
+    // The raised limit belongs to that one route and nowhere else.
+    const otherRoute = await json(baseURL, "/api/movements", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({ partID: "x", kind: "receive", quantity: 1, reference: "A".repeat(2_000_000) }),
+    });
+    assert.equal(otherRoute.response.status, 400);
+    assert.match(otherRoute.body.error, /too large/i);
   } finally {
     server.stop();
   }

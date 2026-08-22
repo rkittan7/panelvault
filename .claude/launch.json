@@ -5,6 +5,16 @@
       "name": "panelvault-cloud",
       "url": "http://localhost:8090",
       "port": 8090
+    },
+    {
+      "name": "panelvault-cloud-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd webapp && DATA_DIR=.dev-data node server.js"
+      ],
+      "autoPort": true,
+      "port": 8091
     }
   ]
 }

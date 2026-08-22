@@ -68,6 +68,61 @@ enum PanelCloudError: LocalizedError {
   }
 }
 
+/// What PanelVault Cloud read out of an AutoCAD board scheme.
+///
+/// Every field is optional in practice: the server is told to return an empty
+/// string rather than infer a value it cannot see on the drawing, because a
+/// blank a manager fills in takes seconds and a confident wrong one gets built.
+struct BoardSchemeReading: Decodable {
+  struct Board: Decodable {
+    var number = ""
+    var name = ""
+    var customer = ""
+    var project = ""
+    var type = ""
+    var manufacturer = ""
+    var mainBreakerType = ""
+    var mainBreakerModel = ""
+    var mainBreakerAmpere = ""
+    var cabinetCount = 1
+    var notes = ""
+  }
+
+  /// A schedule line matched to a catalog part.
+  struct Component: Decodable, Identifiable {
+    let partID: String
+    var manufacturer = ""
+    var model = ""
+    var type = ""
+    var quantity = 1
+    var reference = ""
+
+    var id: String { reference.isEmpty ? partID : "\(partID)-\(reference)" }
+    var displayName: String { "\(manufacturer) \(model)".trimmingCharacters(in: .whitespaces) }
+  }
+
+  /// A schedule line the catalog has no confident match for. Shown so nobody
+  /// assumes the board is complete when part of the schedule was not placed.
+  struct Unmatched: Decodable, Identifiable {
+    var description = ""
+    var type = ""
+    var quantity = 1
+    var reference = ""
+
+    var id: String { "\(description)-\(reference)" }
+  }
+
+  var board = Board()
+  var components: [Component] = []
+  var unmatched: [Unmatched] = []
+  var model: String?
+
+  var componentCount: Int { components.reduce(0) { $0 + $1.quantity } }
+  var isEmpty: Bool {
+    board.number.isEmpty && board.name.isEmpty && components.isEmpty && unmatched.isEmpty
+  }
+}
+
 struct PanelCloudClient {
   func login(baseURL: String, companyCode: String, name: String, password: String) async throws -> PanelCloudAccount {
     let normalized = try PanelCloudClient.normalizedBaseURL(baseURL)
@@ -99,6 +154,31 @@ struct PanelCloudClient {
     )
   }
 
+  /// Send an AutoCAD scheme to PanelVault Cloud and get the board it describes.
+  ///
+  /// The drawing itself goes up — Gemini reads PDFs natively, so nothing is
+  /// rasterised or OCR'd here. Reading a large multi-page scheme is slow by
+  /// nature, hence the long timeout; the caller shows progress for it.
+  func readBoardScheme(
+    fileName: String,
+    mimeType: String,
+    data: Data,
+    account: PanelCloudAccount
+  ) async throws -> BoardSchemeReading {
+    try await request(
+      baseURL: try PanelCloudClient.normalizedBaseURL(account.baseURL),
+      path: "/api/ai/board-scheme",
+      method: "POST",
+      body: [
+        "fileName": fileName,
+        "mimeType": mimeType,
+        "data": data.base64EncodedString(),
+      ],
+      token: account.token,
+      timeout: 180
+    )
+  }
+
   private static func normalizedBaseURL(_ value: String) throws -> URL {
     var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if !text.contains("://") { text = "https://\(text)" }
@@ -113,12 +193,13 @@ struct PanelCloudClient {
     path: String,
     method: String,
     body: Body?,
-    token: String?
+    token: String?,
+    timeout: TimeInterval = 30
   ) async throws -> Response {
     guard let url = URL(string: path, relativeTo: baseURL) else { throw PanelCloudError.invalidServer }
     var request = URLRequest(url: url)
     request.httpMethod = method
-    request.timeoutInterval = 30
+    request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let body {

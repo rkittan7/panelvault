@@ -15,11 +15,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
+const {
+  BOARD_SCHEME_INSTRUCTION,
+  BOARD_SCHEME_SCHEMA,
+  boardSchemePrompt,
+  normalizeReading,
+} = require("./scheme");
 
 const PORT = Number.parseInt(process.env.PORT || "8090", 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const SECRET_FILE = path.join(DATA_DIR, "secret");
+
+/** Base64 inflates by a third; this leaves room for an 8 MB scheme PDF. */
+const MAX_DOCUMENT_BODY = 12_000_000;
 
 /** Shared with the iPhone apps — see assets/catalog/README.md. */
 const CATALOG_IMAGE_DIR = path.resolve(__dirname, "..", "assets", "catalog");
@@ -623,6 +632,9 @@ function fail(res, status, message) {
 
 function readBody(req) {
   if (req.panelVaultBodyPromise) return req.panelVaultBodyPromise;
+  // A megabyte is generous for the JSON every other route sends; the routes
+  // that carry a base64 document raise it for themselves in the dispatcher.
+  const limit = req.panelVaultBodyLimit || 1_000_000;
   req.panelVaultBodyPromise = new Promise((resolve, reject) => {
     let raw = "";
     let settled = false;
@@ -637,7 +649,7 @@ function readBody(req) {
     };
     const onData = (chunk) => {
       raw += chunk;
-      if (raw.length > 1_000_000) {
+      if (raw.length > limit) {
         req.resume();
         finish(reject, new Error("body too large"));
       }
@@ -715,11 +727,28 @@ function accountError(message, statusCode = 400) {
   return error;
 }
 
+/** What this user is allowed to do, in one place.
+ *
+ * The website's `/api/state` and the phones' sign-in both read from here, so
+ * the apps mirror what the server will actually permit instead of re-deriving
+ * the role rules and drifting out of step with them.
+ */
+function capabilitiesFor(user) {
+  return {
+    administer: isAdmin(user),
+    seeCosts: canSeeCosts(user),
+    signOffQA: canSignOffQA(user),
+    manageMembers: isOwner(user),
+  };
+}
+
 function mobileAuthBody(company, user) {
   return {
     ...createSession(company.code, user.id),
     company: { code: company.code, name: company.name },
     user: publicUser(user),
+    can: capabilitiesFor(user),
+    roleLabel: ROLE_LABELS[user.role] || user.role,
   };
 }
 
@@ -838,6 +867,34 @@ const routes = {
     sendJSON(res, 200, result);
   },
 
+  /** Read an AutoCAD scheme PDF and return a board draft plus its parts.
+   *
+   * This is the first step of creating a board: the drawing is the source of
+   * truth for what the board is, so it is read before anyone types anything.
+   * Nothing is written here — the phone shows the reading for review and the
+   * board is only created once a person confirms it.
+   */
+  "POST /api/ai/board-scheme": async (req, res, session) => {
+    const { fileName, mimeType, data } = await readBody(req);
+    if (typeof data !== "string" || !data.trim()) {
+      return fail(res, 400, "Attach the scheme PDF.");
+    }
+
+    const reading = await gemini.readDocument({
+      data: data.trim(),
+      mimeType: mimeType || "application/pdf",
+      systemInstruction: BOARD_SCHEME_INSTRUCTION,
+      prompt: boardSchemePrompt(fileName),
+      schema: BOARD_SCHEME_SCHEMA,
+    });
+
+    const catalog = [...CATALOG, ...(session.company.customParts || [])];
+    sendJSON(res, 200, {
+      ...normalizeReading(reading.data, catalog),
+      model: reading.model,
+    });
+  },
+
   /** Owner registers the company and becomes its first admin. */
   "POST /api/company": async (req, res) => {
     const { company, user } = await createCompanyAccount(await readBody(req));
@@ -900,12 +957,7 @@ const routes = {
         ...publicUser(user),
         // Capabilities travel with the session so the UI mirrors what the
         // server will actually allow, instead of re-deriving role rules.
-        can: {
-          administer: admin,
-          seeCosts: withCosts,
-          signOffQA: canSignOffQA(user),
-          manageMembers: isOwner(user),
-        },
+        can: capabilitiesFor(user),
         invitableRoles: invitableRoles(user),
       },
       roleLabels: ROLE_LABELS,
@@ -1649,6 +1701,15 @@ const routes = {
 };
 
 // Routes that must work without a session.
+/** POST routes that only read. Kept out of the mutation queue. */
+const READ_ONLY_POST_ROUTES = new Set([
+  "POST /api/ai/generate",
+  "POST /api/ai/board-scheme",
+]);
+
+/** POST routes allowed to carry a base64 document. */
+const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme"]);
+
 const OPEN_ROUTES = new Set([
   "GET /api/health",
   "POST /api/company",
@@ -1735,7 +1796,12 @@ const server = http.createServer(async (req, res) => {
       };
       if (req.method === "POST") {
         if (OPEN_ROUTES.has(key) && !allowAuthAttempt(req, res)) return;
+        if (LARGE_BODY_ROUTES.has(key)) req.panelVaultBodyLimit = MAX_DOCUMENT_BODY;
         await readBody(req);
+        // Reading a scheme changes nothing and can take a minute or more.
+        // Running it inside the mutation queue would hold every stock write in
+        // the company behind one person's upload.
+        if (READ_ONLY_POST_ROUTES.has(key)) return await invoke();
         return await serializeMutation(invoke);
       }
       await mutationQueue.catch(() => {});

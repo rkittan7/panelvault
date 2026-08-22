@@ -1,6 +1,18 @@
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+/** Inline document parts are base64, which is 4 characters per 3 bytes. */
+const MAX_DOCUMENT_BASE64 = 11_000_000; // ~8 MB of file
+
+/** An AutoCAD export is a PDF; the image types are for a photo of a printout. */
+const SUPPORTED_DOCUMENT_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/heic",
+]);
+
 function createGeminiClient({
   apiKey = process.env.GEMINI_API_KEY,
   model = process.env.GEMINI_MODEL || DEFAULT_MODEL,
@@ -63,7 +75,99 @@ function createGeminiClient({
       }
       return { text, model, usage: result.usageMetadata || null };
     },
+
+    /** Read a document and return JSON matching `schema`.
+     *
+     * Gemini takes a PDF as an inline part and reads it natively — pages,
+     * tables and the drawing itself — so an AutoCAD scheme does not have to be
+     * rasterised or OCR'd first. `responseSchema` makes the model answer with
+     * JSON of a fixed shape instead of prose that would have to be parsed out
+     * of a code fence.
+     *
+     * The timeout is far longer than `generate`'s: a multi-page A1 scheme is a
+     * lot of tokens and routinely takes the better part of a minute.
+     */
+    async readDocument({ data, mimeType, prompt, systemInstruction, schema }) {
+      if (!apiKey) {
+        const error = new Error("Gemini is not configured on this server.");
+        error.statusCode = 503;
+        throw error;
+      }
+      if (typeof data !== "string" || !data) {
+        const error = new Error("A base64 document is required.");
+        error.statusCode = 400;
+        throw error;
+      }
+      if (!SUPPORTED_DOCUMENT_TYPES.has(mimeType)) {
+        const error = new Error(`Unsupported document type: ${mimeType}`);
+        error.statusCode = 415;
+        throw error;
+      }
+      if (data.length > MAX_DOCUMENT_BASE64) {
+        const error = new Error("That file is too large to read. Keep it under 8 MB.");
+        error.statusCode = 413;
+        throw error;
+      }
+
+      const body = {
+        contents: [{
+          role: "user",
+          parts: [
+            { inline_data: { mime_type: mimeType, data } },
+            { text: prompt },
+          ],
+        }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          // Reading a drawing is extraction, not invention: the lowest
+          // temperature keeps it from filling gaps with plausible guesses.
+          temperature: 0,
+        },
+      };
+      if (schema) body.generationConfig.responseSchema = schema;
+      if (systemInstruction) {
+        body.systemInstruction = { parts: [{ text: systemInstruction }] };
+      }
+
+      const response = await fetchImpl(
+        `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(120_000),
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(result.error?.message || "Gemini request failed.");
+        error.statusCode = response.status === 429 ? 429 : 502;
+        throw error;
+      }
+
+      const text = (result.candidates?.[0]?.content?.parts || [])
+        .map((part) => part.text || "")
+        .join("")
+        .trim();
+      if (!text) {
+        const error = new Error("Gemini could not read that document.");
+        error.statusCode = 502;
+        throw error;
+      }
+      try {
+        return { data: JSON.parse(text), model, usage: result.usageMetadata || null };
+      } catch {
+        const error = new Error("Gemini returned a malformed reading of that document.");
+        error.statusCode = 502;
+        throw error;
+      }
+    },
   };
 }
 
-module.exports = { createGeminiClient, DEFAULT_MODEL };
+module.exports = {
+  createGeminiClient,
+  DEFAULT_MODEL,
+  MAX_DOCUMENT_BASE64,
+  SUPPORTED_DOCUMENT_TYPES,
+};

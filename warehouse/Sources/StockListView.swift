@@ -14,8 +14,7 @@ struct StockListView: View {
   }
 
   private var canRunStocktake: Bool {
-    guard let role = store.account?.role else { return true }
-    return role == "owner" || role == "manager"
+    store.permissions.administer
   }
 
   var body: some View {
@@ -147,8 +146,7 @@ struct PartPickerSheet: View {
   }
 
   private var canCreatePart: Bool {
-    guard let role = store.account?.role else { return true }
-    return role == "owner" || role == "manager"
+    store.permissions.administer
   }
 
   var body: some View {

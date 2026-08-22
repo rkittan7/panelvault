@@ -94,6 +94,16 @@ with a tunnel). Two things matter in production:
   appended. Stable movement IDs make retries idempotent.
 - Movement downloads use an increasing company sequence cursor, while stock
   remains derived from the immutable movement log.
+- `POST /api/ai/board-scheme` reads an AutoCAD board scheme and returns a board
+  draft with its component schedule matched to catalog parts. It writes
+  nothing, so it runs outside the mutation queue — a minute-long read must not
+  hold the company's stock writes behind it — and it is the one route allowed a
+  document-sized body. Matching is deliberately strict: an ambiguous line comes
+  back unmatched rather than placed on a board. See `scheme.js`.
+- `catalog.json` is generated from the app's own component catalog by
+  `tools/gen_web_catalog.py` and carries each part's category, so the Catalog
+  page can show the same fifteen groups the iPhone apps browse. It is loaded
+  once at startup; regenerate it and restart to pick up catalog changes.
 - Component and manufacturer pictures are served at `/catalog-images/` straight
   out of `../assets/catalog`, the same folder the three iPhone apps bundle, so
   the browser and the phones cannot end up showing different pictures of the

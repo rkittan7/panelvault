@@ -39,6 +39,7 @@
 		19FBAADF1F3EC495056A141A /* WarehouseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351F4EF0F7727524841BF737 /* WarehouseStore.swift */; };
 		0835B1E92883EEC2CC8B3AB1 /* WarehouseTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7244CA6FCAB98AB68E4E910 /* WarehouseTab.swift */; };
 		E4843A12049114FB18898BB5 /* catalog in Resources */ = {isa = PBXBuildFile; fileRef = 2D1C7723A02F08C3694579C1 /* catalog */; };
+		3E68B095CB0EABD6566AAD8C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 106D49302F1D944B45142836 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +76,7 @@
 		C7244CA6FCAB98AB68E4E910 /* WarehouseTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WarehouseTab.swift; sourceTree = "<group>"; };
 		60B118681E9759575BDEFF3A /* Worker.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Worker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2D1C7723A02F08C3694579C1 /* catalog */ = {isa = PBXFileReference; lastKnownFileType = folder; name = catalog; path = ../assets/catalog; sourceTree = SOURCE_ROOT; };
+		106D49302F1D944B45142836 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -136,6 +138,7 @@
 			isa = PBXGroup;
 			children = (
 				DBBE4E184C0074FEAE03FB58 /* Sources */,
+				106D49302F1D944B45142836 /* Assets.xcassets */,
 				2D1C7723A02F08C3694579C1 /* catalog */,
 				5880B3C52D3DFB93E58064DA /* Products */,
 			);
@@ -238,6 +241,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3E68B095CB0EABD6566AAD8C /* Assets.xcassets in Resources */,
 				E4843A12049114FB18898BB5 /* catalog in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -93,6 +93,15 @@ python3 tools/make_worker_project.py # regenerate Worker.xcodeproj from Sources/
 python3 tools/check_worker.py        # structural checks (see below)
 ```
 
+The app icon is cut separately, and only when the mark itself changes:
+
+```bash
+swift tools/make_app_icons.swift worker worker/Assets.xcassets/AppIcon.appiconset
+```
+
+It writes the amber colourway — the manager app gets the same mark in blue. See
+**The app icon** in the root README.
+
 `split_worker.py` holds the list of manager-only declarations. It refuses to run
 if a declaration in the PanelVault app is neither routed to a file nor named in
 that drop list, so a new screen in `ios/` cannot silently go missing here.
@@ -109,7 +118,6 @@ Xcode's.
 
 ## Known rough edges
 
-- **No app icon.** `Assets.xcassets` is not set up, so the icon slot is empty.
 - **Two catalogs in one binary.** `Sources/Catalog.swift` (PanelVault's
   `ComponentGroup`) and `Sources/Warehouse/WarehouseCatalog.swift` (`CatalogPart`)
   both ship. They agree on ids by construction, but they should become one.

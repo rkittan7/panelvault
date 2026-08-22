@@ -50,6 +50,40 @@ in PanelVault Cloud shows the paperwork behind any receipt. The scanned page
 images stay on the phone until PanelVault Cloud has object storage; the website
 reports the page count so it is clear what it does not yet hold.
 
+## Creating a board from the AutoCAD scheme
+
+Creating a board starts with the drawing, because the drawing is what the board
+is. New Board opens on a single step: attach the scheme PDF exported from
+AutoCAD. PanelVault sends it to PanelVault Cloud, Gemini reads the PDF natively
+— pages, title block and the component schedule, no rasterising or OCR — and
+the reading comes back as board details plus a parts list. Only then does the
+form appear, pre-filled, as a review of what was read.
+
+Entering the board by hand is one tap away on that same screen, for when the
+scheme is not ready.
+
+Three rules keep the reading honest, because a board draft gets built:
+
+- **The model reports, it does not infer.** A field the drawing does not state
+  comes back empty and stays as the form's default. An empty field costs
+  seconds to fill; a confident wrong one gets built into a panel.
+- **Ambiguous parts are not placed.** A schedule line only becomes a catalog
+  part when the model agrees and, whenever the drawing names a brand, the brand
+  agrees too. Anything else is listed on the draft in amber as unplaced, for a
+  person to resolve. The board's component types come only from lines that did
+  match.
+- **Nothing is created until a person confirms.** The endpoint writes nothing;
+  it reads the PDF and returns. The board exists when someone taps Create.
+
+The drawing is attached to the board either way, so the workshop has the scheme
+whether or not the reading succeeded.
+
+`POST /api/ai/board-scheme` needs `GEMINI_API_KEY` set on the server, and the
+phone needs to be signed in to PanelVault Cloud (More → sign in). Without
+either, the app says so and offers the manual form rather than pretending.
+The matching rules live in `webapp/scheme.js` and are covered by
+`webapp/scheme.test.js`.
+
 ## Component and manufacturer photos
 
 Every component and every manufacturer can carry a picture, and all four
@@ -76,6 +110,66 @@ These pictures are defaults. A photo someone takes on their phone is stored on
 that device and always wins over the catalog photo; a part with neither keeps
 the SF Symbol for its category, exactly as before.
 
+The brand list is read out of `worker/Sources/Models.swift` rather than copied
+into the tool, and it covers both `ManufacturerItem.defaults` and
+`EquipmentCompany.all` — the pool the board manufacturer and main-breaker
+pickers draw from. A brand that only ever appears on an enclosure is a
+manufacturer like any other and gets a logo the same way, and adding one to the
+Swift means the tool counts it with no second edit here.
+
+## The catalog
+
+All four surfaces browse the same catalog: 199 parts in fifteen categories.
+
+`warehouse/Sources/Catalog.swift` is the machine-written form of the app's
+component catalog and is the source `webapp/catalog.json` is generated from:
+
+```bash
+python3 tools/gen_web_catalog.py           # rewrite webapp/catalog.json
+python3 tools/gen_web_catalog.py --check   # fail if it is out of date
+```
+
+That carries each part's `group` and `groupName` across, which is what lets
+PanelVault Cloud show the catalog the way the apps do — a grid of the fifteen
+categories, then the parts inside one, with a search that cuts across all of
+them. Selecting a part shows its photo, description and specification, and the
+boss or a manager can start tracking it in the warehouse from there.
+
+Part ids are the key linking warehouse stock to boards across every client, so
+the generator never invents or rewrites one: it refuses to run if a part id
+already present in `catalog.json` is missing from the Swift.
+
+## The app icon
+
+The manager app and the worker app share one mark: four breaker rails with a
+lightning bolt cut through them. The gap around the bolt is part of the drawing
+— it is what makes the rails and the bolt read as one object rather than a bolt
+sitting on stripes.
+
+The two apps are told apart by colour alone, never by shape:
+
+| App | Ground | Mark |
+| --- | --- | --- |
+| PanelVault (manager) | control-room blue `#3B6BFF` → `#0A2296` | white |
+| PanelVault Worker | hi-vis amber `#FFC61F` → `#F58400` | near-black `#14181B` |
+
+Amber with a dark mark is how the warning labels already on a cabinet are
+printed, so the app on the workshop floor is recognisable from across the room
+and still obviously the same system as the one in the office.
+
+`assets/brand/` holds the SVG masters. The iPhone icons are not converted from
+them — a Mac with only the Command Line Tools has no SVG rasteriser — but
+redrawn in CoreGraphics from the same numbers:
+
+```bash
+swift tools/make_app_icons.swift manager ios/Runner/Assets.xcassets/AppIcon.appiconset
+swift tools/make_app_icons.swift worker  worker/Assets.xcassets/AppIcon.appiconset
+```
+
+Each run writes all 15 PNG slots and the `Contents.json` that names them. The
+geometry lives in both `assets/brand/panelvault-mark.svg` and
+`tools/make_app_icons.swift`; move a rail in one and move it in the other.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -85,7 +179,8 @@ the SF Symbol for its category, exactly as before.
 | `warehouse/` | Native SwiftUI warehouse companion app and delivery scanner |
 | `webapp/` | PanelVault Cloud website, API, accounts, roles, stock, and boards |
 | `assets/catalog/` | Component and manufacturer photos shared by all four surfaces |
-| `tools/` | Scripts that assemble the worker app from `ios/` and `warehouse/` |
+| `assets/brand/` | SVG masters for the PanelVault mark and both app colourways |
+| `tools/` | Scripts that assemble the worker app from `ios/` and `warehouse/`, and cut the app icons |
 
 ### How the three iPhone apps relate
 

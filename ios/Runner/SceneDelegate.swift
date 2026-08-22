@@ -722,6 +722,9 @@ struct DashboardView: View {
   @State private var dashboardSheet: DashboardSheet?
   @State private var selectedProject: ProjectItem?
   @State private var selectedBoardID: String?
+  /// A project just created here, waiting for its form to close so its own
+  /// page can be opened.
+  @State private var pendingCreatedProject: ProjectItem?
 
   var title: String {
     guard contractorMode else { return "PanelVault" }
@@ -885,10 +888,22 @@ struct DashboardView: View {
             rows: uniqueCustomers.map { SimpleListRow(symbol: "person.crop.circle", title: $0, subtitle: "", color: theme.primary) }
           )
         case .newProject:
-          NewProjectSheet(theme: theme, boards: $boards, customers: customers, projectCustomers: uniqueCustomers) { project in
+          NewProjectSheet(theme: theme, boards: $boards, customers: customers, projectCustomers: uniqueCustomers, onDone: {
+            dashboardSheet = nil
+          }) { project in
             projects.insert(project, at: 0)
+            pendingCreatedProject = project
           }
         }
+      }
+    }
+    // Same reason as on the Projects tab: the new project's page can only be
+    // presented once the form's own sheet has finished dismissing.
+    .onChange(of: dashboardSheet) { sheet in
+      guard sheet == nil, let project = pendingCreatedProject else { return }
+      pendingCreatedProject = nil
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        selectedProject = project
       }
     }
     .sheet(item: $selectedProject) { project in
@@ -1575,8 +1590,10 @@ struct ProjectsView: View {
             Spacer()
             if archiveMode == .projects {
             Button {
-              newHubSelection = .project
-              selectedTab = .newBoard
+              // Its own page, presented here. This used to switch to the New
+              // Board tab and rely on it rendering the project form, which put
+              // people on the board hub when they asked for a project.
+              newProjectOpen = true
             } label: {
               Label("New Project", systemImage: "plus")
                 .font(.system(size: 13, weight: .bold))
@@ -1635,9 +1652,16 @@ struct ProjectsView: View {
       }
       .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
-      .sheet(isPresented: $newProjectOpen) {
-        NewProjectSheet(theme: theme, boards: $boards, customers: customers, projectCustomers: uniqueCustomers) { project in
+      // Opening the created project has to wait for this sheet to be gone:
+      // presenting the project page while this one is still up drops it.
+      .sheet(isPresented: $newProjectOpen, onDismiss: {
+        openPendingProject(pendingProjectOpenID)
+      }) {
+        NewProjectSheet(theme: theme, boards: $boards, customers: customers, projectCustomers: uniqueCustomers, onDone: {
+          newProjectOpen = false
+        }) { project in
           projects.insert(project, at: 0)
+          pendingProjectOpenID = project.id
         }
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
@@ -4605,8 +4629,9 @@ struct NewBoardView: View {
   @State private var createdMessage = false
   @State private var entryMode: NewBoardEntryMode?
   @State private var pendingSchemeAttachments: [SchemeAttachment] = []
-  @State private var aiScanComplete = false
-  @State private var aiScanning = false
+  /// What the AI read off the scheme, kept so the draft can show its source
+  /// and so the matched parts can be put on the board once it is created.
+  @State private var schemeReading: BoardSchemeReading?
   @State private var pickerSheet: NewBoardPickerSheet?
 
   private var canCreate: Bool {
@@ -4680,26 +4705,33 @@ struct NewBoardView: View {
           self.createdBoard = nil
           entryMode = nil
           pendingSchemeAttachments = []
-          aiScanComplete = false
+          schemeReading = nil
         }
       } else if entryMode == nil {
-        NewBoardEntryChoiceView(theme: theme, back: onBackToHub) { mode in
+        // The scheme comes first. The drawing is what the board is, so it is
+        // read before the form rather than being one card inside it.
+        NewBoardSchemeIntakeView(theme: theme, back: onBackToHub) { reading in
+          if let reading { apply(reading) }
           withAnimation(.easeOut(duration: 0.16)) {
-            entryMode = mode
+            entryMode = reading == nil ? .manual : .aiScan
           }
+        } onAttach: { attachment in
+          pendingSchemeAttachments.append(attachment)
         }
       } else {
       ScrollView {
         VStack(alignment: .leading, spacing: 14) {
-          if entryMode == .aiScan {
-            NewBoardAIAssistantCard(
+          if let schemeReading {
+            SchemeReadingReviewCard(
               theme: theme,
-              attachments: $pendingSchemeAttachments,
-              scanComplete: aiScanComplete,
-              isScanning: aiScanning
-            ) {
-              runSchemeScan()
-            }
+              reading: schemeReading,
+              rescan: {
+                withAnimation(.easeOut(duration: 0.16)) {
+                  self.schemeReading = nil
+                  entryMode = nil
+                }
+              }
+            )
           }
 
           CreationFormSection(theme: theme, title: "Progress", symbol: "point.3.connected.trianglepath.dotted") {
@@ -4817,10 +4849,11 @@ struct NewBoardView: View {
             if entryMode == nil {
               onBackToHub?()
             } else {
+              // Back from the draft returns to the scheme step, not out of
+              // board creation entirely.
               entryMode = nil
               pendingSchemeAttachments = []
-              aiScanComplete = false
-              aiScanning = false
+              schemeReading = nil
             }
           }
         }
@@ -4892,7 +4925,7 @@ struct NewBoardView: View {
               mainBreakerModel = manufacturerNames.first ?? "ABB"
               mainBreakerAmpere = "630A"
               pendingSchemeAttachments = []
-              aiScanComplete = false
+              schemeReading = nil
               createdMessage = true
           }
       }
@@ -4930,100 +4963,89 @@ struct NewBoardView: View {
     .animation(.easeOut(duration: 0.16), value: createdBoard?.id)
   }
 
+  /// The component types the scheme actually listed.
+  ///
+  /// Only types behind a part the catalog matched — an unplaced line is not
+  /// evidence the board has that type of device on it, and this list drives
+  /// what the workshop is told to build.
   private func inferredComponentTypes() -> [String] {
-    aiScanComplete ? ["Main Breaker", "MCB", "MCCB", "Contactor", "SPD", "Terminal Block", "Busbar", "Meter"] : []
+    guard let schemeReading else { return [] }
+    var seen: Set<String> = []
+    return schemeReading.components
+      .map(\.type)
+      .filter { !$0.isEmpty && seen.insert($0).inserted }
+      .sorted()
   }
 
-  private func applySchemeScan() {
-    let schemeText = pendingSchemeAttachments.map(\.name).joined(separator: " ").lowercased()
-    let projectMatch = projects.first { project in
-      schemeText.localizedCaseInsensitiveContains(project.name) ||
-      schemeText.localizedCaseInsensitiveContains(project.customer)
-    }
-
-    if let projectMatch {
-      project = projectMatch.name
-      customerName = projectMatch.customer
-    } else if customerName.isEmpty, let customer = recentCustomers.first {
-      customerName = customer
-    }
+  /// Fill the draft from what the AI read off the scheme.
+  ///
+  /// Only empty fields are written, and only from values the drawing actually
+  /// carried — a field the reading left blank stays as the form's default
+  /// rather than being overwritten with an empty string. The reading is a
+  /// starting point for review, not an authority.
+  private func apply(_ reading: BoardSchemeReading) {
+    schemeReading = reading
+    let board = reading.board
 
     if boardNumber.isEmpty {
-      boardNumber = normalizedBoardNumberFromSchemes()
+      boardNumber = board.number.isEmpty
+        ? PanelVaultSchemeReader.boardNumber(
+            fromFileName: pendingSchemeAttachments.first?.name ?? "")
+        : board.number
     }
     if boardGroup.isEmpty {
       boardGroup = projectGroup(from: boardNumber)
     }
-    if boardName.isEmpty {
-      if schemeText.contains("ats") {
-        boardName = "ATS Board"
-        boardType = boardTypes.first { $0.name.localizedCaseInsensitiveContains("ATS") }?.name ?? boardType
-      } else if schemeText.contains("mcc") || schemeText.contains("motor") {
-        boardName = "MCC Board"
-        boardType = boardTypes.first { $0.name.localizedCaseInsensitiveContains("MCC") }?.name ?? boardType
-      } else if schemeText.contains("lighting") || schemeText.contains("light") {
-        boardName = "Lighting Board"
-        boardType = boardTypes.first { $0.name.localizedCaseInsensitiveContains("Lighting") }?.name ?? boardType
-      } else {
-        boardName = "Scanned Distribution Board"
-        boardType = boardTypes.first?.name ?? boardType
-      }
+    if boardName.isEmpty, !board.name.isEmpty {
+      boardName = board.name
     }
-    if schemeText.contains("abb") {
-      boardManufacturer = manufacturerNames.first { $0.localizedCaseInsensitiveContains("ABB") } ?? boardManufacturer
-      mainBreakerModel = boardManufacturer
-    } else if schemeText.contains("schneider") {
-      boardManufacturer = manufacturerNames.first { $0.localizedCaseInsensitiveContains("Schneider") } ?? boardManufacturer
-      mainBreakerModel = boardManufacturer
-    } else if schemeText.contains("hager") {
-      boardManufacturer = manufacturerNames.first { $0.localizedCaseInsensitiveContains("HAGER") } ?? boardManufacturer
-      mainBreakerModel = boardManufacturer
-    }
-    if schemeText.contains("1600") {
-      mainBreakerAmpere = "1600A"
-    } else if schemeText.contains("1250") {
-      mainBreakerAmpere = "1250A"
-    } else if schemeText.contains("800") {
-      mainBreakerAmpere = "800A"
-    } else if schemeText.contains("400") {
-      mainBreakerAmpere = "400A"
-    } else if schemeText.contains("250") {
-      mainBreakerAmpere = "250A"
-    } else if schemeText.contains("125") {
-      mainBreakerAmpere = "125A"
-    }
-    mainBreakerType = mainBreakerAmpere.dropLast().compactMap(\.wholeNumberValue).count >= 3 ? "MCCB" : "MCB"
-    aiScanComplete = true
-  }
 
-  private func runSchemeScan() {
-    guard !aiScanning else { return }
-    aiScanning = true
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-      applySchemeScan()
-      aiScanning = false
-      mainBreakerOpen = true
+    // Prefer an existing project over the free text on the drawing, so a board
+    // lands in the project it belongs to instead of creating a near-duplicate.
+    if let match = matchingProject(name: board.project, customer: board.customer) {
+      project = match.name
+      customerName = match.customer
+    } else if customerName.isEmpty, !board.customer.isEmpty {
+      customerName = board.customer
+    }
+
+    if !board.type.isEmpty,
+       let matched = boardTypes.first(where: { $0.name.localizedCaseInsensitiveContains(board.type) })
+        ?? BoardType.samples.first(where: { $0.name.localizedCaseInsensitiveContains(board.type) }) {
+      boardType = matched.name
+    }
+    if !board.manufacturer.isEmpty,
+       let matched = manufacturerNames.first(where: {
+         $0.localizedCaseInsensitiveContains(board.manufacturer)
+           || board.manufacturer.localizedCaseInsensitiveContains($0)
+       }) {
+      boardManufacturer = matched
+    }
+    if !board.mainBreakerModel.isEmpty {
+      mainBreakerModel = manufacturerNames.first {
+        board.mainBreakerModel.localizedCaseInsensitiveContains($0)
+      } ?? board.mainBreakerModel
+    }
+    if !board.mainBreakerAmpere.isEmpty {
+      mainBreakerAmpere = board.mainBreakerAmpere
+    }
+    if !board.mainBreakerType.isEmpty {
+      mainBreakerType = board.mainBreakerType
+    }
+    if board.cabinetCount > 0 {
+      cabinetCount = "\(board.cabinetCount)"
     }
   }
 
-  private func normalizedBoardNumberFromSchemes() -> String {
-    let source = pendingSchemeAttachments
-      .map(\.name)
-      .joined(separator: " ")
-      .replacingOccurrences(of: "_", with: "-")
-      .replacingOccurrences(of: "/", with: "-")
-
-    if let match = source.range(of: #"\d{4}\.\d{2}-\d+"#, options: .regularExpression) {
-      return String(source[match]).uppercased()
+  private func matchingProject(name: String, customer: String) -> ProjectItem? {
+    if !name.isEmpty,
+       let hit = projects.first(where: {
+         $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+       }) { return hit }
+    if !customer.isEmpty {
+      return projects.first { $0.customer.localizedCaseInsensitiveCompare(customer) == .orderedSame }
     }
-
-    let cleaned = pendingSchemeAttachments.first?.name
-      .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
-      .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
-      .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
-      .replacingOccurrences(of: "_", with: "-")
-      .replacingOccurrences(of: "/", with: "-") ?? "AI-\(Int(Date().timeIntervalSince1970))"
-    return String(cleaned.prefix(18)).uppercased()
+    return nil
   }
 
   private func projectGroup(from boardNumber: String) -> String {
@@ -5037,59 +5059,481 @@ enum NewBoardEntryMode {
   case manual
 }
 
-struct NewBoardEntryChoiceView: View {
+/// Reads a board scheme, through PanelVault Cloud when it is reachable.
+///
+/// The reading happens on the server because that is where the Gemini key
+/// lives — shipping an API key inside an app that goes on a workshop iPhone
+/// would hand it to anyone who unpacks the binary.
+///
+/// With no company signed in, or with the server unreachable, the caller is
+/// told plainly and falls back to the manual form. Nothing is invented here:
+/// an offline guess dressed up as a reading is worse than an empty form.
+enum PanelVaultSchemeReader {
+  enum ReaderError: LocalizedError {
+    case notSignedIn
+
+    var errorDescription: String? {
+      switch self {
+      case .notSignedIn:
+        return "Sign in to PanelVault Cloud from More to read schemes with AI. You can still enter the board manually."
+      }
+    }
+  }
+
+  static func read(fileName: String, mimeType: String, data: Data) async throws -> BoardSchemeReading {
+    guard let account = PanelCloudKeychain.load() else { throw ReaderError.notSignedIn }
+    return try await PanelCloudClient().readBoardScheme(
+      fileName: fileName,
+      mimeType: mimeType,
+      data: data,
+      account: account
+    )
+  }
+
+  /// The board number as printed in a drawing's file name, when it is there.
+  /// `3918.24-1 MDB.pdf` is the shape every scheme in this shop is named.
+  static func boardNumber(fromFileName name: String) -> String {
+    let source = name
+      .replacingOccurrences(of: "_", with: "-")
+      .replacingOccurrences(of: "/", with: "-")
+    if let match = source.range(of: #"\d{4}\.\d{2}-\d+"#, options: .regularExpression) {
+      return String(source[match]).uppercased()
+    }
+    return ""
+  }
+}
+
+/// The first thing New Board shows: read the AutoCAD scheme.
+///
+/// The drawing is what the board actually is, so it comes before the form
+/// rather than being one card buried at the top of it. Nothing is typed until
+/// the reading is back, and the form that follows is a review of it.
+///
+/// Entering manually stays one tap away — a scheme is not always ready, and a
+/// flow that could only start from a PDF would be worse than the form.
+struct NewBoardSchemeIntakeView: View {
   let theme: PanelTheme
   var back: (() -> Void)? = nil
-  let choose: (NewBoardEntryMode) -> Void
+  /// Returns the reading, or nil when the manager chose to type it in.
+  let onFinish: (BoardSchemeReading?) -> Void
+  /// Keeps the picked drawing on the board as a scheme attachment.
+  let onAttach: (SchemeAttachment) -> Void
+
+  enum Stage: Equatable {
+    case waiting
+    case reading(String)
+    case failed(String)
+    case done(String)
+  }
+
+  @State private var stage: Stage = .waiting
+  @State private var importerOpen = false
+  @State private var reading: BoardSchemeReading?
+  @State private var readTask: Task<Void, Never>?
+
+  private var isReading: Bool {
+    if case .reading = stage { return true }
+    return false
+  }
 
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           VStack(alignment: .leading, spacing: 8) {
-            Text("Create New Board")
+            Text("Scan the Scheme")
               .font(.largeTitle.bold())
-            Text("Start from a scheme, or enter the board manually.")
+            Text("Attach the AutoCAD PDF. PanelVault reads the board details and the component schedule off the drawing, then hands you the draft to check.")
               .font(.subheadline)
               .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
 
-          Button {
-            choose(.aiScan)
-          } label: {
-            NewBoardModeCard(
-              theme: theme,
-              symbol: "sparkles",
-              title: "Scan Scheme with AI",
-              subtitle: "Attach a PDF or photos. PanelVault builds the draft, components and scheme files for review.",
-              color: theme.primary
-            )
-          }
-          .buttonStyle(PanelPressButtonStyle())
+          switch stage {
+          case .waiting:
+            waitingCard
+          case .reading(let name):
+            readingCard(name)
+          case .failed(let message):
+            failureCard(message)
+          case .done(let name):
+            if let reading {
+              SchemeReadingSummaryCard(theme: theme, fileName: name, reading: reading)
+              Button {
+                onFinish(reading)
+              } label: {
+                Label("Review the draft", systemImage: "arrow.right.circle.fill")
+                  .font(.headline)
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 14)
+                  .background(theme.primary)
+                  .foregroundStyle(.white)
+                  .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+              }
+              .buttonStyle(PanelPressButtonStyle())
 
-          Button {
-            choose(.manual)
-          } label: {
-            NewBoardModeCard(
-              theme: theme,
-              symbol: "square.and.pencil",
-              title: "Enter Manually",
-              subtitle: "Use the normal board form when the scheme is not ready yet.",
-              color: Color(hex: 0xAEB4BC)
-            )
+              Button("Scan a different file") {
+                reading = nil
+                stage = .waiting
+              }
+              .font(.subheadline.weight(.semibold))
+              .frame(maxWidth: .infinity)
+            }
           }
-          .buttonStyle(PanelPressButtonStyle())
+
+          if !isReading {
+            Button {
+              onFinish(nil)
+            } label: {
+              Label("Enter the board manually instead", systemImage: "square.and.pencil")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
+          }
+
+          BottomTabClearance()
         }
         .padding(18)
       }
       .background(theme.background.ignoresSafeArea())
       .navigationTitle("New Board")
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button("Back") {
+            readTask?.cancel()
             back?()
           }
         }
+      }
+    }
+    .fileImporter(isPresented: $importerOpen, allowedContentTypes: [.pdf, .image]) { result in
+      guard case .success(let url) = result else { return }
+      read(url)
+    }
+    .onDisappear { readTask?.cancel() }
+  }
+
+  private var waitingCard: some View {
+    Button {
+      importerOpen = true
+    } label: {
+      VStack(spacing: 12) {
+        Image(systemName: "doc.viewfinder.fill")
+          .font(.system(size: 40, weight: .semibold))
+          .foregroundStyle(theme.primary)
+        Text("Choose the scheme PDF")
+          .font(.headline)
+        Text("PDF from AutoCAD, or a photo of the printed drawing")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 40)
+      .background(theme.primary.opacity(0.08))
+      .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+          .strokeBorder(theme.primary.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))
+      )
+    }
+    .buttonStyle(PanelPressButtonStyle())
+  }
+
+  private func readingCard(_ name: String) -> some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 12) {
+          ProgressView().tint(theme.primary)
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Reading the scheme")
+              .font(.headline)
+            Text(name)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+          Spacer()
+        }
+        Text("A full multi-page scheme can take a minute. Keep this screen open.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Button("Cancel") {
+          readTask?.cancel()
+          stage = .waiting
+        }
+        .font(.subheadline.weight(.semibold))
+      }
+    }
+  }
+
+  private func failureCard(_ message: String) -> some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 12) {
+        Label("Could not read that scheme", systemImage: "exclamationmark.triangle.fill")
+          .font(.headline)
+          .foregroundStyle(Color(hex: 0xFF9F0A))
+        Text(message)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Button {
+          importerOpen = true
+        } label: {
+          Label("Choose a file again", systemImage: "arrow.clockwise")
+            .font(.subheadline.bold())
+        }
+      }
+    }
+  }
+
+  private func read(_ url: URL) {
+    // A file handed over by the document picker is outside the sandbox until
+    // its security scope is opened, and the scope has to be closed again even
+    // when reading throws.
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+    guard let data = try? Data(contentsOf: url) else {
+      stage = .failed("That file could not be opened. Try exporting it from AutoCAD again.")
+      return
+    }
+    let name = url.lastPathComponent
+    let isPDF = url.pathExtension.lowercased() == "pdf"
+
+    // Keep the drawing with the board however the reading goes: the workshop
+    // needs the scheme whether or not the AI could parse it.
+    if isPDF, let saved = SchemeAttachmentSection.persistPDF(url) {
+      onAttach(SchemeAttachment(kind: .pdf, name: name, image: nil, url: saved))
+    } else if !isPDF, let image = UIImage(data: data) {
+      onAttach(SchemeAttachment(kind: .photo, name: name, image: image))
+    }
+
+    stage = .reading(name)
+    readTask?.cancel()
+    readTask = Task {
+      do {
+        let result = try await PanelVaultSchemeReader.read(
+          fileName: name,
+          mimeType: isPDF ? "application/pdf" : "image/jpeg",
+          data: data
+        )
+        if Task.isCancelled { return }
+        await MainActor.run {
+          reading = result
+          stage = .done(name)
+        }
+      } catch {
+        if Task.isCancelled { return }
+        await MainActor.run {
+          stage = .failed(error.localizedDescription)
+        }
+      }
+    }
+  }
+}
+
+/// Sits above the pre-filled draft, so it is never unclear which fields a
+/// person typed and which came off the drawing.
+struct SchemeReadingReviewCard: View {
+  let theme: PanelTheme
+  let reading: BoardSchemeReading
+  let rescan: () -> Void
+  @State private var partsOpen = false
+
+  var body: some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          Image(systemName: "sparkles")
+            .foregroundStyle(theme.primary)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Filled from the scheme")
+              .font(.headline)
+            Text("Check every field against the drawing before creating.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          Spacer()
+        }
+
+        HStack(spacing: 8) {
+          if !reading.components.isEmpty {
+            EquipmentPill(text: "\(reading.componentCount) parts", color: Color(hex: 0x35E177))
+          }
+          if !reading.unmatched.isEmpty {
+            EquipmentPill(text: "\(reading.unmatched.count) unplaced", color: Color(hex: 0xFF9F0A))
+          }
+        }
+
+        if !reading.components.isEmpty || !reading.unmatched.isEmpty {
+          Button {
+            withAnimation(.easeOut(duration: 0.16)) { partsOpen.toggle() }
+          } label: {
+            Label(
+              partsOpen ? "Hide the schedule" : "Show the schedule it read",
+              systemImage: partsOpen ? "chevron.up" : "chevron.down"
+            )
+            .font(.caption.bold())
+          }
+
+          if partsOpen {
+            VStack(alignment: .leading, spacing: 6) {
+              ForEach(reading.components) { component in
+                scheduleLine(
+                  quantity: component.quantity,
+                  text: component.displayName,
+                  reference: component.reference,
+                  color: Color(hex: 0x35E177)
+                )
+              }
+              ForEach(reading.unmatched) { line in
+                scheduleLine(
+                  quantity: line.quantity,
+                  text: line.description.isEmpty ? line.type : line.description,
+                  reference: line.reference,
+                  color: Color(hex: 0xFF9F0A)
+                )
+              }
+            }
+            .padding(.top, 2)
+
+            if !reading.unmatched.isEmpty {
+              Text("Amber lines are not on the board. The catalog had no confident match, so they are left for you to place rather than guessed at.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+        }
+
+        Button(action: rescan) {
+          Label("Scan a different scheme", systemImage: "arrow.clockwise")
+            .font(.caption.bold())
+        }
+      }
+    }
+  }
+
+  private func scheduleLine(quantity: Int, text: String, reference: String, color: Color) -> some View {
+    HStack(spacing: 8) {
+      Text("\(quantity)×")
+        .font(.caption2.weight(.black))
+        .foregroundStyle(color)
+        .frame(width: 30, alignment: .leading)
+      Text(text)
+        .font(.caption)
+        .lineLimit(1)
+      if !reference.isEmpty {
+        Text(reference)
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 0)
+    }
+  }
+}
+
+/// What the reading found, before anyone commits to it.
+struct SchemeReadingSummaryCard: View {
+  let theme: PanelTheme
+  let fileName: String
+  let reading: BoardSchemeReading
+
+  var body: some View {
+    GlassCard(theme: theme) {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          Image(systemName: "checkmark.seal.fill")
+            .foregroundStyle(Color(hex: 0x35E177))
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Scheme read")
+              .font(.headline)
+            Text(fileName)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+          Spacer()
+        }
+
+        if reading.isEmpty {
+          Text("Nothing could be read off this drawing. You can still enter the board by hand — the file stays attached to it.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          VStack(alignment: .leading, spacing: 7) {
+            readingLine("number", reading.board.number)
+            readingLine("board", reading.board.name)
+            readingLine("type", reading.board.type)
+            readingLine("customer", reading.board.customer)
+            readingLine("main breaker", [
+              reading.board.mainBreakerModel,
+              reading.board.mainBreakerAmpere,
+            ].filter { !$0.isEmpty }.joined(separator: " "))
+          }
+
+          HStack(spacing: 8) {
+            if !reading.components.isEmpty {
+              EquipmentPill(
+                text: "\(reading.componentCount) parts matched",
+                color: Color(hex: 0x35E177)
+              )
+            }
+            if !reading.unmatched.isEmpty {
+              EquipmentPill(
+                text: "\(reading.unmatched.count) need a look",
+                color: Color(hex: 0xFF9F0A)
+              )
+            }
+          }
+
+          if !reading.unmatched.isEmpty {
+            Text("Lines the catalog had no confident match for are listed on the draft. They are not added to the board — place them yourself so nothing is guessed.")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+
+          if !reading.board.notes.isEmpty {
+            Text(reading.board.notes)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+              .padding(10)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(theme.primary.opacity(0.08))
+              .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+          }
+        }
+
+        Text("Everything below is a draft. Check it against the drawing before you create the board.")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func readingLine(_ label: String, _ value: String) -> some View {
+    if !value.isEmpty {
+      HStack(alignment: .top, spacing: 8) {
+        Text(label)
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .frame(width: 92, alignment: .leading)
+        Text(value)
+          .font(.caption.bold())
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
       }
     }
   }
@@ -5123,53 +5567,6 @@ struct NewBoardModeCard: View {
         Image(systemName: "chevron.right")
           .foregroundStyle(.secondary)
       }
-    }
-  }
-}
-
-struct NewBoardAIAssistantCard: View {
-  let theme: PanelTheme
-  @Binding var attachments: [SchemeAttachment]
-  let scanComplete: Bool
-  let isScanning: Bool
-  let scan: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack(spacing: 10) {
-        Image(systemName: "sparkles")
-          .foregroundStyle(theme.primary)
-        VStack(alignment: .leading, spacing: 3) {
-          Text("AI Scheme Intake")
-            .font(.headline)
-          Text(scanComplete ? "Draft filled. Review the fields below before creating." : "Attach the scheme, then let PanelVault prepare the board draft.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-      }
-
-      SchemeAttachmentSection(theme: theme, title: "Scheme Files", attachments: $attachments)
-
-      Button(action: scan) {
-        HStack {
-          if isScanning {
-            ProgressView()
-              .tint(.white)
-          } else {
-            Image(systemName: scanComplete ? "arrow.clockwise" : "sparkles")
-          }
-          Text(isScanning ? "Scanning Scheme..." : (scanComplete ? "Scan Again" : "Scan and Fill Board"))
-        }
-        .font(.system(size: 16, weight: .bold))
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 13)
-      }
-      .background(attachments.isEmpty || isScanning ? theme.surface.opacity(0.72) : theme.primary)
-      .foregroundStyle(attachments.isEmpty ? Color.secondary : Color.white)
-      .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-      .disabled(attachments.isEmpty || isScanning)
-      .buttonStyle(PanelPressButtonStyle())
     }
   }
 }
@@ -6629,7 +7026,9 @@ struct SchemeAttachmentSection: View {
     }
   }
 
-  private static func persistPDF(_ url: URL) -> URL? {
+  /// Internal rather than private: the scheme intake screen saves the drawing
+  /// it just read through the same path, so both end up in one folder.
+  static func persistPDF(_ url: URL) -> URL? {
     let didAccess = url.startAccessingSecurityScopedResource()
     defer {
       if didAccess {
@@ -6851,7 +7250,6 @@ struct NewProjectSheet: View {
   @State private var site = ""
   @State private var hasDueDate = false
   @State private var dueDate = Date()
-  @State private var createdProjectName: String?
 
   private var canCreate: Bool {
     !projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -6878,20 +7276,7 @@ struct NewProjectSheet: View {
 
   var body: some View {
     NavigationStack {
-      if let createdProjectName {
-        BoardAttachPickerContent(theme: theme, projectName: createdProjectName, projectCustomer: customer, boards: $boards, headerTitle: "Project Created", headerSubtitle: "Pick matching-customer boards now, or add more later from the project screen.")
-          .background(theme.background.ignoresSafeArea())
-          .navigationTitle("Attach Boards")
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button("Done") {
-              onDone?()
-            }
-            .fontWeight(.bold)
-          }
-        }
-      } else {
-        ScrollView {
+      ScrollView {
           VStack(alignment: .leading, spacing: 14) {
             CreationFormSection(theme: theme, title: "Project Details", symbol: "folder.fill", subtitle: "Create the container first") {
               CreationTextInput(theme: theme, title: "Project name", placeholder: "Azrieli Office Tower", symbol: "folder.fill", text: $projectName, capitalization: .words)
@@ -6933,14 +7318,18 @@ struct NewProjectSheet: View {
                 color: assignedCustomerColor,
                 dueDate: hasDueDate ? dueDate : nil
               )
+              // Hand the project over and get out of the way. The caller opens
+              // the project's own page, which is where boards, schemes and
+              // photos are added — the same place it is managed from later,
+              // rather than a one-off picker that only appears at creation.
               onCreate(project)
-              createdProjectName = project.name
+              onDone?()
+              dismiss()
             }
             .disabled(!canCreate)
             .fontWeight(.bold)
           }
         }
-      }
     }
   }
 }
@@ -13556,6 +13945,61 @@ struct PanelCloudDownloadResponse: Decodable {
   let hasMore: Bool
 }
 
+/// What PanelVault Cloud read out of an AutoCAD board scheme.
+///
+/// Every field is optional in practice: the server is told to return an empty
+/// string rather than infer a value it cannot see on the drawing, because a
+/// blank a manager fills in takes seconds and a confident wrong one gets built.
+struct BoardSchemeReading: Decodable {
+  struct Board: Decodable {
+    var number = ""
+    var name = ""
+    var customer = ""
+    var project = ""
+    var type = ""
+    var manufacturer = ""
+    var mainBreakerType = ""
+    var mainBreakerModel = ""
+    var mainBreakerAmpere = ""
+    var cabinetCount = 1
+    var notes = ""
+  }
+
+  /// A schedule line matched to a catalog part.
+  struct Component: Decodable, Identifiable {
+    let partID: String
+    var manufacturer = ""
+    var model = ""
+    var type = ""
+    var quantity = 1
+    var reference = ""
+
+    var id: String { reference.isEmpty ? partID : "\(partID)-\(reference)" }
+    var displayName: String { "\(manufacturer) \(model)".trimmingCharacters(in: .whitespaces) }
+  }
+
+  /// A schedule line the catalog has no confident match for. Shown so nobody
+  /// assumes the board is complete when part of the schedule was not placed.
+  struct Unmatched: Decodable, Identifiable {
+    var description = ""
+    var type = ""
+    var quantity = 1
+    var reference = ""
+
+    var id: String { "\(description)-\(reference)" }
+  }
+
+  var board = Board()
+  var components: [Component] = []
+  var unmatched: [Unmatched] = []
+  var model: String?
+
+  var componentCount: Int { components.reduce(0) { $0 + $1.quantity } }
+  var isEmpty: Bool {
+    board.number.isEmpty && board.name.isEmpty && components.isEmpty && unmatched.isEmpty
+  }
+}
+
 enum WarehouseStockCloudError: LocalizedError {
   case invalidServer
   case server(String)
@@ -13602,6 +14046,31 @@ struct WarehouseStockCloudClient {
     )
   }
 
+  /// Send an AutoCAD scheme to PanelVault Cloud and get the board it describes.
+  ///
+  /// The drawing itself goes up — Gemini reads PDFs natively, so nothing is
+  /// rasterised or OCR'd here. Reading a large multi-page scheme is slow by
+  /// nature, hence the long timeout; the caller shows progress for it.
+  func readBoardScheme(
+    fileName: String,
+    mimeType: String,
+    data: Data,
+    account: PanelCloudAccount
+  ) async throws -> BoardSchemeReading {
+    try await request(
+      baseURL: try WarehouseStockCloudClient.normalizedBaseURL(account.baseURL),
+      path: "/api/ai/board-scheme",
+      method: "POST",
+      body: [
+        "fileName": fileName,
+        "mimeType": mimeType,
+        "data": data.base64EncodedString(),
+      ],
+      token: account.token,
+      timeout: 180
+    )
+  }
+
   private static func normalizedBaseURL(_ value: String) throws -> URL {
     var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if !text.contains("://") { text = "https://\(text)" }
@@ -13630,12 +14099,13 @@ struct WarehouseStockCloudClient {
     path: String,
     method: String,
     body: Body?,
-    token: String?
+    token: String?,
+    timeout: TimeInterval = 30
   ) async throws -> Response {
     guard let url = URL(string: path, relativeTo: baseURL) else { throw WarehouseStockCloudError.invalidServer }
     var request = URLRequest(url: url)
     request.httpMethod = method
-    request.timeoutInterval = 30
+    request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let body {

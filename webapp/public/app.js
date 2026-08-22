@@ -67,6 +67,7 @@ const ICON_PATHS = {
   cpu: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v4"/><path d="M14 3v4"/><path d="M10 17v4"/><path d="M14 17v4"/><path d="M3 10h4"/><path d="M3 14h4"/><path d="M17 10h4"/><path d="M17 14h4"/>',
   terminal: '<circle cx="6.5" cy="8" r="1.6"/><circle cx="12" cy="8" r="1.6"/><circle cx="17.5" cy="8" r="1.6"/><circle cx="6.5" cy="16" r="1.6"/><circle cx="12" cy="16" r="1.6"/><circle cx="17.5" cy="16" r="1.6"/>',
   layers: '<path d="M3 8.5h18"/><path d="M3 12h18"/><path d="M3 15.5h18"/>',
+  tag: '<path d="M3 11.5V4a1 1 0 0 1 1-1h7.5L21 12.5 12.5 21z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   cabinet: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 3v18"/><path d="M9 11.5h.01"/><path d="M15 11.5h.01"/>',
   button: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/>',
 };
@@ -135,6 +136,50 @@ function brandSlug(name) {
     .replace(/^-|-$/g, "");
 }
 
+/* ---- brand accents (ported from the iPhone apps, value for value) ----
+
+   The apps tint a catalog row, its pills and its photo glow by manufacturer.
+   Two separate tables do that work there and both are reproduced here, because
+   they genuinely differ:
+
+     ACCENTS     ManufacturerItem.defaults in worker/Sources/Models.swift — the
+                 saturated brand accent behind a row, its pills and the glow on
+                 a component photo.
+     LOGO_GLOWS  EquipmentBrandBadge.brandGlowColor in Badges.swift — a muted
+                 set used only for the halo behind a brand logo, so a wall of
+                 logos does not turn into a wall of neon.
+
+   Both fall back the way the app does: an unlisted brand takes the theme
+   accent for its row, and a soft blue for its logo halo. */
+const BRAND_ACCENTS = {
+  rittal: "#5E78FF", abb: "#FF3B30", yakir: "#35E177", tamhash: "#FF9F0A",
+  hager: "#64D2FF", delta: "#0A84FF", schneider: "#35E177", siemens: "#18D4E8",
+  eaton: "#5E78FF", legrand: "#D85CFF", "mean-well": "#FFD60A",
+  phoenix: "#FF9F0A", danfoss: "#E2231A", socomec: "#00A0DF",
+  generic: "#AEB4BC",
+};
+
+const BRAND_LOGO_GLOWS = {
+  abb: "#FF0000", schneider: "#5F9F79", siemens: "#4F9AA8",
+};
+const BRAND_LOGO_GLOW_FALLBACK = "#7FA6C9";
+
+/** A brand's row/photo accent, or the theme accent when the app has none. */
+function brandAccent(name) {
+  return BRAND_ACCENTS[brandSlug(name)] || "var(--primary)";
+}
+
+/** The muted halo behind a brand logo. */
+function brandLogoGlow(name) {
+  return BRAND_LOGO_GLOWS[brandSlug(name)] || BRAND_LOGO_GLOW_FALLBACK;
+}
+
+/** Hands a subtree its brand accent; every tint below reads `--brand`. */
+function tintByBrand(node, name) {
+  node.style.setProperty("--brand", brandAccent(name));
+  return node;
+}
+
 function imageURL(file) {
   return file ? `/catalog-images/${file.split("/").map(encodeURIComponent).join("/")}` : null;
 }
@@ -151,7 +196,9 @@ function brandLogoURL(name) {
 function partChip(part) {
   const url = partPhotoURL(part);
   if (!url) return chipIcon("box", colorForType(part && part.type));
-  const chip = el("div", "chip-icon chip-photo");
+  // Matching TransparentImageBubble: the photo is a cut-out, so the halo is
+  // cast from its silhouette in the brand's accent rather than from a plate.
+  const chip = tintByBrand(el("div", "chip-icon chip-photo"), part && part.manufacturer);
   const img = el("img");
   img.src = url;
   img.alt = "";
@@ -175,6 +222,7 @@ function brandMark(name) {
   // Not `brand-mark`: that class is the PanelVault logo bubble on the auth
   // screen, and it is a grid container.
   const img = el("img", "brand-logo");
+  img.style.setProperty("--glow", brandLogoGlow(name));
   img.src = url;
   img.alt = name || "";
   img.title = name || "";
@@ -190,6 +238,44 @@ function partSubLine(part, bits) {
   if (mark) sub.append(mark);
   if (bits) sub.append(el("span", null, bits));
   return sub;
+}
+
+/* ComponentIcon.symbol(for:) in worker/Sources/Badges.swift, mapped onto the
+   icons this stylesheet actually ships. Order matters exactly as it does
+   there — "mccb" has to be tested before "mcb", and first match wins. */
+const TYPE_ICONS = [
+  ["vfd drive", "gauge"],
+  ["soft starter", "pulse"],
+  ["motor starter", "motor"],
+  ["mpcb motor protection", "motor"],
+  ["overload", "alert"],
+  ["ups", "bolt"],
+  ["psu power supply", "plug"],
+  ["current transformer", "pulse"],
+  ["transformer", "layers"],
+  ["rcbo rccb rcd", "pulse"],
+  ["afdd", "alert"],
+  ["mcb mccb acb breaker", "boltShield"],
+  ["spd surge", "alert"],
+  ["fuse", "bolt"],
+  ["contactor relay", "toggle"],
+  ["ats changeover", "link"],
+  ["isolator switch", "button"],
+  ["interlock", "shield"],
+  ["emergency stop", "alert"],
+  ["analyzer meter metering", "gauge"],
+  ["terminal", "terminal"],
+  ["busbar bar bonding", "layers"],
+  ["enclosure cabinet climate", "cabinet"],
+  ["plc hmi controller io", "cpu"],
+];
+
+function iconForType(type) {
+  const lowered = (type || "").toLowerCase();
+  for (const [keys, name] of TYPE_ICONS) {
+    if (keys.split(" ").some((k) => lowered.includes(k))) return name;
+  }
+  return "box";
 }
 
 const TYPE_COLORS = [
@@ -1719,8 +1805,12 @@ function drawCatalog() {
     head.append(icon("chevron", 14));
     card.append(head);
     card.append(el("div", "cat-card-title", group.name));
-    card.append(el("div", "cat-card-sub",
-      group.parts.length === 1 ? "1 part" : `${group.parts.length} parts`));
+    const sub = el("div", "cat-card-sub",
+      group.parts.length === 1 ? "1 part" : `${group.parts.length} parts`);
+    // Carried as an attribute as well as the pill above, because the narrow
+    // layout drops the pill and prints this next to the part count instead.
+    if (held) sub.dataset.stock = `${held} in stock`;
+    card.append(sub);
     card.addEventListener("click", () => { catalogCategory = group.id; drawCatalog(); });
     grid.append(card);
   });
@@ -1728,14 +1818,32 @@ function drawCatalog() {
 }
 
 /** One part in the catalog: photo, name, brand, specs, and its stock. */
+/* The three pills under a catalog row, straight out of EquipmentPill: the
+   type takes the brand accent, poles and rating keep the fixed blue and green
+   the app gives them so the eye can find them in the same place every row. */
+function partPills(part) {
+  const pills = el("div", "pills");
+  const add = (text, color) => {
+    if (!text || text === "—") return;
+    const pill = el("span", "pill", text);
+    pill.style.setProperty("--pill", color);
+    pills.append(pill);
+  };
+  add(part.type, "var(--brand)");
+  add(part.poles, "#7FA6C9");
+  add(part.rating, "#7FAE9A");
+  return pills;
+}
+
 function catalogRow(part, stock) {
-  const row = el("div", "row click");
+  const row = tintByBrand(el("div", "row click brand-row"), part.manufacturer);
   row.append(partChip(part));
   const main = el("div", "row-main");
   main.append(el("div", "row-title", `${part.manufacturer} ${part.model}`));
   const bits = [part.type, part.rating, part.poles, part.curve]
     .filter((bit) => bit && bit !== "—").join(" · ");
   main.append(partSubLine(part, bits));
+  main.append(partPills(part));
   row.append(main);
 
   const entry = stock.get(part.id);
@@ -1753,27 +1861,80 @@ function catalogRow(part, stock) {
   return row;
 }
 
+/* BoardReferenceSection: a titled block headed by a tinted symbol. Every
+   reference panel in the app is built from this, so the part sheet reads the
+   same on the web as it does on the phone. */
+function refSection(title, symbol, body) {
+  const section = el("section", "ref-section");
+  const head = el("div", "ref-head");
+  head.append(icon(symbol, 13), el("span", null, title));
+  section.append(head, body);
+  return section;
+}
+
+/** InfoLine: label left, value right, on one row. */
+function infoLines(rows) {
+  const list = el("div", "info-lines");
+  rows.forEach(([title, value]) => {
+    if (!value || value === "—") return;
+    const line = el("div", "info-line");
+    line.append(el("span", "info-title", title), el("span", "info-value", value));
+    list.append(line);
+  });
+  return list;
+}
+
+/* The catalog part sheet, following ComponentDetailSheet: the photo first
+   under its brand-coloured halo, then the type tile beside the model and its
+   manufacturer, then Description and Specification. */
 function openCatalogPartModal(part) {
   const entry = stockByPart().get(part.id);
   openModal((modal, close) => {
-    modal.append(partModalHead(part, entry ? `${entry.onHand} on hand` : "not tracked in stock", true));
+    tintByBrand(modal, part.manufacturer);
+    modal.classList.add("part-sheet");
 
-    if (part.about) modal.append(el("p", "part-about", part.about));
+    const url = partPhotoURL(part);
+    if (url) {
+      const figure = el("div", "part-hero");
+      const img = el("img");
+      img.src = url;
+      img.alt = `${part.manufacturer} ${part.model}`;
+      img.addEventListener("error", () => figure.remove());
+      figure.append(img);
+      modal.append(figure);
+    }
 
-    const spec = el("dl", "spec");
-    [
+    const head = el("div", "part-title-row");
+    const tile = el("div", "type-tile");
+    tile.append(icon(iconForType(part.type), 28));
+    head.append(tile);
+    const text = el("div", "part-title-text");
+    text.append(el("div", "part-title", part.model));
+    const brand = el("div", "part-brand");
+    brand.append(icon("tag", 13), el("span", null, part.manufacturer));
+    const mark = brandMark(part.manufacturer);
+    if (mark) brand.append(mark);
+    text.append(brand);
+    head.append(text);
+    modal.append(head);
+
+    modal.append(el("div", "part-stock-note",
+      entry ? `${entry.onHand} on hand` : "not tracked in stock"));
+
+    if (part.about) {
+      modal.append(refSection("Description", "note",
+        el("p", "ref-body", part.about)));
+    }
+
+    modal.append(refSection("Specification", "layers", infoLines([
       ["Type", part.type],
       ["Rating", part.rating],
       ["Poles / phase", part.poles],
-      ["Curve", part.curve],
-      ["Serial", part.serialNumber],
+      ["Serial number", part.serialNumber],
+      ["Curve / notes", part.curve],
       ["Category", part.groupName],
       ["Part id", part.id],
-    ].forEach(([label, value]) => {
-      if (!value) return;
-      spec.append(el("dt", null, label), el("dd", null, value));
-    });
-    modal.append(spec);
+    ])));
 
     if (entry) {
       modal.append(modalActions(close, "Go to stock", () => {

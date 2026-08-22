@@ -30,9 +30,14 @@ DROP = {
     # Board and project creation
     "NewHubSelection", "NewHubView",
     "NewBoardPickerSheet", "NewBoardView",
-    "NewBoardEntryMode", "NewBoardEntryChoiceView", "NewBoardModeCard",
-    "NewBoardAIAssistantCard", "MainBreakerStepView", "MainBreakerPickerSheet",
+    "NewBoardEntryMode", "NewBoardModeCard",
+    "MainBreakerStepView", "MainBreakerPickerSheet",
     "NewBoardStepIndicator", "NewProjectSheet",
+    # Reading an AutoCAD scheme is the first step of creating a board, so it
+    # is manager-only too. `BoardSchemeReading` is not here: it is the shape of
+    # a Cloud response and stays with the rest of the client.
+    "PanelVaultSchemeReader", "NewBoardSchemeIntakeView",
+    "SchemeReadingSummaryCard", "SchemeReadingReviewCard",
     # Editing a record's definition
     "ProjectEditSheet", "BoardEditSheet", "BoardEditPickerSheet",
     # Catalogue and company management
@@ -140,7 +145,8 @@ FILES = {
     "CatalogImages.swift": ["CatalogImageLibrary"],
     "Cloud.swift": [
         "PanelCloudAccount", "PanelCloudLoginResponse", "PanelCloudMovement",
-        "PanelCloudDownloadResponse", "PanelCloudError", "PanelCloudClient",
+        "PanelCloudDownloadResponse", "BoardSchemeReading",
+        "PanelCloudError", "PanelCloudClient",
         "PanelCloudErrorBody", "PanelCloudKeychain", "StockBadge",
     ],
 }

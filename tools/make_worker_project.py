@@ -27,6 +27,11 @@ PROJECT_DIR = f"worker/{APP}.xcodeproj"
 RESOURCE_FOLDER = "../assets/catalog"
 RESOURCE_NAME = "catalog"
 
+# The app icon, cut from assets/brand by tools/make_app_icons.swift. Lives in
+# worker/ rather than being shared, because the worker app's colourway is its
+# own — hi-vis amber where the manager app is blue.
+ASSETS_CATALOG = "Assets.xcassets"
+
 
 def object_id(*parts):
     """Stable 24-hex-character object id, so regenerating gives no diff."""
@@ -75,6 +80,8 @@ def main():
     resources_phase = object_id("resourcesphase", APP)
     resource_ref = object_id("fileref", RESOURCE_FOLDER)
     resource_build = object_id("buildfile", RESOURCE_FOLDER)
+    assets_ref = object_id("fileref", ASSETS_CATALOG)
+    assets_build = object_id("buildfile", ASSETS_CATALOG)
     project_config_list = object_id("configlist", "project", APP)
     target_config_list = object_id("configlist", "target", APP)
     configs = {
@@ -103,6 +110,8 @@ def main():
             f"fileRef = {ids[key]['file']} /* {name} */; }};")
     add(f"\t\t{resource_build} /* {RESOURCE_NAME} in Resources */ = {{isa = PBXBuildFile; "
         f"fileRef = {resource_ref} /* {RESOURCE_NAME} */; }};")
+    add(f"\t\t{assets_build} /* {ASSETS_CATALOG} in Resources */ = {{isa = PBXBuildFile; "
+        f"fileRef = {assets_ref} /* {ASSETS_CATALOG} */; }};")
     add("/* End PBXBuildFile section */")
 
     add("\n/* Begin PBXFileReference section */")
@@ -118,6 +127,9 @@ def main():
     add(f"\t\t{resource_ref} /* {RESOURCE_NAME} */ = {{isa = PBXFileReference; "
         f"lastKnownFileType = folder; name = {RESOURCE_NAME}; path = {RESOURCE_FOLDER}; "
         f"sourceTree = SOURCE_ROOT; }};")
+    add(f"\t\t{assets_ref} /* {ASSETS_CATALOG} */ = {{isa = PBXFileReference; "
+        f"lastKnownFileType = folder.assetcatalog; path = {ASSETS_CATALOG}; "
+        f"sourceTree = \"<group>\"; }};")
     add("/* End PBXFileReference section */")
 
     add("\n/* Begin PBXGroup section */")
@@ -150,6 +162,7 @@ def main():
     add("\t\t\tisa = PBXGroup;")
     add("\t\t\tchildren = (")
     add(f"\t\t\t\t{group_ids['']} /* Sources */,")
+    add(f"\t\t\t\t{assets_ref} /* {ASSETS_CATALOG} */,")
     add(f"\t\t\t\t{resource_ref} /* {RESOURCE_NAME} */,")
     add(f"\t\t\t\t{products_group} /* Products */,")
     add("\t\t\t);")
@@ -223,6 +236,7 @@ def main():
     add("\t\t\tisa = PBXResourcesBuildPhase;")
     add("\t\t\tbuildActionMask = 2147483647;")
     add("\t\t\tfiles = (")
+    add(f"\t\t\t\t{assets_build} /* {ASSETS_CATALOG} in Resources */,")
     add(f"\t\t\t\t{resource_build} /* {RESOURCE_NAME} in Resources */,")
     add("\t\t\t);")
     add("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
