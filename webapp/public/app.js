@@ -811,13 +811,36 @@ function renderDashboard() {
     count: state.boards.filter((board) => board.currentStage?.id === id).length,
   }));
   const boardsPanel = panel("Production stages", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
-  const pipeline = el("div", "board-pipeline");
-  boardCounts.forEach(({ id, label, count }) => {
-    const stage = el("div", "pipeline-stage");
-    stage.append(el("span", `pipeline-label stage-${id}`, label), el("strong", null, String(count)), el("small", null, count === 1 ? "board" : "boards"));
-    pipeline.append(stage);
+  const stageChart = el("div", "stage-chart");
+  const donut = el("div", "stage-donut");
+  const donutTotal = el("div", "stage-donut-total");
+  donutTotal.append(el("strong", null, String(state.boards.length)), el("span", null, "Total"));
+  donut.append(donutTotal);
+  const stageColors = ["var(--primary)", "var(--secondary)", "var(--positive)", "var(--warning)", "var(--negative)", "#8b78d7", "var(--ink-3)"];
+  const countedBoards = boardCounts.reduce((sum, stage) => sum + stage.count, 0);
+  let stageOffset = 0;
+  const segments = [];
+  boardCounts.forEach(({ count }, index) => {
+    if (!countedBoards || !count) return;
+    const start = stageOffset;
+    stageOffset += (count / countedBoards) * 100;
+    segments.push(`${stageColors[index]} ${start.toFixed(2)}% ${stageOffset.toFixed(2)}%`);
   });
-  boardsPanel.body.append(pipeline);
+  donut.style.background = segments.length ? `conic-gradient(${segments.join(", ")})` : "var(--wash-3)";
+
+  const legend = el("div", "stage-legend");
+  boardCounts.forEach(({ label, count }, index) => {
+    const row = el("div", "stage-legend-row");
+    const dot = el("i");
+    dot.style.background = stageColors[index];
+    const copy = el("span");
+    const percentage = countedBoards ? Math.round((count / countedBoards) * 100) : 0;
+    copy.append(el("strong", null, label), el("small", null, `${count} (${percentage}%)`));
+    row.append(dot, copy);
+    legend.append(row);
+  });
+  stageChart.append(donut, legend);
+  boardsPanel.body.append(stageChart);
   dashboardTopGrid.append(projectsPanel, boardsPanel, attentionPanel);
   dashboardWorkGrid.append(productionPanel, dashboardSideStack);
 
@@ -1409,6 +1432,60 @@ function boardProperty(iconName, label, value, onClick) {
   return card;
 }
 
+function openComponentSourceCard(board, component, isDraft = false) {
+  openModal((modal, close) => {
+    modal.classList.add("wide", "component-source-modal");
+    const displayName = isDraft
+      ? component.description || [component.manufacturer, component.model].filter(Boolean).join(" ") || "Extracted component"
+      : [component.manufacturer, component.model].filter(Boolean).join(" ") || "Board component";
+    const sourceLabel = component.source === "ai" ? "Electrical scheme · AI extraction" : "Added manually";
+    const member = (state.members || []).find((person) => person.id === component.addedBy);
+
+    const hero = el("div", "component-source-hero");
+    hero.append(partChip({ ...component, id: component.partID }));
+    const heroCopy = el("div");
+    heroCopy.append(el("span", "eyebrow", isDraft ? "Needs catalog match" : "Board component"), el("h3", null, displayName));
+    heroCopy.append(el("p", null, [component.type, component.rating, component.poles, component.curve, component.sensitivity].filter(Boolean).join(" · ") || "No additional specification"));
+    hero.append(heroCopy, el("strong", "component-source-qty", `× ${component.quantity || 1}`));
+    modal.append(hero);
+
+    const facts = el("div", "component-source-facts");
+    [
+      ["Source", sourceLabel],
+      ["Drawing page", component.sourcePage ? `Page ${component.sourcePage}` : "Not recorded"],
+      ["Board reference", component.reference || board.number || "Not recorded"],
+      ["Board", [board.number, board.name].filter(Boolean).join(" · ") || "Current board"],
+      ["Catalog name", [component.manufacturer, component.model].filter(Boolean).join(" ") || "Not matched"],
+      ["Added by", member?.name || (component.source === "ai" ? "Scheme import" : "Not recorded")],
+    ].forEach(([label, value]) => {
+      const fact = el("div");
+      fact.append(el("span", null, label), el("strong", null, value));
+      facts.append(fact);
+    });
+    modal.append(facts);
+
+    const sourceCard = el("section", "component-origin-card");
+    sourceCard.append(chipIcon(component.source === "ai" ? "scan" : "note", component.source === "ai" ? "var(--primary)" : "var(--secondary)"));
+    const sourceCopy = el("div");
+    sourceCopy.append(el("span", "eyebrow", "Original source"), el("h4", null, component.source === "ai" ? "Text read from the drawing" : "Manual board entry"));
+    sourceCopy.append(el("p", null, component.rawText || (component.source === "ai"
+      ? "The scheme import did not preserve the original line text."
+      : "This component was selected directly from the catalog.")));
+    sourceCard.append(sourceCopy);
+    modal.append(sourceCard);
+
+    if (component.sourcePage && (board.attachments || []).some((file) => file.kind === "scheme")) {
+      modal.append(el("p", "component-source-note", `Open the board’s Schemes & photos tab and check page ${component.sourcePage} of the attached drawing.`));
+    }
+    const actions = el("div", "actions");
+    const done = el("button", "btn-primary", "Done");
+    done.type = "button";
+    done.addEventListener("click", close);
+    actions.append(done);
+    modal.append(actions);
+  });
+}
+
 async function openAddBoardComponentModal(board, draft = null) {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
@@ -1478,6 +1555,25 @@ async function removeBoardComponentDraft(board, draftID) {
   if (!window.confirm("Remove this extracted line from the board?")) return;
   await api("/api/board-components", { boardID: board.id, action: "removeDraft", draftID });
   await refresh();
+}
+
+async function issueBoardStock(board) {
+  await api("/api/board-components", { boardID: board.id, action: "issueStock" });
+  await refresh();
+}
+
+function componentStockBadge(stock) {
+  const status = stock?.status || "unavailable";
+  const badge = el("div", `component-stock-status ${status}`);
+  const labels = {
+    issued: `Issued ${stock?.issued || 0}/${stock?.required || 0}`,
+    available: `${stock?.available || 0} available`,
+    short: `${stock?.issued || 0}/${stock?.required || 0} issued · ${stock?.remaining || 0} short`,
+    unavailable: `${stock?.remaining || stock?.required || 0} unavailable`,
+  };
+  badge.append(icon(status === "issued" || status === "available" ? "check" : status === "short" ? "alert" : "x", 14));
+  badge.append(el("span", null, labels[status] || labels.unavailable));
+  return badge;
 }
 
 function uploadBoardAttachment(board, kind) {
@@ -1801,10 +1897,16 @@ function renderBoardDetail() {
   componentHead.append(componentCopy);
   const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
   if (canEditBoard) componentHead.append(smallBtn("Add component", "accent", "plus", () => openAddBoardComponentModal(board)));
+  if (isAdmin() && (board.components || []).some((component) => (component.stock?.available || 0) > 0)) {
+    componentHead.append(smallBtn("Issue available stock", "", "arrowOut", () => issueBoardStock(board)));
+  }
   componentsPanel.append(componentHead);
   const componentList = el("div", "board-component-list");
   (board.components || []).forEach((component) => {
-    const row = el("div", "board-component-row");
+    const row = el("div", "board-component-row clickable");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `View source details for ${component.manufacturer} ${component.model}`);
     const identity = el("div", "board-component-identity");
     identity.append(partChip({ ...component, id: component.partID }), el("div"));
     const text = identity.lastElementChild;
@@ -1813,8 +1915,16 @@ function renderBoardDetail() {
         component.source === "ai" ? "AI scan" : null,
         component.sourcePage ? `Page ${component.sourcePage}` : null]
         .filter(Boolean).join(" · ")));
-    row.append(identity, el("strong", "component-quantity", `× ${component.quantity}`));
-    if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", () => removeBoardComponent(board, component.id)));
+    row.append(identity, componentStockBadge(component.stock), el("strong", "component-quantity", `× ${component.quantity}`));
+    row.append(icon("chevron", 15));
+    row.addEventListener("click", () => openComponentSourceCard(board, component));
+    row.addEventListener("keydown", (event) => {
+      if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openComponentSourceCard(board, component); }
+    });
+    if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", (event) => {
+      event.stopPropagation();
+      removeBoardComponent(board, component.id);
+    }));
     componentList.append(row);
   });
   if (!(board.components || []).length) {
@@ -1838,7 +1948,9 @@ function renderBoardDetail() {
     reviewHead.append(reviewCopy, el("span", "component-review-count", String(board.componentDrafts.length)));
     const reviewList = el("div", "board-component-list component-review-list");
     board.componentDrafts.forEach((draft) => {
-      const row = el("div", "board-component-row component-draft-row");
+      const row = el("div", "board-component-row component-draft-row clickable");
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
       const draftIdentity = el("div", "board-component-identity");
       draftIdentity.append(chipIcon("scan", "var(--warning)"), el("div"));
       const text = draftIdentity.lastElementChild;
@@ -1846,11 +1958,16 @@ function renderBoardDetail() {
         el("span", null, [draft.type, draft.rating, draft.poles, draft.curve, draft.reference,
           draft.sourcePage ? `Page ${draft.sourcePage}` : null].filter(Boolean).join(" · ")));
       row.append(draftIdentity, el("strong", "component-quantity", `× ${draft.quantity || 1}`));
+      row.append(icon("chevron", 15));
+      row.addEventListener("click", () => openComponentSourceCard(board, draft, true));
+      row.addEventListener("keydown", (event) => {
+        if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openComponentSourceCard(board, draft, true); }
+      });
       if (canEditBoard) {
         const rowActions = el("div", "component-draft-actions");
         rowActions.append(
-          smallBtn("Match", "accent", null, () => openAddBoardComponentModal(board, draft)),
-          smallBtn("Remove", "ghost", "x", () => removeBoardComponentDraft(board, draft.id)),
+          smallBtn("Match", "accent", null, (event) => { event.stopPropagation(); openAddBoardComponentModal(board, draft); }),
+          smallBtn("Remove", "ghost", "x", (event) => { event.stopPropagation(); removeBoardComponentDraft(board, draft.id); }),
         );
         row.append(rowActions);
       }
