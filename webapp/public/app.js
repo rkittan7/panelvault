@@ -7,7 +7,12 @@ let catalog = null; // lazy-loaded parts list
 let currentView = "dashboard";
 let selectedBoardID = null;
 let selectedBoardCabinet = 0;
+let boardCreationMode = null;
 let boardCreationType = null;
+let boardSchemeReading = null;
+let boardSchemeUpload = null;
+let projectCreationMode = null;
+let projectSchemeReading = null;
 let boardChecklistSyncing = false;
 let boardChecklistRevision = 0;
 let boardChecklistQueue = Promise.resolve();
@@ -450,7 +455,9 @@ function renderNav() {
     const label = el("span", "nav-label", item.label);
     btn.append(label);
     if (item.count) btn.append(el("span", "count", String(item.count())));
-    const activeView = ["board-create", "board-detail"].includes(currentView) ? "boards" : currentView;
+    const activeView = ["board-create", "board-detail"].includes(currentView)
+      ? "boards"
+      : currentView === "project-create" ? "projects" : currentView;
     btn.classList.toggle("active", activeView === item.view);
     btn.addEventListener("click", () => switchView(item.view));
     nav.append(btn);
@@ -466,6 +473,7 @@ function switchView(view) {
   // when it is first opened rather than on every refresh.
   if (view === "catalog") renderCatalog();
   if (view === "board-create") renderBoardCreate();
+  if (view === "project-create") renderProjectCreate();
   if (view === "board-detail") renderBoardDetail();
 }
 
@@ -489,6 +497,7 @@ async function refresh() {
   renderProjects();
   renderBoards();
   if (currentView === "board-create") renderBoardCreate();
+  if (currentView === "project-create") renderProjectCreate();
   if (currentView === "board-detail") renderBoardDetail();
   if (isAdmin()) renderTeam();
 }
@@ -2503,18 +2512,166 @@ const BOARD_CREATION_TYPES = [
 ];
 
 function openNewBoardModal() {
+  boardCreationMode = null;
   boardCreationType = null;
+  boardSchemeReading = null;
+  boardSchemeUpload = null;
   switchView("board-create");
 }
 
-function creationSteps(activeStep) {
+function creationSteps(activeStep, labels = ["Start", "Source / type", "Review & create"]) {
   const steps = el("div", "creation-steps");
-  ["Choose type", "Board details", "Build & track"].forEach((label, index) => {
+  labels.forEach((label, index) => {
     const step = el("div", `${index + 1 === activeStep ? "active" : ""}${index + 1 < activeStep ? " done" : ""}`);
     step.append(el("span", null, index + 1 < activeStep ? "✓" : String(index + 1)), el("strong", null, label));
     steps.append(step);
   });
   return steps;
+}
+
+function creationStart(kind, onScan, onManual) {
+  const wrap = el("div", "creation-start");
+  const hero = el("div", "creation-hero creation-start-hero");
+  hero.append(el("span", "eyebrow", `New ${kind.toLowerCase()}`));
+  hero.append(el("h2", null, `How do you want to start this ${kind.toLowerCase()}?`));
+  hero.append(el("p", null, kind === "Board"
+    ? "Use the electrical scheme to prepare the draft automatically, or enter every detail yourself."
+    : "Read a scheme to pull out the customer and project, or enter the project details yourself."));
+  const choices = el("div", "creation-mode-grid");
+  const choice = (iconName, eyebrow, title, note, accent, action) => {
+    const button = el("button", `creation-mode-card${accent ? " recommended" : ""}`);
+    button.type = "button";
+    button.append(chipIcon(iconName, accent ? "var(--primary)" : "var(--secondary)"));
+    const copy = el("div");
+    copy.append(el("span", "eyebrow", eyebrow), el("h3", null, title), el("p", null, note));
+    button.append(copy, icon("chevron", 19));
+    button.addEventListener("click", action);
+    return button;
+  };
+  choices.append(
+    choice("scan", "Recommended", "Scan with AI", "Attach the AutoCAD PDF. PanelVault reads it and prepares a reviewable draft.", true, onScan),
+    choice("note", "Manual", "Enter manually", `Start with a blank ${kind.toLowerCase()} form and fill in the details yourself.`, false, onManual),
+  );
+  wrap.append(hero, choices);
+  return wrap;
+}
+
+function fileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result).split(",")[1] || ""));
+    reader.addEventListener("error", () => reject(new Error("Could not read this file.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function schemeIntakePanel(kind, onComplete) {
+  const panel = el("section", "scheme-intake-panel");
+  const head = el("div", "scheme-intake-head");
+  head.append(chipIcon("scan", "var(--primary)"));
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
+    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 8 MB. Nothing is created until you review and confirm it."));
+  head.append(copy);
+  panel.append(head);
+
+  const input = el("input");
+  input.type = "file";
+  input.accept = "application/pdf,image/jpeg,image/png,image/webp,image/heic";
+  input.className = "hidden";
+  const drop = el("button", "scheme-upload-zone");
+  drop.type = "button";
+  drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "PDF or supported image"));
+  const status = el("div", "scheme-file-status", "No file selected");
+  const error = el("div", "form-error hidden");
+  const actions = el("div", "page-form-actions");
+  const scan = el("button", "btn-primary", "Read scheme with AI");
+  scan.type = "button";
+  scan.disabled = true;
+  let selectedFile = null;
+  drop.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    error.classList.add("hidden");
+    if (!file) return;
+    if (file.size > 8_000_000) {
+      error.textContent = "The scheme must be 8 MB or smaller.";
+      error.classList.remove("hidden");
+      input.value = "";
+      selectedFile = null;
+      scan.disabled = true;
+      return;
+    }
+    selectedFile = file;
+    status.textContent = `${file.name} · ${Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB`;
+    drop.classList.add("selected");
+    scan.disabled = false;
+  });
+  scan.addEventListener("click", async () => {
+    if (!selectedFile) return;
+    error.classList.add("hidden");
+    scan.disabled = true;
+    scan.textContent = "Reading drawing…";
+    drop.classList.add("reading");
+    try {
+      const data = await fileAsBase64(selectedFile);
+      const upload = {
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type || "application/pdf",
+        data,
+        size: selectedFile.size,
+      };
+      const reading = await api("/api/ai/board-scheme", upload);
+      await onComplete(reading, upload);
+    } catch (caught) {
+      error.textContent = caught.message || "PanelVault could not read this scheme.";
+      error.classList.remove("hidden");
+      scan.disabled = false;
+      scan.textContent = "Read scheme with AI";
+      drop.classList.remove("reading");
+    }
+  });
+  actions.append(scan);
+  panel.append(input, drop, status, error, actions);
+  return panel;
+}
+
+function normalizedCreationBoardType(value) {
+  const source = String(value || "").trim().toUpperCase();
+  if (!source) return null;
+  if (source.includes("SMDB") || source === "SDB" || source.includes("SUB DISTRIBUTION")) return "SMDB";
+  if (source.includes("MDB") || source.includes("MAIN DISTRIBUTION")) return "MDB";
+  return BOARD_CREATION_TYPES.find((item) => source.includes(item.id.toUpperCase())
+    || source.includes(item.name.toUpperCase()))?.id || null;
+}
+
+function schemeReviewCard(reading, context) {
+  const review = el("section", "scheme-review-card");
+  const board = reading?.board || {};
+  const head = el("div", "scheme-review-head");
+  head.append(chipIcon("check", "var(--positive)"));
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "AI draft ready"), el("h3", null, `Review the ${context.toLowerCase()} draft`),
+    el("p", null, "AI can make mistakes. Confirm every field against the drawing before creating anything."));
+  head.append(copy);
+  review.append(head);
+  const facts = el("div", "scheme-review-facts");
+  [
+    ["Board", [board.number, board.name].filter(Boolean).join(" — ")],
+    ["Project", board.project],
+    ["Customer", board.customer],
+    ["Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")],
+    ["Matched parts", String((reading.components || []).length)],
+    ["Needs review", String((reading.unmatched || []).length)],
+  ].forEach(([label, value]) => {
+    if (!value) return;
+    const fact = el("div");
+    fact.append(el("span", null, label), el("strong", null, value));
+    facts.append(fact);
+  });
+  review.append(facts);
+  if (board.notes) review.append(el("p", "scheme-review-note", board.notes));
+  return review;
 }
 
 function pageField(control) {
@@ -2527,20 +2684,55 @@ function renderBoardCreate() {
   if (!view || !isAdmin()) return;
   view.replaceChildren();
 
-  const back = smallBtn(boardCreationType ? "← Change board type" : "← Boards", "", null, () => {
+  const backLabel = boardCreationType ? "← Change board type" : boardCreationMode ? "← Start over" : "← Boards";
+  const back = smallBtn(backLabel, "", null, () => {
     if (boardCreationType) {
       boardCreationType = null;
       renderBoardCreate();
+    } else if (boardCreationMode) {
+      boardCreationMode = null;
+      boardSchemeReading = null;
+      boardSchemeUpload = null;
+      renderBoardCreate();
     } else switchView("boards");
   });
-  view.append(back, creationSteps(boardCreationType ? 2 : 1));
+  const activeStep = !boardCreationMode ? 1 : !boardCreationType ? 2 : 3;
+  view.append(back, creationSteps(activeStep));
+
+  if (!boardCreationMode) {
+    view.append(creationStart("Board", () => {
+      boardCreationMode = "ai";
+      renderBoardCreate();
+    }, () => {
+      boardCreationMode = "manual";
+      renderBoardCreate();
+    }));
+    return;
+  }
+
+  if (boardCreationMode === "ai" && !boardSchemeReading) {
+    const hero = el("div", "creation-hero compact");
+    hero.append(el("span", "eyebrow", "New production board"), el("h2", null, "Let the drawing start the board"),
+      el("p", null, "PanelVault reads the title block and component schedule, then opens a draft for your review."));
+    view.append(hero, schemeIntakePanel("Board", async (reading, upload) => {
+      boardSchemeReading = reading;
+      boardSchemeUpload = upload;
+      boardCreationType = normalizedCreationBoardType(reading.board?.type);
+      renderBoardCreate();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }));
+    return;
+  }
 
   if (!boardCreationType) {
     const hero = el("div", "creation-hero");
     hero.append(el("span", "eyebrow", "New production board"));
-    hero.append(el("h2", null, "What are you building?"));
-    hero.append(el("p", null, "Start with the board type. The next page only asks for details that matter to that build."));
+    hero.append(el("h2", null, boardSchemeReading ? "Confirm the board type" : "What are you building?"));
+    hero.append(el("p", null, boardSchemeReading
+      ? "The drawing did not identify a supported type clearly. Choose it before reviewing the draft."
+      : "Start with the board type. The next page only asks for details that matter to that build."));
     view.append(hero);
+    if (boardSchemeReading) view.append(schemeReviewCard(boardSchemeReading, "Board"));
     const grid = el("div", "board-type-grid");
     BOARD_CREATION_TYPES.forEach((boardType) => {
       const button = el("button", "board-type-card");
@@ -2568,8 +2760,10 @@ function renderBoardCreate() {
   heroType.append(heroCopy);
   detailsHero.append(heroType);
   view.append(detailsHero);
+  if (boardSchemeReading) view.append(schemeReviewCard(boardSchemeReading, "Board"));
 
   const form = el("form", "board-create-form");
+  const aiDraft = boardSchemeReading?.board || {};
   const number = pageField(field("Board number", "3918.24-1"));
   const group = pageField(field("Board group", "optional group"));
   const name = pageField(field("Board name", "Main LV Board"));
@@ -2595,6 +2789,30 @@ function renderBoardCreate() {
   const qaAssign = el("label", "page-field", "QA reviewer");
   const qaAssignee = memberSelect(null, (member) => ["owner", "manager", "staff-manager", "qa"].includes(member.role), "Assign later");
   qaAssign.append(qaAssignee);
+
+  if (boardSchemeReading) {
+    number.input.value = aiDraft.number || "";
+    name.input.value = aiDraft.name || "";
+    customer.input.value = aiDraft.customer || "";
+    const matchedProject = state.projects.find((item) =>
+      item.name.toLowerCase() === String(aiDraft.project || "").trim().toLowerCase());
+    project.select.value = matchedProject?.name || "No Project";
+    if (matchedProject) {
+      customer.input.value = matchedProject.customer;
+      customer.input.disabled = true;
+    }
+    const availableManufacturers = [...manufacturer.select.options].map((option) => option.value);
+    const matchedManufacturer = availableManufacturers.find((value) =>
+      value.toLowerCase() === String(aiDraft.manufacturer || "").trim().toLowerCase());
+    if (matchedManufacturer) manufacturer.select.value = matchedManufacturer;
+    cabinets.select.value = String(Math.max(1, Math.min(12, Number(aiDraft.cabinetCount) || 1)));
+    const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
+    const matchedBreakerType = breakerTypes.find((value) =>
+      value.toLowerCase() === String(aiDraft.mainBreakerType || "").trim().toLowerCase());
+    if (matchedBreakerType) mainBreakerType.select.value = matchedBreakerType;
+    mainBreakerModel.input.value = aiDraft.mainBreakerModel || "";
+    mainBreakerAmpere.input.value = aiDraft.mainBreakerAmpere || "630A";
+  }
 
   project.select.addEventListener("change", () => {
     const selectedProject = state.projects.find((item) => item.name === project.select.value);
@@ -2657,9 +2875,32 @@ function renderBoardCreate() {
         assignedTo: assignee.value || null,
         qaAssignedTo: qaAssignee.value || null,
       });
+      const followups = [];
+      if (boardSchemeUpload && boardSchemeUpload.size <= 6_000_000) {
+        followups.push(api("/api/board-attachment", {
+          boardID: board.id,
+          kind: "scheme",
+          fileName: boardSchemeUpload.fileName,
+          mimeType: boardSchemeUpload.mimeType,
+          data: boardSchemeUpload.data,
+        }));
+      }
+      (boardSchemeReading?.components || []).forEach((component) => {
+        followups.push(api("/api/board-components", {
+          boardID: board.id,
+          action: "add",
+          partID: component.partID,
+          quantity: component.quantity,
+          reference: component.reference,
+        }));
+      });
+      if (followups.length) await Promise.allSettled(followups);
       selectedBoardID = board.id;
       selectedBoardCabinet = 0;
+      boardCreationMode = null;
       boardCreationType = null;
+      boardSchemeReading = null;
+      boardSchemeUpload = null;
       await refresh();
       switchView("board-detail");
     } catch (caught) {
@@ -2673,27 +2914,111 @@ function renderBoardCreate() {
 }
 
 function openNewProjectModal() {
-  openModal((modal, close) => {
-    modal.append(el("h3", null, "New project"));
-    modal.append(el("div", "modal-sub", "Create the customer/project container first, then attach boards."));
-    const name = field("Project name", "Azrieli Office Tower");
-    const customer = field("Customer", "search or type customer");
-    const site = field("Site or building", "optional location");
-    const dueDate = field("Expected finish", "optional", "datetime-local");
-    modal.append(name.label, customer.label, site.label, dueDate.label);
-    modal.append(modalActions(close, "Create", async () => {
-      if (!name.input.value.trim() || !customer.input.value.trim()) return;
-      await api("/api/projects", {
+  projectCreationMode = null;
+  projectSchemeReading = null;
+  switchView("project-create");
+}
+
+function renderProjectCreate() {
+  const view = $("#view-project-create");
+  if (!view || !isAdmin()) return;
+  view.replaceChildren();
+  const back = smallBtn(projectCreationMode ? "← Start over" : "← Projects", "", null, () => {
+    if (projectCreationMode) {
+      projectCreationMode = null;
+      projectSchemeReading = null;
+      renderProjectCreate();
+    } else switchView("projects");
+  });
+  const activeStep = !projectCreationMode ? 1
+    : projectCreationMode === "ai" && !projectSchemeReading ? 2 : 3;
+  view.append(back, creationSteps(activeStep, ["Start", "Project source", "Review & create"]));
+
+  if (!projectCreationMode) {
+    view.append(creationStart("Project", () => {
+      projectCreationMode = "ai";
+      renderProjectCreate();
+    }, () => {
+      projectCreationMode = "manual";
+      renderProjectCreate();
+    }));
+    return;
+  }
+
+  if (projectCreationMode === "ai" && !projectSchemeReading) {
+    const hero = el("div", "creation-hero compact");
+    hero.append(el("span", "eyebrow", "New project"), el("h2", null, "Start the project from a drawing"),
+      el("p", null, "PanelVault reads the project and customer from the scheme, then gives you a short form to confirm."));
+    view.append(hero, schemeIntakePanel("Project", async (reading) => {
+      projectSchemeReading = reading;
+      renderProjectCreate();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }));
+    return;
+  }
+
+  const draft = projectSchemeReading?.board || {};
+  const hero = el("div", "creation-hero compact");
+  hero.append(el("span", "eyebrow", projectCreationMode === "ai" ? "AI-assisted project" : "Manual project"),
+    el("h2", null, "Create the project workspace"),
+    el("p", null, "Confirm the customer, site and schedule. Boards can be attached as soon as the project is created."));
+  view.append(hero);
+  if (projectSchemeReading) view.append(schemeReviewCard(projectSchemeReading, "Project"));
+
+  const form = el("form", "board-create-form project-create-form");
+  const name = pageField(field("Project name", "Azrieli Office Tower"));
+  const customer = pageField(field("Customer", "search or type customer"));
+  const site = pageField(field("Site or building", "optional location"));
+  const dueDate = pageField(field("Expected finish", "optional", "datetime-local"));
+  if (projectSchemeReading) {
+    name.input.value = draft.project || draft.name || "";
+    customer.input.value = draft.customer || "";
+  }
+  const section = el("section", "creation-section");
+  const head = el("div", "creation-section-head");
+  head.append(el("h3", null, "Project details"), el("p", null, "The shared container for its customer, boards, drawings and progress."));
+  const grid = el("div", "page-form-grid project-form-grid");
+  [name, customer, site, dueDate].forEach((control) => grid.append(control.label));
+  section.append(head, grid);
+  const error = el("div", "form-error hidden");
+  const actions = el("div", "page-form-actions");
+  const cancel = el("button", "btn-ghost", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => switchView("projects"));
+  const submit = el("button", "btn-primary", "Create project");
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(section, error, actions);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.classList.add("hidden");
+    if (!name.input.value.trim() || !customer.input.value.trim()) {
+      error.textContent = "Project name and customer are required.";
+      error.classList.remove("hidden");
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = "Creating…";
+    try {
+      const { project } = await api("/api/projects", {
         name: name.input.value,
         customer: customer.input.value,
         site: site.input.value,
         dueDate: dueDate.input.value || null,
       });
-      close();
+      projectCreationMode = null;
+      projectSchemeReading = null;
       await refresh();
       switchView("projects");
-    }));
+      openProjectOverview(project.name);
+    } catch (caught) {
+      error.textContent = caught.message || "Could not create this project.";
+      error.classList.remove("hidden");
+      submit.disabled = false;
+      submit.textContent = "Create project";
+    }
   });
+  view.append(form);
 }
 
 function openAssignModal(board) {

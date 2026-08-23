@@ -1052,6 +1052,62 @@ img.brand-logo {
 .creation-hero h2 { margin-top: 5px; font-size: clamp(25px, 3.5vw, 36px); line-height: 1.08; letter-spacing: -.035em; }
 .creation-hero > p, .selected-board-type p { color: var(--ink-2); margin-top: 8px; max-width: 650px; }
 .creation-hero.compact { padding: 20px 22px; }
+.creation-start { display: flex; flex-direction: column; gap: 12px; }
+.creation-start-hero { padding-block: 34px; }
+.creation-mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.creation-mode-card {
+  position: relative; display: grid; grid-template-columns: 54px minmax(0, 1fr) 20px;
+  align-items: center; gap: 15px; min-height: 156px; padding: 22px;
+  color: var(--ink); text-align: left; font: inherit; border: 1px solid var(--line);
+  border-radius: calc(var(--r) + 5px); background: var(--panel); cursor: pointer;
+  box-shadow: var(--apple-shadow); transition: transform .18s, border-color .18s, box-shadow .18s, background .18s;
+}
+.creation-mode-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); box-shadow: var(--shade); }
+.creation-mode-card.recommended {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+  background: radial-gradient(circle at 92% 12%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 40%), var(--panel);
+}
+.creation-mode-card .chip-icon { width: 54px; height: 54px; border-radius: 17px; }
+.creation-mode-card .chip-icon svg { width: 26px; height: 26px; }
+.creation-mode-card h3 { margin-top: 4px; font-size: 19px; letter-spacing: -.02em; }
+.creation-mode-card p { max-width: 470px; margin-top: 6px; color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.creation-mode-card > svg { color: var(--ink-3); }
+
+.scheme-intake-panel {
+  padding: 22px; border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: calc(var(--r) + 5px); background: var(--panel); box-shadow: var(--apple-shadow);
+}
+.scheme-intake-head { display: flex; align-items: center; gap: 14px; margin-bottom: 17px; }
+.scheme-intake-head .chip-icon { width: 46px; height: 46px; border-radius: 14px; }
+.scheme-intake-head h2 { margin-top: 3px; font-size: 21px; letter-spacing: -.025em; }
+.scheme-intake-head p { margin-top: 5px; color: var(--ink-3); font-size: 11.5px; }
+.scheme-upload-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: 176px; padding: 24px; color: var(--ink-2); font: inherit;
+  border: 1px dashed color-mix(in srgb, var(--primary) 38%, var(--line)); border-radius: var(--r);
+  background: color-mix(in srgb, var(--primary) 4%, var(--wash-1)); cursor: pointer;
+  transition: border-color .18s, background .18s, transform .18s;
+}
+.scheme-upload-zone:hover, .scheme-upload-zone.selected { border-color: var(--primary); background: var(--primary-dim); }
+.scheme-upload-zone.reading { animation: schemeReadPulse 1.25s ease-in-out infinite alternate; }
+.scheme-upload-zone > svg { color: var(--primary); }
+.scheme-upload-zone strong { color: var(--ink); font-size: 14px; }
+.scheme-upload-zone span { color: var(--ink-3); font-size: 11px; }
+.scheme-file-status { margin-top: 9px; color: var(--ink-3); font-size: 11px; text-align: center; }
+@keyframes schemeReadPulse { to { border-color: var(--secondary); background: color-mix(in srgb, var(--secondary) 8%, var(--panel)); } }
+
+.scheme-review-card {
+  padding: 18px; border: 1px solid color-mix(in srgb, var(--positive) 28%, var(--line));
+  border-radius: var(--r); background: color-mix(in srgb, var(--positive) 4%, var(--panel));
+}
+.scheme-review-head { display: flex; align-items: center; gap: 12px; }
+.scheme-review-head h3 { margin-top: 2px; font-size: 16px; }
+.scheme-review-head p { margin-top: 3px; color: var(--ink-3); font-size: 11.5px; }
+.scheme-review-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.scheme-review-facts > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px 11px; border-radius: var(--r-sm); background: var(--wash-1); }
+.scheme-review-facts span { color: var(--ink-3); font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.scheme-review-facts strong { overflow: hidden; color: var(--ink); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.scheme-review-note { margin-top: 10px; padding: 10px 12px; color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, transparent); border-radius: var(--r-sm); font-size: 11.5px; line-height: 1.5; }
 .selected-board-type { display: flex; align-items: center; gap: 14px; }
 .selected-board-type .chip-icon { width: 48px; height: 48px; border-radius: 14px; }
 .selected-board-type .chip-icon svg { width: 24px; height: 24px; }
@@ -1076,6 +1132,7 @@ img.brand-logo {
 .creation-section-head h3 { font-size: 14px; }
 .creation-section-head p { color: var(--ink-3); font-size: 11.5px; text-align: right; }
 .page-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.project-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .page-field {
   display: flex; flex-direction: column; gap: 7px;
   color: var(--ink-3); font-size: 10.5px; font-weight: 700; letter-spacing: .045em; text-transform: uppercase;
@@ -1345,6 +1402,10 @@ img.brand-logo {
   .creation-steps strong { display: none; }
   .creation-steps > div { justify-content: center; padding: 8px; }
   .creation-hero { padding: 21px 18px; }
+  .creation-mode-grid { grid-template-columns: minmax(0, 1fr); }
+  .creation-mode-card { min-height: 128px; padding: 18px; }
+  .scheme-intake-panel { padding: 17px; }
+  .scheme-review-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .board-type-grid { grid-template-columns: minmax(0, 1fr); }
   .page-form-grid { grid-template-columns: minmax(0, 1fr); }
   .creation-section-head { flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -1397,6 +1458,9 @@ img.brand-logo {
   .board-archive-metric { flex-direction: row; min-height: 66px; }
   .board-status-filters { overflow-x: auto; padding-bottom: 6px; }
   .board-status-filters button { flex-shrink: 0; }
+  .creation-mode-card { grid-template-columns: 44px minmax(0, 1fr) 16px; gap: 11px; }
+  .creation-mode-card .chip-icon { width: 44px; height: 44px; border-radius: 14px; }
+  .scheme-review-facts { grid-template-columns: minmax(0, 1fr); }
   .board-file-grid { grid-template-columns: minmax(0, 1fr); }
   .board-component-row { flex-wrap: wrap; }
   .drilldown-metrics, .drilldown-metrics.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
