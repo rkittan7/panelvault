@@ -682,17 +682,21 @@ input:focus, select:focus, textarea:focus {
    throughout, because SwiftUI casts an Image's shadow from its alpha: these
    photos and logos are cut-outs, so the halo has to follow the silhouette
    instead of boxing the frame. */
-.brand-row {
+/* `.row.brand-row` rather than `.brand-row`: `.list .row` sets the neutral
+   panel background and hairline, and matches on specificity — this has to tie
+   and win on order, or a listed row keeps its grey and loses the accent. */
+.row.brand-row {
   --brand: var(--primary);
   background: color-mix(in srgb, var(--brand) 4.5%, transparent);
   border: 1px solid color-mix(in srgb, var(--brand) 18%, transparent);
   box-shadow: 0 0 10px color-mix(in srgb, var(--brand) 12%, transparent);
   border-radius: 16px;
 }
-.list .brand-row,
-.brand-row.click:hover {
-  background: color-mix(in srgb, var(--brand) 7%, transparent);
-  border-color: color-mix(in srgb, var(--brand) 26%, transparent);
+/* Resting state is the app's, exactly. Hover is web-only — the phone has no
+   pointer — so it lifts from those values rather than replacing them. */
+.row.brand-row.click:hover {
+  background: color-mix(in srgb, var(--brand) 9%, transparent);
+  border-color: color-mix(in srgb, var(--brand) 28%, transparent);
 }
 
 /* TransparentImageBubble: two stacked halos at 34% over 18%.
@@ -824,11 +828,6 @@ img.brand-logo {
 
 .muted-cap { color: var(--ink-3); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
 
-.part-about {
-  font-size: 12.5px; line-height: 1.6; color: var(--ink-2);
-  margin-top: -4px;
-}
-
 /* ---- the catalog part sheet (ComponentDetailSheet) ---- */
 
 .part-sheet { --brand: var(--primary); }
@@ -893,18 +892,6 @@ img.brand-logo {
   margin-left: auto; text-align: right; font-weight: 600; color: var(--ink);
   min-width: 0; overflow-wrap: anywhere;
 }
-
-/* Specification table in the part modal. */
-.spec {
-  display: grid; grid-template-columns: auto 1fr;
-  gap: 5px 14px;
-  font-size: 12.5px;
-  padding: 11px 12px;
-  background: var(--wash-1);
-  border-radius: 9px;
-}
-.spec dt { color: var(--ink-3); font-weight: 600; }
-.spec dd { font-weight: 600; overflow-wrap: anywhere; }
 
 .qty-col { text-align: right; min-width: 46px; flex-shrink: 0; }
 .qty-col .num { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
