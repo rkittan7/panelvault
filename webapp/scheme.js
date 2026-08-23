@@ -63,9 +63,9 @@ const BOARD_SCHEME_SCHEMA = {
           manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
           model: { type: "string", description: "Model/series exactly as printed, preserving significant suffixes." },
           type: { type: "string", description: "Printed device type such as MCB, MCCB, contactor or meter." },
-          rating: { type: "string", description: "Current/power/voltage rating exactly as printed." },
-          poles: { type: "string", description: "Pole count exactly as printed." },
-          curve: { type: "string", description: "Trip curve/class exactly as printed." },
+          rating: { type: "string", description: "Device current including A, separated from curve and poles; for example C16 or 6A + N must return 16A or 6A." },
+          poles: { type: "string", description: "Pole count normalized from the device callout, for example 6A + N means 1P+N." },
+          curve: { type: "string", description: "Trip curve/class exactly as printed; for example C16 means curve C." },
           sensitivity: { type: "string", description: "RCD sensitivity exactly as printed." },
           quantity: { type: "integer", minimum: 0, maximum: 999, description: "Count of unique physical schematic device references; 0 when it cannot be determined safely." },
           reference: { type: "string", description: "Exact unique device tag(s) included in the quantity." },
@@ -99,8 +99,9 @@ function boardSchemePrompt(fileName) {
   };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
-    "main incomer and every component actually used across the schematic pages.",
+    "main incomer and every component actually used across the schematic pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
+    "For every breaker, separate its current, poles and trip curve: C16 is rating 16A with curve C; 6A + N is rating 6A with poles 1P+N. Never confuse 6kA breaking capacity with a 6A current rating.",
     named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
     "Return empty strings, empty arrays or 0 for information that is not visibly stated.",
     `Return one JSON object with exactly this shape (the components array may be empty): ${JSON.stringify(responseShape)}`,
@@ -132,6 +133,65 @@ function modelKeys(value) {
   return [...keys].filter((key) => key.length >= 3);
 }
 
+/** Canonical current carried by a breaker callout. This deliberately requires
+ * the A to follow the number directly, so 6kA breaking capacity is never
+ * mistaken for a 6A trip rating. MCB shorthand such as C16 is accepted. */
+function ampereRating(...values) {
+  for (const value of values) {
+    const source = String(value || "").toUpperCase();
+    const explicit = source.match(/(?:^|[^A-Z0-9])(\d+(?:\.\d+)?)\s*A(?![A-Z])/);
+    if (explicit) return `${Number(explicit[1])}A`;
+  }
+  for (const value of values) {
+    const source = String(value || "").toUpperCase();
+    const curveMarking = source.match(/(?:^|[^A-Z0-9])([BCD])\s*(\d{1,3})(?:\s*A)?(?:$|[^A-Z0-9])/);
+    if (curveMarking) return `${Number(curveMarking[2])}A`;
+  }
+  return "";
+}
+
+function breakerCurve(...values) {
+  for (const value of values) {
+    const source = String(value || "").toUpperCase();
+    const marking = source.match(/(?:^|[^A-Z0-9])([BCD])\s*\d{1,3}(?:\s*A)?(?:$|[^A-Z0-9])/);
+    if (marking) return marking[1];
+  }
+  return "";
+}
+
+/** Fixed pole arrangement only. Catalog ranges such as 1P-4P intentionally do
+ * not produce a key because they cannot identify one exact stocked family. */
+function poleKey(...values) {
+  for (const value of values) {
+    const source = String(value || "").toUpperCase().replace(/\s+/g, "");
+    if (/[1-4]P(?:\/|-)[1-4]P/.test(source)) continue;
+    const phaseNeutral = source.match(/(?:^|[^0-9])([1-3])P?\+N(?:$|[^A-Z0-9])/);
+    if (phaseNeutral) return `${phaseNeutral[1]}P+N`;
+    if (/(?:\d+(?:\.\d+)?)A\+N(?:$|[^A-Z0-9])/.test(source)) return "1P+N";
+    const fixed = source.match(/(?:^|[^0-9])([1-4])P(?:$|[^+A-Z0-9-])/);
+    if (fixed) return `${fixed[1]}P`;
+  }
+  return "";
+}
+
+function typeKey(value) {
+  const key = partKey(value);
+  if (key === "mcb" || key.includes("miniaturecircuitbreaker")) return "mcb";
+  if (key === "mccb" || key.includes("mouldedcasecircuitbreaker") || key.includes("moldedcasecircuitbreaker")) return "mccb";
+  return key;
+}
+
+function exactAmpereRating(value) {
+  const source = String(value || "").trim();
+  return /^\d+(?:\.\d+)?\s*A$/i.test(source) ? ampereRating(source) : "";
+}
+
+function sameModel(left, right) {
+  const leftKeys = modelKeys(left);
+  const rightKeys = modelKeys(right);
+  return leftKeys.some((key) => rightKeys.includes(key));
+}
+
 /** Best catalog part for something read off a drawing, or null.
  *
  * Deliberately conservative: a wrong match silently puts the wrong part on a
@@ -141,8 +201,10 @@ function modelKeys(value) {
  */
 function matchCatalogPart(catalog, part) {
   const models = modelKeys(part.model || part.rawText);
-  if (!models.length) return null;
   const manufacturer = partKey(part.manufacturer);
+  const requestedType = typeKey(part.type);
+  const requestedPoles = poleKey(part.poles, part.rawText, part.rating);
+  const requestedAmpere = ampereRating(part.rating, part.rawText);
 
   const scored = catalog
     .map((candidate) => {
@@ -156,8 +218,7 @@ function matchCatalogPart(catalog, part) {
           else if (candidateModel.includes(model) || model.includes(candidateModel)) score = Math.max(score, 2);
         }
       }
-      if (!score) return null;
-
+      const modelMatched = score > 0;
       // A model alone is ambiguous across brands — several ranges share
       // numbers — so the brand must agree whenever the drawing names one.
       if (manufacturer) {
@@ -167,7 +228,30 @@ function matchCatalogPart(catalog, part) {
           && !manufacturer.includes(candidateManufacturer)) return null;
         score += 1;
       }
-      if (part.type && partKey(part.type) === partKey(candidate.type)) score += 1;
+
+      const candidateType = typeKey(candidate.type);
+      const candidatePoles = poleKey(candidate.poles);
+      const candidateAmpere = exactAmpereRating(candidate.rating);
+
+      if (!modelMatched) {
+        // A circuit/load label can occupy the model position in a schematic
+        // callout (for example FIRL beside 6A + N). Match without a model only
+        // when brand, device type and one fixed pole arrangement identify a
+        // single catalog family; the tie check below still refuses ambiguity.
+        if (!manufacturer || !requestedType || !requestedPoles) return null;
+        if (candidateType !== requestedType || candidatePoles !== requestedPoles) return null;
+        score += 2;
+      }
+
+      if (requestedType && requestedType === candidateType) score += 1;
+      if (requestedPoles && candidatePoles) {
+        if (requestedPoles !== candidatePoles) return null;
+        score += 2;
+      }
+      if (requestedAmpere && candidateAmpere) {
+        if (requestedAmpere !== candidateAmpere) return null;
+        score += 3;
+      }
       return { candidate, score };
     })
     .filter(Boolean)
@@ -192,7 +276,24 @@ const text = (value, max) => String(value ?? "").trim().slice(0, max);
  */
 function normalizeReading(reading, catalog) {
   const board = reading?.board || {};
-  const parts = Array.isArray(reading?.components) ? reading.components : [];
+  const parts = Array.isArray(reading?.components) ? [...reading.components] : [];
+  const mainModel = text(board.mainBreakerModel, 80);
+  const mainAmpere = ampereRating(board.mainBreakerAmpere);
+  if (mainModel && !parts.some((part) => sameModel(part?.model || part?.rawText, mainModel))) {
+    parts.unshift({
+      rawText: [board.mainBreakerType, mainModel, mainAmpere].filter(Boolean).join(" "),
+      manufacturer: "",
+      model: mainModel,
+      type: text(board.mainBreakerType, 60),
+      rating: mainAmpere,
+      poles: "",
+      curve: "",
+      sensitivity: "",
+      quantity: 1,
+      reference: "Main incomer",
+      sourcePage: 0,
+    });
+  }
   const warnings = (Array.isArray(reading?.warnings) ? reading.warnings : [])
     .map((warning) => text(warning, 240))
     .filter(Boolean)
@@ -202,7 +303,18 @@ function normalizeReading(reading, catalog) {
   const unmatched = [];
   for (const part of parts.slice(0, 200)) {
     const quantity = Math.min(Math.max(Math.trunc(Number(part.quantity) || 1), 1), 999);
-    const hit = matchCatalogPart(catalog, part);
+    const isMain = mainModel && sameModel(part?.model || part?.rawText, mainModel)
+      && (quantity === 1 || /main|incomer|incoming/i.test(String(part?.reference || "")));
+    const detectedAmpere = ampereRating(part.rating, part.rawText) || (isMain ? mainAmpere : "");
+    const detectedPoles = poleKey(part.poles, part.rawText, part.rating) || text(part.poles, 30);
+    const detectedCurve = breakerCurve(part.curve, part.rating, part.rawText) || text(part.curve, 30);
+    const normalizedPart = {
+      ...part,
+      rating: detectedAmpere || text(part.rating, 60),
+      poles: detectedPoles,
+      curve: detectedCurve,
+    };
+    const hit = matchCatalogPart(catalog, normalizedPart);
     if (hit) {
       components.push({
         partID: hit.id,
@@ -212,9 +324,9 @@ function normalizeReading(reading, catalog) {
         quantity,
         reference: text(part.reference, 120),
         rawText: text(part.rawText, 400),
-        rating: text(part.rating, 60),
-        poles: text(part.poles, 30),
-        curve: text(part.curve, 30),
+        rating: text(normalizedPart.rating, 60),
+        poles: text(normalizedPart.poles, 30),
+        curve: text(normalizedPart.curve, 30),
         sensitivity: text(part.sensitivity, 30),
         sourcePage: Math.min(Math.max(Math.trunc(Number(part.sourcePage) || 0), 0), 1000),
       });
@@ -230,9 +342,9 @@ function normalizeReading(reading, catalog) {
         quantity,
         reference: text(part.reference, 120),
         rawText: text(part.rawText, 400),
-        rating: text(part.rating, 60),
-        poles: text(part.poles, 30),
-        curve: text(part.curve, 30),
+        rating: text(normalizedPart.rating, 60),
+        poles: text(normalizedPart.poles, 30),
+        curve: text(normalizedPart.curve, 30),
         sensitivity: text(part.sensitivity, 30),
         sourcePage: Math.min(Math.max(Math.trunc(Number(part.sourcePage) || 0), 0), 1000),
       });
@@ -249,7 +361,7 @@ function normalizeReading(reading, catalog) {
       manufacturer: text(board.manufacturer, 60),
       mainBreakerType: text(board.mainBreakerType, 40),
       mainBreakerModel: text(board.mainBreakerModel, 80),
-      mainBreakerAmpere: text(board.mainBreakerAmpere, 20),
+      mainBreakerAmpere: mainAmpere || text(board.mainBreakerAmpere, 20),
       cabinetCount: Math.min(Math.max(Math.trunc(Number(board.cabinetCount) || 1), 1), 40),
       jobNumber: text(board.jobNumber, 60),
       revision: text(board.revision, 60),
@@ -273,8 +385,11 @@ module.exports = {
   BOARD_SCHEME_INSTRUCTION,
   BOARD_SCHEME_SCHEMA,
   boardSchemePrompt,
+  ampereRating,
+  breakerCurve,
   matchCatalogPart,
   modelKeys,
   normalizeReading,
   partKey,
+  poleKey,
 };

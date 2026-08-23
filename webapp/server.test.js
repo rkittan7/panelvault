@@ -246,11 +246,11 @@ test("projects and boards use the same creation contract as the app", async () =
         qaAssignedTo: registered.body.user.id,
         components: [{
           partID: "abb-s202-2p", quantity: 4, reference: "QF20-QF23",
-          rawText: "ABB S202 C16 x4", sourcePage: 7,
+          rawText: "ABB S202 C16 x4", rating: "16A", poles: "2P", curve: "C", sourcePage: 7,
         }],
         componentDrafts: [{
           description: "Siemens 5SY C10", manufacturer: "Siemens", model: "5SY",
-          type: "MCB", quantity: 2, reference: "QF30-QF31",
+          type: "MCB", rating: "10A", poles: "1P", curve: "C", quantity: 2, reference: "QF30-QF31",
           rawText: "Siemens 5SY C10 x2", sourcePage: 8,
         }],
       }),
@@ -266,6 +266,9 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.components.length, 1);
     assert.equal(createdBoard.body.board.components[0].source, "ai");
     assert.equal(createdBoard.body.board.components[0].sourcePage, 7);
+    assert.equal(createdBoard.body.board.components[0].rating, "16A");
+    assert.equal(createdBoard.body.board.components[0].poles, "2P");
+    assert.equal(createdBoard.body.board.components[0].curve, "C");
     assert.equal(createdBoard.body.board.componentDrafts.length, 1);
     assert.equal(createdBoard.body.board.componentDrafts[0].description, "Siemens 5SY C10");
 
@@ -337,7 +340,11 @@ test("projects and boards use the same creation contract as the app", async () =
     });
     assert.equal(matchedDraft.response.status, 200);
     assert.equal(matchedDraft.body.board.componentDrafts.length, 0);
-    assert.equal(matchedDraft.body.board.components.find((item) => item.reference === "QF30-QF31").source, "ai");
+    const importedDraft = matchedDraft.body.board.components.find((item) => item.reference === "QF30-QF31");
+    assert.equal(importedDraft.source, "ai");
+    assert.equal(importedDraft.rating, "10A");
+    assert.equal(importedDraft.poles, "1P");
+    assert.equal(importedDraft.curve, "C");
 
     const uploaded = await json(server.baseURL, "/api/board-attachment", {
       method: "POST", headers,

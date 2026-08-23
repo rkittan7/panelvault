@@ -49,6 +49,8 @@ BOARD FIELDS
   Preserve the printed company name exactly, including Tamhash, Yakir or Rittal.
 - mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
   incomer, not a downstream feeder. Keep model spelling and the ampere unit.
+  Return that same main incomer once in components as an installed device; its
+  component rating must equal mainBreakerAmpere.
 - cabinetCount: number of physical cabinets or sections. Return 0 when it is
   not explicitly shown; do not use the number of drawing pages.
 - jobNumber, revision, supplyVoltage, frequency, earthingSystem, ipRating,
@@ -74,7 +76,13 @@ instantiated on the schematic, not only breakers.
   XT1C, XT1D and XT1N are different. Preserve iC60N casing when readable.
 - type: MCB, MCCB, ACB, RCBO, RCCB, contactor, relay, meter, terminal, VFD,
   power supply, selector, lamp, accessory, or the printed type.
-- rating, poles, curve and sensitivity: copy only values stated on that line.
+- rating: for every breaker, return its operating/trip current with the A unit.
+  Treat C16 as rating 16A plus curve C. Treat 6A + N as rating 6A, not as one
+  combined rating string. Never confuse 6kA/10kA breaking capacity with 6A/10A.
+- poles: normalize an explicit neutral suffix. For example 6A + N is 1P+N;
+  3P + N is 3P+N. A multi-pole breaker still counts as one physical device.
+- curve: separate B, C or D from an MCB marking such as B6, C16 or D32.
+- sensitivity: copy an RCD/RCBO residual-current value such as 30mA separately.
 - quantity: count unique physical device tags/references across the schematic
   pages. If tags are absent, count clearly separate installed circuit/device
   callouts only when each occurrence unambiguously represents a different
@@ -88,6 +96,14 @@ an item merely because it appears there, and never use its summarized quantity
 as the count. A component must be instantiated on a schematic page to be
 returned. Use a final-page row only to decode the model/specification of those
 already-counted device references.
+
+Read each device callout by spatial association. A nearby word can be a circuit
+or load name rather than a product model. For example, in `FIRL 6A + N`, FIRL
+may be the circuit/load label: the electrical device facts are 6A and 1P+N. If
+the document's manufacturer/model legend identifies that installed device as
+ABB SN201, return manufacturer ABB, model SN201, type MCB, rating 6A and poles
+1P+N. Do not return FIRL as the model, and do not invent SN201 without that ABB
+family evidence elsewhere in the document.
 
 The same physical device can appear in a single-line diagram, control diagram,
 wiring detail and cross-reference. Count its device tag once across the entire

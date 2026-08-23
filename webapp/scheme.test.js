@@ -3,15 +3,19 @@ const test = require("node:test");
 const {
   BOARD_SCHEME_INSTRUCTION,
   BOARD_SCHEME_SCHEMA,
+  ampereRating,
   boardSchemePrompt,
+  breakerCurve,
   matchCatalogPart,
   modelKeys,
   normalizeReading,
+  poleKey,
 } = require("./scheme");
 
 const CATALOG = [
-  { id: "abb-s201-1p", manufacturer: "ABB", model: "S201", type: "MCB" },
-  { id: "abb-s202-2p", manufacturer: "ABB", model: "S202", type: "MCB" },
+  { id: "abb-s201-1p", manufacturer: "ABB", model: "S201", type: "MCB", rating: "Set A", poles: "1P", curve: "B/C/D Curve" },
+  { id: "abb-s202-2p", manufacturer: "ABB", model: "S202", type: "MCB", rating: "Set A", poles: "2P", curve: "B/C/D Curve" },
+  { id: "abb-sn201-1pn", manufacturer: "ABB", model: "SN201", type: "MCB", rating: "Set A", poles: "1P+N", curve: "B/C Curve" },
   { id: "schneider-ic60n", manufacturer: "Schneider", model: "Acti9 iC60N", type: "MCB" },
   { id: "siemens-5sy", manufacturer: "Siemens", model: "SENTRON 5SY", type: "MCB" },
   { id: "eaton-faz", manufacturer: "Eaton", model: "FAZ", type: "MCB" },
@@ -36,11 +40,71 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /unique physical device tags\/references/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /never use its summarized quantity\s+as the count/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /FIRL 6A \+ N/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /main incomer once in components/i);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
+});
+
+test("breaker shorthand is split into current, poles and curve", () => {
+  assert.equal(ampereRating("ABB S201 C16"), "16A");
+  assert.equal(breakerCurve("ABB S201 C16"), "C");
+  assert.equal(ampereRating("FIRL 6A + N"), "6A");
+  assert.equal(poleKey("FIRL 6A + N"), "1P+N");
+  assert.equal(poleKey("3P + N"), "3P+N");
+  assert.equal(poleKey("3P/4P"), "");
+  assert.equal(poleKey("1P-4P"), "");
+  assert.equal(ampereRating("breaking capacity 6kA"), "");
+});
+
+test("an ABB 6A plus neutral callout resolves to SN201 and keeps 6A", () => {
+  const result = normalizeReading({
+    board: {},
+    components: [{
+      manufacturer: "ABB", model: "FIRL", type: "MCB", rating: "6A + N",
+      quantity: 4, reference: "QF1-QF4", rawText: "FIRL 6A + N",
+    }],
+  }, CATALOG);
+
+  assert.equal(result.components.length, 1);
+  assert.equal(result.components[0].partID, "abb-sn201-1pn");
+  assert.equal(result.components[0].rating, "6A");
+  assert.equal(result.components[0].poles, "1P+N");
+});
+
+test("an exact scanned ampere chooses the matching catalog variant", () => {
+  const variants = [
+    { id: "breaker-125", manufacturer: "ABB", model: "XT1", type: "MCCB", rating: "125A", poles: "3P" },
+    { id: "breaker-160", manufacturer: "ABB", model: "XT1", type: "MCCB", rating: "160A", poles: "3P" },
+  ];
+  const hit = matchCatalogPart(variants, {
+    manufacturer: "ABB", model: "XT1", type: "MCCB", rating: "160 A", poles: "3P",
+  });
+  assert.equal(hit.id, "breaker-160");
+});
+
+test("the extracted main breaker is present in components with its ampere", () => {
+  const mainCatalog = [
+    { id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB", rating: "IEC 160A frame", poles: "3P/4P" },
+  ];
+  const result = normalizeReading({
+    board: {
+      mainBreakerType: "MCCB",
+      mainBreakerModel: "SACE Tmax XT1",
+      mainBreakerAmpere: "160 A",
+    },
+    components: [],
+  }, mainCatalog);
+
+  assert.equal(result.board.mainBreakerAmpere, "160A");
+  assert.equal(result.components.length, 1);
+  assert.equal(result.components[0].partID, "abb-tmax-xt1");
+  assert.equal(result.components[0].rating, "160A");
+  assert.equal(result.components[0].quantity, 1);
+  assert.equal(result.components[0].reference, "Main incomer");
 });
 
 test("the document response JSON Schema includes extraction constraints", () => {

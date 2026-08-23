@@ -246,15 +246,21 @@ function boardComponentFromCatalog(company, incoming, userID) {
     error.statusCode = 400;
     throw error;
   }
+  const cleanSpecification = (value, max) => String(value || "").trim().slice(0, max);
+  const fromScan = incoming?.source === "ai";
   return {
     id: id("component"),
     partID: part.id,
     manufacturer: part.manufacturer,
     model: part.model,
     type: part.type,
-    rating: part.rating || "",
-    poles: part.poles || "",
-    curve: part.curve || "",
+    // Catalog rows describe a product family (often "Set A"). An AI import
+    // describes the exact fitted variant, so keep its scanned current, poles,
+    // trip curve and RCD sensitivity on the board component.
+    rating: fromScan ? cleanSpecification(incoming?.rating, 60) || part.rating || "" : part.rating || "",
+    poles: fromScan ? cleanSpecification(incoming?.poles, 30) || part.poles || "" : part.poles || "",
+    curve: fromScan ? cleanSpecification(incoming?.curve, 30) || part.curve || "" : part.curve || "",
+    sensitivity: fromScan ? cleanSpecification(incoming?.sensitivity, 30) : "",
     quantity,
     reference: String(incoming?.reference || "").trim().slice(0, 80),
     rawText: String(incoming?.rawText || "").trim().slice(0, 400),
@@ -1917,6 +1923,10 @@ const routes = {
         reference,
         rawText: draft?.rawText,
         sourcePage: draft?.sourcePage,
+        rating: draft?.rating,
+        poles: draft?.poles,
+        curve: draft?.curve,
+        sensitivity: draft?.sensitivity,
         source: draft ? "ai" : "manual",
       }, user.id);
       board.components.push(component);
