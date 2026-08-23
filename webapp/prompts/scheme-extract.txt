@@ -19,7 +19,9 @@ HOW TO READ THE DOCUMENT
    device tag/reference (for example QF1, QF2, KM1 or X1).
 4. Group those unique device references by exact manufacturer, model, type,
    rating, poles, curve, sensitivity and accessory. The quantity is the number
-   of unique physical references in that group.
+   of unique physical references in that group. Return that exact specification
+   once for the entire document, never once per page. If it recurs on later
+   pages, merge its references and increase the single consolidated quantity.
 5. Locate schedules, legends, bills of materials and final-page parts lists
    only to resolve the printed model/specification for a device already used
    on the schematic. They are reference material, not the quantity source.

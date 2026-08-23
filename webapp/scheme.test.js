@@ -75,6 +75,22 @@ test("an ABB 6A plus neutral callout resolves to SN201 and keeps 6A", () => {
   assert.equal(result.components[0].poles, "1P+N");
 });
 
+test("recurring component lines are consolidated once across all pages", () => {
+  const result = normalizeReading({
+    board: {},
+    components: [
+      { manufacturer: "ABB", model: "SN201", type: "MCB", rating: "6A", poles: "1P+N", quantity: 2, reference: "QF1-QF2", sourcePage: 2 },
+      { manufacturer: "ABB", model: "SN201", type: "MCB", rating: "6A", poles: "1P+N", quantity: 2, reference: "QF1-QF2", sourcePage: 5 },
+      { manufacturer: "ABB", model: "SN201", type: "MCB", rating: "6A", poles: "1P+N", quantity: 1, reference: "QF3", sourcePage: 7 },
+    ],
+  }, CATALOG);
+
+  assert.equal(result.components.length, 1);
+  assert.equal(result.components[0].quantity, 3);
+  assert.equal(result.components[0].reference, "QF1-QF2, QF3");
+  assert.equal(result.components[0].sourcePage, 2);
+});
+
 test("an exact scanned ampere chooses the matching catalog variant", () => {
   const variants = [
     { id: "breaker-125", manufacturer: "ABB", model: "XT1", type: "MCCB", rating: "125A", poles: "3P" },

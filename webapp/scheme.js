@@ -269,6 +269,52 @@ function matchCatalogPart(catalog, part) {
 
 const text = (value, max) => String(value ?? "").trim().slice(0, max);
 
+function firstSourcePage(left, right) {
+  const pages = [left, right].map((value) => Math.trunc(Number(value) || 0)).filter((value) => value > 0);
+  return pages.length ? Math.min(...pages) : 0;
+}
+
+/** One exact specification appears once in the board. Gemini can still return
+ * the same grouped line for multiple pages, so consolidate defensively. When
+ * the reference text is identical it is the same physical devices and the
+ * larger count wins; different reference groups are added together. */
+function consolidateComponents(lines) {
+  const consolidated = new Map();
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const fallbackIdentity = line.partID || [
+      line.manufacturer, line.model, line.type,
+      line.description || (!line.model && !line.type ? line.rawText : ""),
+    ].map(partKey).join("|");
+    const key = [
+      fallbackIdentity,
+      partKey(line.rating),
+      partKey(line.poles),
+      partKey(line.curve),
+      partKey(line.sensitivity),
+    ].join("|");
+    const existing = consolidated.get(key);
+    if (!existing) {
+      consolidated.set(key, { ...line });
+      continue;
+    }
+
+    const existingReference = text(existing.reference, 120);
+    const incomingReference = text(line.reference, 120);
+    const sameReferences = Boolean(existingReference && incomingReference
+      && partKey(existingReference) === partKey(incomingReference));
+    const existingQuantity = Math.max(1, Math.trunc(Number(existing.quantity) || 1));
+    const incomingQuantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
+    existing.quantity = Math.min(9999, sameReferences
+      ? Math.max(existingQuantity, incomingQuantity)
+      : existingQuantity + incomingQuantity);
+    if (incomingReference && !sameReferences) {
+      existing.reference = [...new Set([existingReference, incomingReference].filter(Boolean))].join(", ").slice(0, 120);
+    }
+    existing.sourcePage = firstSourcePage(existing.sourcePage, line.sourcePage);
+  }
+  return [...consolidated.values()];
+}
+
 /** Turn a raw model reading into the payload the phone consumes.
  *
  * Every field is clamped here rather than trusted: this is model output, and
@@ -375,8 +421,8 @@ function normalizeReading(reading, catalog) {
         .map((standard) => text(standard, 80)).filter(Boolean).slice(0, 20),
       notes: text(board.notes, 600),
     },
-    components,
-    unmatched,
+    components: consolidateComponents(components),
+    unmatched: consolidateComponents(unmatched),
     warnings,
   };
 }
@@ -387,6 +433,7 @@ module.exports = {
   boardSchemePrompt,
   ampereRating,
   breakerCurve,
+  consolidateComponents,
   matchCatalogPart,
   modelKeys,
   normalizeReading,

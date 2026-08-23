@@ -18,8 +18,12 @@ const { createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
 const {
   BOARD_SCHEME_INSTRUCTION,
+  ampereRating,
   boardSchemePrompt,
+  consolidateComponents,
   normalizeReading,
+  partKey,
+  poleKey,
 } = require("./scheme");
 
 const PORT = Number.parseInt(process.env.PORT || "8090", 10);
@@ -666,6 +670,112 @@ function stockEntries(company, withCosts = false) {
   return entries;
 }
 
+function breakerCurveLetter(value) {
+  const match = String(value || "").toUpperCase().match(/(?:^|[^A-Z])([BCD])(?:\s*CURVE)?(?:$|[^A-Z])/);
+  return match ? match[1] : "";
+}
+
+/** Rank an on-shelf variant against the exact variant read for a board. A
+ * custom stock item points back to its generic catalog family through sourceID.
+ * Current, fixed poles and B/C/D curve then select the physical SKU. */
+function stockVariantScore(part, component) {
+  const sameFamily = part.id === component.partID || part.sourceID === component.partID;
+  const sameIdentity = partKey(part.manufacturer) === partKey(component.manufacturer)
+    && partKey(part.model) === partKey(component.model);
+  if (!sameFamily && !sameIdentity) return -1;
+
+  let score = part.sourceID === component.partID ? 12 : part.id === component.partID ? 8 : 4;
+  const neededAmpere = ampereRating(component.rating);
+  const stockedAmpere = ampereRating(part.rating);
+  if (neededAmpere && stockedAmpere) {
+    if (neededAmpere !== stockedAmpere) return -1;
+    score += 5;
+  } else if (neededAmpere) {
+    return -1;
+  }
+
+  const neededPoles = poleKey(component.poles);
+  const stockedPoles = poleKey(part.poles);
+  if (neededPoles && stockedPoles) {
+    if (neededPoles !== stockedPoles) return -1;
+    score += 3;
+  } else if (neededPoles) {
+    return -1;
+  }
+
+  const neededCurve = breakerCurveLetter(component.curve);
+  const stockedCurve = breakerCurveLetter(part.curve);
+  if (neededCurve && stockedCurve) {
+    if (neededCurve !== stockedCurve) return -1;
+    score += 2;
+  } else if (neededCurve) {
+    return -1;
+  }
+  return score;
+}
+
+function matchingStockEntries(company, component, entries = stockEntries(company)) {
+  return entries
+    .map((entry) => ({ entry, score: stockVariantScore(entry.part, component) }))
+    .filter(({ score }) => score >= 0)
+    .sort((left, right) => right.score - left.score || right.entry.onHand - left.entry.onHand)
+    .map(({ entry }) => entry);
+}
+
+function issuedBoardComponentQuantity(company, board, component) {
+  return company.movements
+    .filter((movement) => movement.kind === "consume"
+      && movement.boardID === board.id
+      && movement.boardComponentID === component.id)
+    .reduce((sum, movement) => sum + movement.quantity, 0);
+}
+
+function boardComponentStockStatus(company, board, component) {
+  const required = Math.max(1, Math.trunc(Number(component.quantity) || 1));
+  const issued = Math.min(required, issuedBoardComponentQuantity(company, board, component));
+  const remaining = Math.max(0, required - issued);
+  const available = matchingStockEntries(company, component)
+    .reduce((sum, entry) => sum + Math.max(0, entry.onHand), 0);
+  let status = "unavailable";
+  if (remaining === 0) status = "issued";
+  else if (issued > 0 || (available > 0 && available < remaining)) status = "short";
+  else if (available >= remaining) status = "available";
+  return { status, required, issued, remaining, available };
+}
+
+/** Consume only quantities that physically exist. Shortages stay visible on
+ * the board rather than driving warehouse stock negative. Every deduction is
+ * an append-only movement carrying both board and component ids. */
+function issueAvailableBoardStock(company, board, user) {
+  const entries = stockEntries(company);
+  let issued = 0;
+  for (const component of board.components || []) {
+    let remaining = Math.max(0, Math.trunc(Number(component.quantity) || 1)
+      - issuedBoardComponentQuantity(company, board, component));
+    if (!remaining) continue;
+    for (const entry of matchingStockEntries(company, component, entries)) {
+      const quantity = Math.min(remaining, Math.max(0, entry.onHand));
+      if (!quantity) continue;
+      appendMovement(company, {
+        id: id("mv"),
+        partID: entry.part.id,
+        kind: "consume",
+        quantity,
+        reference: board.number,
+        boardID: board.id,
+        boardComponentID: component.id,
+        date: new Date().toISOString(),
+        userID: user.id,
+      });
+      entry.onHand -= quantity;
+      remaining -= quantity;
+      issued += quantity;
+      if (!remaining) break;
+    }
+  }
+  return issued;
+}
+
 /** A movement belongs to a board by explicit id, else by its reference text
  *  matching the board number — the link the warehouse app already writes. */
 function movementMatchesBoard(movement, board) {
@@ -1139,6 +1249,10 @@ const routes = {
         const board = {
           ...b,
           ...boardProgressPayload(b),
+          components: (b.components || []).map((component) => ({
+            ...component,
+            stock: boardComponentStockStatus(company, b, component),
+          })),
           assignedName: company.users.find((u) => u.id === b.assignedTo)?.name || "",
           qaAssignedName: company.users.find((u) => u.id === b.qaAssignedTo)?.name || "",
         };
@@ -1743,13 +1857,13 @@ const routes = {
       return parsed.toISOString();
     };
     const ampere = (body.mainBreakerAmpere || body.ampere || "630A").trim().toUpperCase();
-    const importedComponents = (Array.isArray(body.components) ? body.components : [])
+    const importedComponents = consolidateComponents((Array.isArray(body.components) ? body.components : [])
       .slice(0, 200)
-      .map((component) => boardComponentFromCatalog(company, { ...component, source: "ai" }, user.id));
-    const componentDrafts = (Array.isArray(body.componentDrafts) ? body.componentDrafts : [])
+      .map((component) => boardComponentFromCatalog(company, { ...component, source: "ai" }, user.id)));
+    const componentDrafts = consolidateComponents((Array.isArray(body.componentDrafts) ? body.componentDrafts : [])
       .slice(0, 200)
       .map((component) => boardComponentDraft(component, user.id))
-      .filter(Boolean);
+      .filter(Boolean));
     const board = {
       id: id("board"),
       number: number.trim(),
@@ -1786,6 +1900,7 @@ const routes = {
       updatedAt: new Date().toISOString(),
     };
     company.boards.push(board);
+    issueAvailableBoardStock(company, board, user);
     bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { board: { ...board, ...boardProgressPayload(board) } });
@@ -1903,7 +2018,10 @@ const routes = {
     }
     board.components = Array.isArray(board.components) ? board.components : [];
     board.componentDrafts = Array.isArray(board.componentDrafts) ? board.componentDrafts : [];
-    if (action === "remove") {
+    if (action === "issueStock") {
+      if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can issue board stock.");
+      issueAvailableBoardStock(company, board, user);
+    } else if (action === "remove") {
       const removed = board.components.find((item) => item.id === componentID);
       board.components = board.components.filter((item) => item.id !== componentID);
       if (!removed) return fail(res, 404, "Component not found.");
@@ -1929,9 +2047,10 @@ const routes = {
         sensitivity: draft?.sensitivity,
         source: draft ? "ai" : "manual",
       }, user.id);
-      board.components.push(component);
+      board.components = consolidateComponents([...board.components, component]);
       if (draft) board.componentDrafts = board.componentDrafts.filter((item) => item.id !== draftID);
       board.componentTypes = [...new Set([...(board.componentTypes || []), component.type].filter(Boolean))];
+      if (isAdmin(user)) issueAvailableBoardStock(company, board, user);
     } else {
       return fail(res, 400, "Choose add, remove, or removeDraft.");
     }

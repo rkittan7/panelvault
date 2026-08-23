@@ -444,6 +444,75 @@ test("projects and boards use the same creation contract as the app", async () =
   }
 });
 
+test("scanned requirements consolidate once and issue only available exact stock", async () => {
+  const server = await startServer();
+  try {
+    const owner = await json(server.baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Stocked Panels", name: "Owner", password: "secret12" }),
+    });
+    const headers = { Authorization: `Bearer ${owner.body.token}` };
+    const variant = await json(server.baseURL, "/api/parts", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        sourceID: "abb-s202-2p", manufacturer: "ABB", model: "S202", type: "MCB",
+        rating: "16A", poles: "2P", curve: "C Curve",
+      }),
+    });
+    assert.equal(variant.response.status, 200);
+    await json(server.baseURL, "/api/movements", {
+      method: "POST", headers,
+      body: JSON.stringify({ partID: variant.body.part.id, kind: "receive", quantity: 3, reference: "Opening stock" }),
+    });
+
+    const created = await json(server.baseURL, "/api/boards", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        number: "STOCK-1", name: "Stock Test Board", customer: "Acme", project: "No Project",
+        components: [
+          { partID: "abb-s202-2p", quantity: 2, reference: "QF1-QF2", rating: "16A", poles: "2P", curve: "C" },
+          { partID: "abb-s202-2p", quantity: 2, reference: "QF3-QF4", rating: "16A", poles: "2P", curve: "C" },
+        ],
+      }),
+    });
+    assert.equal(created.response.status, 200);
+    assert.equal(created.body.board.components.length, 1);
+    assert.equal(created.body.board.components[0].quantity, 4);
+    assert.equal(created.body.board.components[0].reference, "QF1-QF2, QF3-QF4");
+
+    const afterCreate = await json(server.baseURL, "/api/state", { headers });
+    const board = afterCreate.body.boards.find((item) => item.id === created.body.board.id);
+    const stocked = afterCreate.body.stock.find((entry) => entry.part.id === variant.body.part.id);
+    assert.equal(stocked.onHand, 0);
+    assert.deepEqual(board.components[0].stock, {
+      status: "short", required: 4, issued: 3, remaining: 1, available: 0,
+    });
+    const automaticIssue = afterCreate.body.movements.find((movement) => movement.boardComponentID === board.components[0].id);
+    assert.equal(automaticIssue.kind, "consume");
+    assert.equal(automaticIssue.quantity, 3);
+    assert.equal(automaticIssue.boardID, board.id);
+
+    await json(server.baseURL, "/api/movements", {
+      method: "POST", headers,
+      body: JSON.stringify({ partID: variant.body.part.id, kind: "receive", quantity: 1, reference: "Back order" }),
+    });
+    const issued = await json(server.baseURL, "/api/board-components", {
+      method: "POST", headers,
+      body: JSON.stringify({ boardID: board.id, action: "issueStock" }),
+    });
+    assert.equal(issued.response.status, 200);
+
+    const complete = await json(server.baseURL, "/api/state", { headers });
+    const completeBoard = complete.body.boards.find((item) => item.id === board.id);
+    assert.deepEqual(completeBoard.components[0].stock, {
+      status: "issued", required: 4, issued: 4, remaining: 0, available: 0,
+    });
+    assert.equal(complete.body.stock.find((entry) => entry.part.id === variant.body.part.id).onHand, 0);
+  } finally {
+    server.stop();
+  }
+});
+
 test("a confirmed delivery uploads once and keeps its paperwork", async () => {
   const server = await startServer();
   const { baseURL } = server;
