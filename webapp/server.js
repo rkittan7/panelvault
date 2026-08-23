@@ -89,6 +89,7 @@ function normalizeCompanies() {
     for (const board of company.boards) {
       board.cabinetChecklists = normalizedBoardChecklists(board);
       board.components = Array.isArray(board.components) ? board.components : [];
+      board.componentDrafts = Array.isArray(board.componentDrafts) ? board.componentDrafts : [];
       board.attachments = Array.isArray(board.attachments) ? board.attachments : [];
       board.qaAssignedTo ||= null;
       board.qaStatus = ["pending", "ready", "changes_requested", "approved"].includes(board.qaStatus)
@@ -230,6 +231,69 @@ function verifySession(token) {
 
 function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
+}
+
+function boardComponentFromCatalog(company, incoming, userID) {
+  const part = partFor(company, incoming?.partID);
+  if (!part) {
+    const error = new Error("Choose a known component.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const quantity = Math.trunc(Number(incoming?.quantity));
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+    const error = new Error("Enter a quantity from 1 to 9,999.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    id: id("component"),
+    partID: part.id,
+    manufacturer: part.manufacturer,
+    model: part.model,
+    type: part.type,
+    rating: part.rating || "",
+    poles: part.poles || "",
+    curve: part.curve || "",
+    quantity,
+    reference: String(incoming?.reference || "").trim().slice(0, 80),
+    rawText: String(incoming?.rawText || "").trim().slice(0, 400),
+    sourcePage: Math.min(Math.max(Math.trunc(Number(incoming?.sourcePage) || 0), 0), 1000),
+    source: incoming?.source === "ai" ? "ai" : "manual",
+    createdAt: new Date().toISOString(),
+    addedBy: userID,
+  };
+}
+
+function boardComponentDraft(incoming, userID) {
+  const clean = (value, max) => String(value || "").trim().slice(0, max);
+  const rawText = clean(incoming?.rawText, 400);
+  const manufacturer = clean(incoming?.manufacturer, 60);
+  const model = clean(incoming?.model, 80);
+  const type = clean(incoming?.type, 60);
+  const description = clean(incoming?.description, 140)
+    || [manufacturer, model, clean(incoming?.rating, 60)].filter(Boolean).join(" ").slice(0, 140)
+    || rawText.slice(0, 140)
+    || type;
+  if (!description) return null;
+  return {
+    id: id("component-draft"),
+    description,
+    manufacturer,
+    model,
+    type,
+    rating: clean(incoming?.rating, 60),
+    poles: clean(incoming?.poles, 30),
+    curve: clean(incoming?.curve, 30),
+    sensitivity: clean(incoming?.sensitivity, 30),
+    quantity: Math.min(Math.max(Math.trunc(Number(incoming?.quantity) || 1), 1), 9999),
+    reference: clean(incoming?.reference, 80),
+    rawText,
+    sourcePage: Math.min(Math.max(Math.trunc(Number(incoming?.sourcePage) || 0), 0), 1000),
+    source: "ai",
+    createdAt: new Date().toISOString(),
+    addedBy: userID,
+  };
 }
 
 function canUpdateBoard(user, board) {
@@ -509,6 +573,7 @@ function normalizeCloudBoard(incoming, existing, projects) {
       ? incoming.componentTypes.map(String).map((item) => item.trim().slice(0, 100)).filter(Boolean).slice(0, 100)
       : [],
     components: existing?.components || (Array.isArray(incoming.components) ? incoming.components : []),
+    componentDrafts: existing?.componentDrafts || [],
     attachments: existing?.attachments || [],
     colorHex: cloudColor(incoming.colorHex),
     assignedTo: existing?.assignedTo || incoming.assignedTo || null,
@@ -1672,6 +1737,13 @@ const routes = {
       return parsed.toISOString();
     };
     const ampere = (body.mainBreakerAmpere || body.ampere || "630A").trim().toUpperCase();
+    const importedComponents = (Array.isArray(body.components) ? body.components : [])
+      .slice(0, 200)
+      .map((component) => boardComponentFromCatalog(company, { ...component, source: "ai" }, user.id));
+    const componentDrafts = (Array.isArray(body.componentDrafts) ? body.componentDrafts : [])
+      .slice(0, 200)
+      .map((component) => boardComponentDraft(component, user.id))
+      .filter(Boolean);
     const board = {
       id: id("board"),
       number: number.trim(),
@@ -1698,7 +1770,9 @@ const routes = {
       qaNote: "",
       qaReadyVersion: 0,
       productionStage: "design",
-      components: [],
+      componentTypes: [...new Set(importedComponents.map((component) => component.type).filter(Boolean))],
+      components: importedComponents,
+      componentDrafts,
       attachments: [],
       cabinetChecklists: Array.from({ length: cabinetCount }, () => []),
       status: assignedTo ? "In Progress" : "Design",
@@ -1815,13 +1889,14 @@ const routes = {
 
   "POST /api/board-components": async (req, res, session) => {
     const { company, user } = session;
-    const { boardID, action, componentID, partID, quantity, reference } = await readBody(req);
+    const { boardID, action, componentID, draftID, partID, quantity, reference } = await readBody(req);
     const board = company.boards.find((item) => item.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
     if (!canUpdateBoard(user, board)) {
       return fail(res, 403, "Only the assigned builder or a manager can update board components.");
     }
     board.components = Array.isArray(board.components) ? board.components : [];
+    board.componentDrafts = Array.isArray(board.componentDrafts) ? board.componentDrafts : [];
     if (action === "remove") {
       const removed = board.components.find((item) => item.id === componentID);
       board.components = board.components.filter((item) => item.id !== componentID);
@@ -1829,28 +1904,26 @@ const routes = {
       if (!board.components.some((item) => item.type === removed.type)) {
         board.componentTypes = (board.componentTypes || []).filter((type) => type !== removed.type);
       }
+    } else if (action === "removeDraft") {
+      const removed = board.componentDrafts.find((item) => item.id === draftID);
+      if (!removed) return fail(res, 404, "Extracted component not found.");
+      board.componentDrafts = board.componentDrafts.filter((item) => item.id !== draftID);
     } else if (action === "add") {
-      const part = partFor(company, partID);
-      if (!part) return fail(res, 400, "Choose a known component.");
-      const count = Math.trunc(Number(quantity));
-      if (!Number.isInteger(count) || count < 1 || count > 9999) return fail(res, 400, "Enter a quantity from 1 to 9,999.");
-      board.components.push({
-        id: id("component"),
-        partID: part.id,
-        manufacturer: part.manufacturer,
-        model: part.model,
-        type: part.type,
-        rating: part.rating || "",
-        poles: part.poles || "",
-        curve: part.curve || "",
-        quantity: count,
-        reference: String(reference || "").trim().slice(0, 80),
-        createdAt: new Date().toISOString(),
-        addedBy: user.id,
-      });
-      board.componentTypes = [...new Set([...(board.componentTypes || []), part.type].filter(Boolean))];
+      const draft = draftID ? board.componentDrafts.find((item) => item.id === draftID) : null;
+      if (draftID && !draft) return fail(res, 404, "Extracted component not found.");
+      const component = boardComponentFromCatalog(company, {
+        partID,
+        quantity,
+        reference,
+        rawText: draft?.rawText,
+        sourcePage: draft?.sourcePage,
+        source: draft ? "ai" : "manual",
+      }, user.id);
+      board.components.push(component);
+      if (draft) board.componentDrafts = board.componentDrafts.filter((item) => item.id !== draftID);
+      board.componentTypes = [...new Set([...(board.componentTypes || []), component.type].filter(Boolean))];
     } else {
-      return fail(res, 400, "Choose add or remove.");
+      return fail(res, 400, "Choose add, remove, or removeDraft.");
     }
     board.updatedAt = new Date().toISOString();
     bumpWorkspace(company);

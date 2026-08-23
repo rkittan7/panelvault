@@ -223,6 +223,8 @@ function normalizeReading(reading, catalog) {
       if (!description && !text(part.type, 60)) continue;
       unmatched.push({
         description: description.slice(0, 140),
+        manufacturer: text(part.manufacturer, 60),
+        model: text(part.model, 80),
         type: text(part.type, 60),
         quantity,
         reference: text(part.reference, 120),

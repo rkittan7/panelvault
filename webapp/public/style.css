@@ -1154,6 +1154,12 @@ img.brand-logo {
 .board-detail-identity h2 { font-size: clamp(25px, 3vw, 34px); line-height: 1.08; letter-spacing: -.035em; }
 .board-detail-identity .mono { color: var(--ink-2); font-size: 12px; }
 .board-detail-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 3px; }
+.board-detail-tabs { display: flex; align-items: center; gap: 5px; overflow-x: auto; padding: 5px; border: 1px solid var(--line); border-radius: 13px; background: var(--wash-1); }
+.board-detail-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; white-space: nowrap; color: var(--ink-3); border: 0; border-radius: 9px; background: transparent; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: color .18s, background .18s, box-shadow .18s; }
+.board-detail-tabs button:hover { color: var(--ink); background: var(--wash-2); }
+.board-detail-tabs button.active { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px rgb(15 23 42 / .08), 0 5px 16px rgb(15 23 42 / .05); }
+.board-detail-tabs button span { min-width: 20px; padding: 2px 6px; color: var(--ink-3); border-radius: 999px; background: var(--wash-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+.board-detail-tabs button.active span { color: var(--primary); background: var(--primary-dim); }
 .board-save-state { display: inline-flex; align-items: center; gap: 6px; color: var(--positive); font-size: 10.5px; font-weight: 650; transition: color .32s ease; }
 .board-save-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent); }
 .board-save-state.syncing { color: var(--warning); animation: saveStateIn .34s ease both; }
@@ -1233,6 +1239,7 @@ img.brand-logo {
 .board-drilldown-row small { margin-top: 2px; color: var(--ink-3); font-size: 9.5px; }
 .board-drilldown-row > svg { flex-shrink: 0; color: var(--ink-3); }
 .board-detail-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 10px; align-items: start; }
+.board-detail-grid.single { grid-template-columns: minmax(0, 1fr); }
 .board-checklist-panel { padding: 16px; border-radius: calc(var(--r) + 2px); }
 .board-checklist-panel .panel-head { align-items: flex-start; margin-bottom: 14px; }
 .board-checklist-panel .panel-head > div h3 { margin-top: 2px; font-size: 17px; }
@@ -1288,6 +1295,14 @@ img.brand-logo {
 .component-quantity { flex-shrink: 0; color: var(--primary); font-size: 12px; }
 .board-component-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .board-component-chips span { padding: 6px 9px; color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--line)); border-radius: 99px; background: color-mix(in srgb, var(--primary) 7%, var(--panel)); font-size: 10px; font-weight: 700; }
+.component-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-top: 18px; padding-top: 17px; border-top: 1px solid var(--line); }
+.component-review-head h4 { margin-top: 2px; font-size: 14px; }
+.component-review-head p { margin-top: 3px; color: var(--ink-3); font-size: 10px; }
+.component-review-count { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 8px; color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--warning) 9%, var(--panel)); font-size: 10px; font-weight: 760; }
+.component-review-list { margin-top: 9px; }
+.component-draft-row { border-color: color-mix(in srgb, var(--warning) 25%, var(--line)); background: color-mix(in srgb, var(--warning) 5%, var(--panel)); }
+.component-draft-row .chip-icon { width: 36px; height: 36px; flex-shrink: 0; }
+.component-draft-actions { display: flex; align-items: center; gap: 5px; }
 .board-file-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
 .board-file-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 150px; padding: 20px; color: var(--ink); border: 1px dashed color-mix(in srgb, var(--primary) 38%, var(--line)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--primary) 4%, var(--panel)); font: inherit; cursor: pointer; transition: border-color .25s ease, background .25s ease, transform .25s ease; }
 .board-file-drop:not(:disabled):hover { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--panel)); transform: translateY(-1px); }

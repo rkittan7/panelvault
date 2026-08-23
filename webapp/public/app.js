@@ -7,6 +7,7 @@ let catalog = null; // lazy-loaded parts list
 let currentView = "dashboard";
 let selectedBoardID = null;
 let selectedBoardCabinet = 0;
+let selectedBoardTab = "overview";
 let boardCreationMode = null;
 let boardCreationType = null;
 let boardSchemeReading = null;
@@ -1301,6 +1302,7 @@ function renderBoards() {
 function openBoardDetail(boardID) {
   selectedBoardID = boardID;
   selectedBoardCabinet = 0;
+  selectedBoardTab = "overview";
   switchView("board-detail");
 }
 
@@ -1379,12 +1381,14 @@ function boardProperty(iconName, label, value, onClick) {
   return card;
 }
 
-async function openAddBoardComponentModal(board) {
+async function openAddBoardComponentModal(board, draft = null) {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
     modal.classList.add("wide");
-    modal.append(el("h3", null, "Add board component"));
-    modal.append(el("p", "modal-sub", "Choose the exact model, amp rating, poles, and curve used on this board."));
+    modal.append(el("h3", null, draft ? "Match extracted component" : "Add board component"));
+    modal.append(el("p", "modal-sub", draft
+      ? "Choose the catalog item that matches the line read from the electrical scheme."
+      : "Choose the exact model, amp rating, poles, and curve used on this board."));
     const search = field("Find component", "Search model, manufacturer, amp, curve…");
     const choiceLabel = el("label", null, "Component");
     const choice = el("select");
@@ -1392,8 +1396,12 @@ async function openAddBoardComponentModal(board) {
     const quantity = field("Quantity", "1", "number");
     quantity.input.min = "1";
     quantity.input.max = "9999";
-    quantity.input.value = "1";
+    quantity.input.value = String(draft?.quantity || 1);
     const reference = field("Board reference", "e.g. QF1 or incoming breaker");
+    reference.input.value = draft?.reference || "";
+    search.input.value = draft
+      ? [draft.manufacturer, draft.model, draft.description, draft.type].filter(Boolean).join(" ")
+      : "";
     const drawChoices = () => {
       const query = search.input.value.trim().toLowerCase();
       const matches = catalog.filter((part) => !query || [part.manufacturer, part.model, part.type,
@@ -1420,6 +1428,7 @@ async function openAddBoardComponentModal(board) {
           partID: choice.value,
           quantity: quantity.input.value,
           reference: reference.input.value,
+          draftID: draft?.id,
         });
         close();
         await refresh();
@@ -1434,6 +1443,12 @@ async function openAddBoardComponentModal(board) {
 async function removeBoardComponent(board, componentID) {
   if (!window.confirm("Remove this component from the board?")) return;
   await api("/api/board-components", { boardID: board.id, action: "remove", componentID });
+  await refresh();
+}
+
+async function removeBoardComponentDraft(board, draftID) {
+  if (!window.confirm("Remove this extracted line from the board?")) return;
+  await api("/api/board-components", { boardID: board.id, action: "removeDraft", draftID });
   await refresh();
 }
 
@@ -1697,6 +1712,30 @@ function renderBoardDetail() {
   top.append(identity, actions);
   view.append(top);
 
+  if (!["overview", "components", "files"].includes(selectedBoardTab)) selectedBoardTab = "overview";
+  const componentCount = (board.components || []).length + (board.componentDrafts || []).length;
+  const fileCount = (board.attachments || []).length;
+  const tabs = el("div", "board-detail-tabs");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Board details");
+  const addTab = (tabID, label, count) => {
+    const button = el("button", selectedBoardTab === tabID ? "active" : "");
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(selectedBoardTab === tabID));
+    button.append(document.createTextNode(label));
+    if (count != null) button.append(el("span", null, String(count)));
+    button.addEventListener("click", () => {
+      selectedBoardTab = tabID;
+      renderBoardDetail();
+    });
+    tabs.append(button);
+  };
+  addTab("overview", "Overview");
+  addTab("components", "Components", componentCount);
+  addTab("files", "Schemes & photos", fileCount);
+  view.append(tabs);
+
   const progressCard = el("section", "board-progress-card");
   const progressHead = el("div", "board-progress-head");
   const progressTitle = el("div");
@@ -1705,7 +1744,7 @@ function renderBoardDetail() {
   const tracker = renderStageTracker(board);
   if (progressAnimation) tracker.classList.add("changing");
   progressCard.append(progressHead, tracker);
-  view.append(progressCard);
+  if (selectedBoardTab === "overview") view.append(progressCard);
 
   const properties = el("div", "board-property-grid");
   const outDate = board.dateOut ? new Date(board.dateOut).toLocaleDateString() : "Not set";
@@ -1723,7 +1762,7 @@ function renderBoardDetail() {
     boardProperty("hash", "Customer", board.customer, () => openCustomerOverview(board.customer)),
     boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
   );
-  view.append(properties);
+  if (selectedBoardTab === "overview") view.append(properties);
 
   const work = el("div", "board-detail-grid");
   const componentsPanel = el("section", "panel board-components-panel");
@@ -1739,10 +1778,12 @@ function renderBoardDetail() {
   (board.components || []).forEach((component) => {
     const row = el("div", "board-component-row");
     const identity = el("div", "board-component-identity");
-    identity.append(componentPhoto({ ...component, id: component.partID }), el("div"));
+    identity.append(partChip({ ...component, id: component.partID }), el("div"));
     const text = identity.lastElementChild;
     text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
-      el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference]
+      el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference,
+        component.source === "ai" ? "AI scan" : null,
+        component.sourcePage ? `Page ${component.sourcePage}` : null]
         .filter(Boolean).join(" · ")));
     row.append(identity, el("strong", "component-quantity", `× ${component.quantity}`));
     if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", () => removeBoardComponent(board, component.id)));
@@ -1755,11 +1796,41 @@ function renderBoardDetail() {
       legacy.forEach((type) => chips.append(el("span", null, type)));
       componentList.append(chips, el("p", "board-permission-note", "Add exact models and quantities as the specification is confirmed."));
     } else {
-      componentList.append(emptyState("box", "No components have been added to this board yet."));
+      componentList.append(emptyState("box", (board.componentDrafts || []).length
+        ? "No catalog-matched components yet. Review the extracted lines below."
+        : "No components have been added to this board yet."));
     }
   }
   componentsPanel.append(componentList);
-  work.append(componentsPanel);
+  if ((board.componentDrafts || []).length) {
+    const reviewHead = el("div", "component-review-head");
+    const reviewCopy = el("div");
+    reviewCopy.append(el("span", "eyebrow", "AI extraction"), el("h4", null, "Needs review"),
+      el("p", null, "These scheme lines were saved, but did not match the catalog exactly."));
+    reviewHead.append(reviewCopy, el("span", "component-review-count", String(board.componentDrafts.length)));
+    const reviewList = el("div", "board-component-list component-review-list");
+    board.componentDrafts.forEach((draft) => {
+      const row = el("div", "board-component-row component-draft-row");
+      const draftIdentity = el("div", "board-component-identity");
+      draftIdentity.append(chipIcon("scan", "var(--warning)"), el("div"));
+      const text = draftIdentity.lastElementChild;
+      text.append(el("strong", null, draft.description || [draft.manufacturer, draft.model].filter(Boolean).join(" ") || "Extracted component"),
+        el("span", null, [draft.type, draft.rating, draft.poles, draft.curve, draft.reference,
+          draft.sourcePage ? `Page ${draft.sourcePage}` : null].filter(Boolean).join(" · ")));
+      row.append(draftIdentity, el("strong", "component-quantity", `× ${draft.quantity || 1}`));
+      if (canEditBoard) {
+        const rowActions = el("div", "component-draft-actions");
+        rowActions.append(
+          smallBtn("Match", "accent", null, () => openAddBoardComponentModal(board, draft)),
+          smallBtn("Remove", "ghost", "x", () => removeBoardComponentDraft(board, draft.id)),
+        );
+        row.append(rowActions);
+      }
+      reviewList.append(row);
+    });
+    componentsPanel.append(reviewHead, reviewList);
+  }
+  if (selectedBoardTab === "components") work.append(componentsPanel);
 
   const linkedPanel = el("section", "panel board-linked-panel");
   const linkedHead = el("div", "panel-head");
@@ -1782,15 +1853,16 @@ function renderBoardDetail() {
     });
     linkedPanel.append(parts);
   }
-  work.append(linkedPanel);
-  view.append(work);
+  if (selectedBoardTab === "overview") work.append(linkedPanel);
+  if (work.childElementCount === 1) work.classList.add("single");
+  if (work.childElementCount) view.append(work);
 
   const files = el("div", "board-file-sections");
   files.append(
     boardAttachmentSection(board, "scheme", "Schemes", "Keep the latest electrical drawing with the board."),
     boardAttachmentSection(board, "photo", "Photos", "Document the build, wiring, labels, and finished board."),
   );
-  view.append(files);
+  if (selectedBoardTab === "files") view.append(files);
 
   if (progressAnimation) boardChecklistAnimation = null;
 }
@@ -2879,6 +2951,8 @@ function renderBoardCreate() {
         mainBreakerAmpere: mainBreakerAmpere.input.value,
         assignedTo: assignee.value || null,
         qaAssignedTo: qaAssignee.value || null,
+        components: boardSchemeReading?.components || [],
+        componentDrafts: boardSchemeReading?.unmatched || [],
       });
       const followups = [];
       if (boardSchemeUpload && boardSchemeUpload.size <= 6_000_000) {
@@ -2890,18 +2964,13 @@ function renderBoardCreate() {
           data: boardSchemeUpload.data,
         }));
       }
-      (boardSchemeReading?.components || []).forEach((component) => {
-        followups.push(api("/api/board-components", {
-          boardID: board.id,
-          action: "add",
-          partID: component.partID,
-          quantity: component.quantity,
-          reference: component.reference,
-        }));
-      });
       if (followups.length) await Promise.allSettled(followups);
+      const hasImportedComponents = Boolean(
+        (boardSchemeReading?.components || []).length || (boardSchemeReading?.unmatched || []).length,
+      );
       selectedBoardID = board.id;
       selectedBoardCabinet = 0;
+      selectedBoardTab = hasImportedComponents ? "components" : "overview";
       boardCreationMode = null;
       boardCreationType = null;
       boardSchemeReading = null;

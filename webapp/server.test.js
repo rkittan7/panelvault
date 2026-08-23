@@ -238,6 +238,15 @@ test("projects and boards use the same creation contract as the app", async () =
         buildFormat: "Panels", dateOut: "2026-08-22", dueDate: "2026-09-01T12:00:00Z",
         mainBreakerType: "MCCB", mainBreakerModel: "Tmax XT7", mainBreakerAmpere: "630A",
         qaAssignedTo: registered.body.user.id,
+        components: [{
+          partID: "abb-s202-2p", quantity: 4, reference: "QF20-QF23",
+          rawText: "ABB S202 C16 x4", sourcePage: 7,
+        }],
+        componentDrafts: [{
+          description: "Siemens 5SY C10", manufacturer: "Siemens", model: "5SY",
+          type: "MCB", quantity: 2, reference: "QF30-QF31",
+          rawText: "Siemens 5SY C10 x2", sourcePage: 8,
+        }],
       }),
     });
     assert.equal(createdBoard.response.status, 200);
@@ -248,6 +257,11 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.status, "Design");
     assert.equal(createdBoard.body.board.completion, 0);
     assert.equal(createdBoard.body.board.cabinetChecklists.length, 3);
+    assert.equal(createdBoard.body.board.components.length, 1);
+    assert.equal(createdBoard.body.board.components[0].source, "ai");
+    assert.equal(createdBoard.body.board.components[0].sourcePage, 7);
+    assert.equal(createdBoard.body.board.componentDrafts.length, 1);
+    assert.equal(createdBoard.body.board.componentDrafts[0].description, "Siemens 5SY C10");
 
     const assigned = await json(server.baseURL, "/api/board-update", {
       method: "POST", headers,
@@ -302,7 +316,22 @@ test("projects and boards use the same creation contract as the app", async () =
       }),
     });
     assert.equal(component.response.status, 200);
-    assert.equal(component.body.board.components[0].quantity, 12);
+    assert.equal(component.body.board.components.find((item) => item.reference === "QF1-QF12").quantity, 12);
+
+    const matchedDraft = await json(server.baseURL, "/api/board-components", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id,
+        action: "add",
+        draftID: createdBoard.body.board.componentDrafts[0].id,
+        partID: "siemens-5sy",
+        quantity: 2,
+        reference: "QF30-QF31",
+      }),
+    });
+    assert.equal(matchedDraft.response.status, 200);
+    assert.equal(matchedDraft.body.board.componentDrafts.length, 0);
+    assert.equal(matchedDraft.body.board.components.find((item) => item.reference === "QF30-QF31").source, "ai");
 
     const uploaded = await json(server.baseURL, "/api/board-attachment", {
       method: "POST", headers,

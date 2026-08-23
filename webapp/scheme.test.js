@@ -113,6 +113,8 @@ test("a reading is split into catalog parts and lines needing a person", () => {
   assert.equal(result.components[0].sourcePage, 42);
   assert.equal(result.unmatched.length, 1);
   assert.equal(result.unmatched[0].description, "Nobody ZX9000 24VDC");
+  assert.equal(result.unmatched[0].manufacturer, "Nobody");
+  assert.equal(result.unmatched[0].model, "ZX9000");
   assert.deepEqual(result.warnings, ["Page 7 is rotated and partly unreadable."]);
 });
 
