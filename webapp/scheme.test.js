@@ -10,6 +10,8 @@ const {
   modelKeys,
   normalizeReading,
   poleKey,
+  resolveBoardManufacturer,
+  targetBoardNumberFromFileName,
 } = require("./scheme");
 
 const CATALOG = [
@@ -42,11 +44,66 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /FIRL 6A \+ N/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /main incomer once in components/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /כיתאו אליקטריק/);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
-  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
+  assert.ok(BOARD_SCHEME_SCHEMA.required.includes("pageBoards"));
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /extract only pages mapped to this exact board number/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /MANDATORY TARGET BOARD: "3918.24-12-1"/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
+});
+
+test("the filename target excludes components belonging to a previous board", () => {
+  assert.equal(targetBoardNumberFromFileName("3918.24-12-1 MDB.pdf"), "3918.24-12-1");
+  assert.equal(targetBoardNumberFromFileName("Board_3918.24-12-1.pdf"), "3918.24-12-1");
+  assert.equal(targetBoardNumberFromFileName("scheme-1.pdf"), "");
+  const result = normalizeReading({
+    board: { number: "3918.24-12-0", name: "Previous board" },
+    pageBoards: [
+      { page: 1, boardNumber: "3918.24-12-0" },
+      { page: 2, boardNumber: "3918.24-12-1" },
+    ],
+    components: [
+      { manufacturer: "ABB", model: "S201", type: "MCB", rating: "10A", poles: "1P", quantity: 8, reference: "QF1-QF8", sourcePage: 1, boardNumber: "" },
+      { manufacturer: "ABB", model: "S202", type: "MCB", rating: "16A", poles: "2P", quantity: 2, reference: "QF20-QF21", sourcePage: 2, boardNumber: "3918.24-12-1" },
+    ],
+  }, CATALOG, { fileName: "3918.24-12-1 MDB.pdf" });
+
+  assert.equal(result.board.number, "3918.24-12-1");
+  assert.equal(result.board.name, "");
+  assert.deepEqual(result.components.map((component) => component.partID), ["abb-s202-2p"]);
+  assert.match(result.warnings.join(" "), /Ignored board 3918\.24-12-0/i);
+  assert.match(result.warnings.join(" "), /Skipped component QF1-QF8/i);
+});
+
+test("a title-block contractor is not the board manufacturer and Tamhash evidence wins", () => {
+  assert.equal(resolveBoardManufacturer({
+    manufacturer: "כיתאו אליקטריק",
+    manufacturerRole: "panel_builder",
+    manufacturerCandidates: [],
+  }), "");
+  assert.equal(resolveBoardManufacturer({
+    manufacturer: "כיתאו אליקטריק",
+    manufacturerRole: "panel_builder",
+    manufacturerCandidates: [{
+      name: "תמח\"ש", role: "enclosure_manufacturer", evidence: "cabinet logo", sourcePage: 3,
+    }],
+  }), "Tamhash");
+
+  const result = normalizeReading({
+    board: {
+      number: "3918.24-12-1",
+      manufacturer: "כיתאו אליקטריק",
+      manufacturerRole: "electrical_contractor",
+      manufacturerCandidates: [
+        { name: "כיתאו אליקטריק", role: "electrical_contractor", evidence: "title block", sourcePage: 1 },
+        { name: "Tam Hash", role: "enclosure_manufacturer", evidence: "enclosure logo", sourcePage: 3 },
+      ],
+    },
+    pageBoards: [], components: [], warnings: [],
+  }, CATALOG, { fileName: "3918.24-12-1 MDB.pdf" });
+  assert.equal(result.board.manufacturer, "Tamhash");
 });
 
 test("breaker shorthand is split into current, poles and curve", () => {

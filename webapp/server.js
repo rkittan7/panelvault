@@ -1164,7 +1164,7 @@ const routes = {
 
     const catalog = [...CATALOG, ...(session.company.customParts || [])];
     sendJSON(res, 200, {
-      ...normalizeReading(reading.data, catalog),
+      ...normalizeReading(reading.data, catalog, { fileName }),
       model: reading.model,
     });
   },

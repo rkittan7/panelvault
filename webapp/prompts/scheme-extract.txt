@@ -13,27 +13,34 @@ HOW TO READ THE DOCUMENT
 ------------------------
 
 1. Survey the complete document before answering. Do not stop after page 1.
-2. Locate the title block for board identity and project/customer details.
-3. Walk every schematic/circuit page in page order. Build a ledger of the
+2. Before extracting any devices, map every PDF page to the exact board number
+   governing that page and return this map in pageBoards. Read repeated title
+   blocks, continuation-sheet references and drawing numbers; never assume
+   adjacent pages belong to the same board.
+3. Locate the target board's title block for identity and project/customer
+   details. When the filename prompt supplies MANDATORY TARGET BOARD, include
+   only pages mapped to that exact number. If it is absent, return no components
+   and warn; never fall back to the previous, next, nearest or primary board.
+4. Walk only that target board's schematic/circuit pages in page order. Build a ledger of the
    physical devices actually instantiated for this board, keyed by each unique
    device tag/reference (for example QF1, QF2, KM1 or X1).
-4. Group those unique device references by exact manufacturer, model, type,
+5. Group those unique device references by exact manufacturer, model, type,
    rating, poles, curve, sensitivity and accessory. The quantity is the number
    of unique physical references in that group. Return that exact specification
    once for the entire document, never once per page. If it recurs on later
    pages, merge its references and increase the single consolidated quantity.
-5. Locate schedules, legends, bills of materials and final-page parts lists
+6. Locate schedules, legends, bills of materials and final-page parts lists
    only to resolve the printed model/specification for a device already used
    on the schematic. They are reference material, not the quantity source.
-6. Use physical-layout pages for cabinet/section count and enclosure details.
+7. Use physical-layout pages for cabinet/section count and enclosure details.
 
 Title blocks and drawing borders can repeat on every sheet. Ignore company
 contact details, grid references, sheet-count furniture, revision clouds and
 boilerplate notes unless a requested field specifically comes from them.
 
-If the file contains several different boards, extract only the board whose
-number matches the upload filename or the primary title block. Never combine
-schematic devices from different boards. If the correct board is ambiguous,
+If the file contains several different boards, pageBoards is the boundary.
+Never combine their schematic devices. Every component object must repeat the
+exact target board number in boardNumber. If the correct board is ambiguous,
 choose none of them and explain the conflict in warnings.
 
 
@@ -47,8 +54,17 @@ BOARD FIELDS
 - project: the project, site or building name. Keep it separate from customer.
 - type: the printed board classification, such as MDB, SMDB/SDB, MCC, ATS,
   Lighting Board, Power Board, Generator Board, Solar Board or UPS Board.
-- manufacturer: enclosure/board manufacturer only when explicitly stated.
-  Preserve the printed company name exactly, including Tamhash, Yakir or Rittal.
+- manufacturer: the metal enclosure/cabinet brand only. First list every visible
+  company/logo in manufacturerCandidates and classify its role as
+  enclosure_manufacturer, panel_builder, electrical_contractor, customer,
+  designer or unknown. Then choose only the enclosure_manufacturer. A company
+  in the title block is not automatically the board manufacturer. In particular,
+  `כיתאו אליקטריק` is a panel builder/contractor name, not Tamhash and not the
+  enclosure manufacturer. If a Tamhash/Tam Hash/תמח"ש enclosure logo or label is
+  visible, return manufacturer `Tamhash`, role `enclosure_manufacturer`, and cite
+  that visible evidence/page. Apply the same rule to Yakir, Rittal and others.
+- manufacturerEvidence: short visible wording/logo that proves the enclosure
+  brand. manufacturerRole must describe the selected name's actual role.
 - mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
   incomer, not a downstream feeder. Keep model spelling and the ampere unit.
   Return that same main incomer once in components as an installed device; its
@@ -92,6 +108,8 @@ instantiated on the schematic, not only breakers.
 - reference: exact unique device tags/references included in this quantity.
 - sourcePage: first one-based schematic page where the counted device group is
   used, or 0 if unknown.
+- boardNumber: exact target board number assigned to the counted schematic
+  pages. Never use a component whose page belongs to another board.
 
 The last/final page may be a generic parts list, legend or template. Do not add
 an item merely because it appears there, and never use its summarized quantity

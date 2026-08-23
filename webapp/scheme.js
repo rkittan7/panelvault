@@ -12,15 +12,75 @@ const BOARD_SCHEME_INSTRUCTION = fs.readFileSync(
   "utf8",
 ).trim();
 
+const BOARD_MANUFACTURERS = [
+  "Generic", "Rittal", "ABB", "Yakir", "Tamhash", "HAGER", "Delta",
+  "Schneider", "Siemens", "Eaton", "Legrand", "Mean Well", "Phoenix",
+  "Danfoss", "Socomec",
+];
+
+function identityKey(value) {
+  return String(value || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function canonicalBoardManufacturer(value) {
+  const key = identityKey(value);
+  if (!key) return "";
+  if (["tamhash", "tamash", "תמחש"].includes(key)) return "Tamhash";
+  return BOARD_MANUFACTURERS.find((name) => identityKey(name) === key) || "";
+}
+
+function enclosureManufacturerRole(value) {
+  return /enclosure|cabinet|board[ _-]*manufacturer/i.test(String(value || ""));
+}
+
+function resolveBoardManufacturer(board) {
+  const candidates = Array.isArray(board?.manufacturerCandidates) ? board.manufacturerCandidates : [];
+  for (const candidate of candidates) {
+    if (!enclosureManufacturerRole(candidate?.role)) continue;
+    const known = canonicalBoardManufacturer(candidate?.name);
+    if (known) return known;
+  }
+  const known = canonicalBoardManufacturer(board?.manufacturer);
+  if (known) return known;
+  if (enclosureManufacturerRole(board?.manufacturerRole)) return String(board.manufacturer || "").trim();
+  // Backward compatibility for readings made before manufacturer roles were
+  // requested. New readings always carry manufacturerRole and therefore do
+  // not promote a contractor/title-block company into this field.
+  return board?.manufacturerRole == null ? String(board?.manufacturer || "").trim() : "";
+}
+
+function boardNumberKey(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+/** A filename is a hard selector only when it contains a structured identifier
+ * with at least two separators, e.g. 3918.24-12-1. Generic filenames such as
+ * scheme-1.pdf are deliberately not trusted as board numbers. */
+function targetBoardNumberFromFileName(value) {
+  const base = String(value || "").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
+  const numericCandidates = base.match(/\d+(?:[._/-][A-Za-z0-9]+){2,}/g) || [];
+  const candidates = numericCandidates.length
+    ? numericCandidates
+    : base.match(/[A-Za-z0-9]+(?:[._/-][A-Za-z0-9]+){2,}/g) || [];
+  return candidates
+    .filter((candidate) => /\d/.test(candidate))
+    .sort((left, right) => {
+      const leftSeparators = (left.match(/[._/-]/g) || []).length;
+      const rightSeparators = (right.match(/[._/-]/g) || []).length;
+      return rightSeparators - leftSeparators || right.length - left.length;
+    })[0] || "";
+}
+
 /** The exact shape the phone decodes. */
 const BOARD_SCHEME_SCHEMA = {
   type: "object",
-  required: ["board", "components", "warnings"],
+  required: ["board", "pageBoards", "components", "warnings"],
   properties: {
     board: {
       type: "object",
       required: [
         "number", "name", "customer", "project", "type", "manufacturer",
+        "manufacturerRole", "manufacturerEvidence", "manufacturerCandidates",
         "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "cabinetCount",
         "jobNumber", "revision", "supplyVoltage", "frequency", "earthingSystem",
         "ipRating", "formSeparation", "enclosureSize", "standards", "notes",
@@ -32,6 +92,18 @@ const BOARD_SCHEME_SCHEMA = {
         project: { type: "string", description: "Project, site or building name, separate from customer." },
         type: { type: "string", description: "Printed board classification such as MDB, SMDB, MCC or ATS." },
         manufacturer: { type: "string", description: "Board/enclosure manufacturer exactly as printed, including Tamhash, Yakir or Rittal; empty only when unstated." },
+        manufacturerRole: { type: "string", description: "Role of the chosen manufacturer name: enclosure_manufacturer, panel_builder, electrical_contractor, customer, designer or unknown." },
+        manufacturerEvidence: { type: "string", description: "Short visible label/logo evidence supporting the enclosure manufacturer choice." },
+        manufacturerCandidates: {
+          type: "array", maxItems: 12,
+          items: {
+            type: "object", required: ["name", "role", "evidence", "sourcePage"],
+            properties: {
+              name: { type: "string" }, role: { type: "string" }, evidence: { type: "string" },
+              sourcePage: { type: "integer", minimum: 0 },
+            },
+          },
+        },
         mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB or isolator." },
         mainBreakerModel: { type: "string", description: "Exact manufacturer/model printed for the main incomer." },
         mainBreakerAmpere: { type: "string", description: "Main incomer current rating including unit." },
@@ -48,6 +120,16 @@ const BOARD_SCHEME_SCHEMA = {
         notes: { type: "string", description: "Board-specific construction/review notes; no generic prose." },
       },
     },
+    pageBoards: {
+      type: "array", maxItems: 500,
+      items: {
+        type: "object", required: ["page", "boardNumber"],
+        properties: {
+          page: { type: "integer", minimum: 1 },
+          boardNumber: { type: "string", description: "Board number governing this PDF page; empty only when it cannot be associated safely." },
+        },
+      },
+    },
     components: {
       type: "array",
       maxItems: 200,
@@ -56,7 +138,7 @@ const BOARD_SCHEME_SCHEMA = {
         type: "object",
         required: [
           "rawText", "manufacturer", "model", "type", "rating", "poles",
-          "curve", "sensitivity", "quantity", "reference", "sourcePage",
+          "curve", "sensitivity", "quantity", "reference", "sourcePage", "boardNumber",
         ],
         properties: {
           rawText: { type: "string", description: "Representative schematic callout or device label transcribed from the source." },
@@ -70,6 +152,7 @@ const BOARD_SCHEME_SCHEMA = {
           quantity: { type: "integer", minimum: 0, maximum: 999, description: "Count of unique physical schematic device references; 0 when it cannot be determined safely." },
           reference: { type: "string", description: "Exact unique device tag(s) included in the quantity." },
           sourcePage: { type: "integer", minimum: 0, description: "First one-based schematic page using this device group; 0 when unknown." },
+          boardNumber: { type: "string", description: "Exact board number whose schematic pages contain these counted references." },
         },
       },
     },
@@ -84,16 +167,19 @@ const BOARD_SCHEME_SCHEMA = {
 
 function boardSchemePrompt(fileName) {
   const named = String(fileName || "").trim();
+  const targetNumber = targetBoardNumberFromFileName(named);
   const responseShape = {
     board: {
       number: "", name: "", customer: "", project: "", type: "", manufacturer: "",
+      manufacturerRole: "", manufacturerEvidence: "", manufacturerCandidates: [{ name: "", role: "", evidence: "", sourcePage: 0 }],
       mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", cabinetCount: 0,
       jobNumber: "", revision: "", supplyVoltage: "", frequency: "", earthingSystem: "",
       ipRating: "", formSeparation: "", enclosureSize: "", standards: [], notes: "",
     },
+    pageBoards: [{ page: 1, boardNumber: "" }],
     components: [{
       rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
-      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0,
+      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "",
     }],
     warnings: [],
   };
@@ -101,8 +187,9 @@ function boardSchemePrompt(fileName) {
     "Read the complete electrical board document and extract the relevant title block,",
     "main incomer and every component actually used across the schematic pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
+    "First map every PDF page to its governing title-block board number in pageBoards. Count components only after that map is complete, and put that board number on every component line.",
     "For every breaker, separate its current, poles and trip curve: C16 is rating 16A with curve C; 6A + N is rating 6A with poles 1P+N. Never confuse 6kA breaking capacity with a 6A current rating.",
-    named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
+    targetNumber ? `MANDATORY TARGET BOARD: "${targetNumber}" was inferred from the upload filename "${named.slice(0, 200)}". Extract only pages mapped to this exact board number. If it is not visibly present, return no components and explain that in warnings; never substitute the preceding, following, nearest, or primary board.` : named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
     "Return empty strings, empty arrays or 0 for information that is not visibly stated.",
     `Return one JSON object with exactly this shape (the components array may be empty): ${JSON.stringify(responseShape)}`,
   ].filter(Boolean).join(" ");
@@ -320,12 +407,44 @@ function consolidateComponents(lines) {
  * Every field is clamped here rather than trusted: this is model output, and
  * it reaches a board draft that a workshop builds from.
  */
-function normalizeReading(reading, catalog) {
+function normalizeReading(reading, catalog, options = {}) {
   const board = reading?.board || {};
-  const parts = Array.isArray(reading?.components) ? [...reading.components] : [];
+  const fileTarget = targetBoardNumberFromFileName(options.fileName);
+  const readBoardNumber = text(board.number, 60);
+  const selectedBoardNumber = fileTarget || readBoardNumber;
+  const readMatchesTarget = !fileTarget || !readBoardNumber
+    || boardNumberKey(fileTarget) === boardNumberKey(readBoardNumber);
+  const warnings = (Array.isArray(reading?.warnings) ? reading.warnings : [])
+    .map((warning) => text(warning, 240))
+    .filter(Boolean);
+  if (!readMatchesTarget) {
+    warnings.unshift(`Ignored board ${readBoardNumber}: upload target ${fileTarget} is required.`);
+  }
+
+  const pageBoardNumbers = new Map((Array.isArray(reading?.pageBoards) ? reading.pageBoards : [])
+    .map((entry) => [Math.trunc(Number(entry?.page) || 0), text(entry?.boardNumber, 60)])
+    .filter(([page, number]) => page > 0 && number));
+  const parts = (Array.isArray(reading?.components) ? [...reading.components] : []).filter((part) => {
+    if (!selectedBoardNumber) return true;
+    const claimedBoard = text(part?.boardNumber, 60);
+    const sourcePage = Math.trunc(Number(part?.sourcePage) || 0);
+    const pageBoard = pageBoardNumbers.get(sourcePage) || "";
+    const belongs = claimedBoard || pageBoard;
+    if (belongs && boardNumberKey(belongs) !== boardNumberKey(selectedBoardNumber)) {
+      warnings.push(`Skipped component ${text(part?.reference || part?.rawText || part?.model, 80) || "line"} from board ${belongs}.`);
+      return false;
+    }
+    // When Gemini selected another board entirely, unlabelled component lines
+    // cannot be trusted. New prompts always provide boardNumber/pageBoards.
+    if (!readMatchesTarget && !belongs) {
+      warnings.push(`Skipped an unlabelled component because board ${fileTarget} was not selected.`);
+      return false;
+    }
+    return true;
+  });
   const mainModel = text(board.mainBreakerModel, 80);
   const mainAmpere = ampereRating(board.mainBreakerAmpere);
-  if (mainModel && !parts.some((part) => sameModel(part?.model || part?.rawText, mainModel))) {
+  if (readMatchesTarget && mainModel && !parts.some((part) => sameModel(part?.model || part?.rawText, mainModel))) {
     parts.unshift({
       rawText: [board.mainBreakerType, mainModel, mainAmpere].filter(Boolean).join(" "),
       manufacturer: "",
@@ -338,12 +457,9 @@ function normalizeReading(reading, catalog) {
       quantity: 1,
       reference: "Main incomer",
       sourcePage: 0,
+      boardNumber: selectedBoardNumber,
     });
   }
-  const warnings = (Array.isArray(reading?.warnings) ? reading.warnings : [])
-    .map((warning) => text(warning, 240))
-    .filter(Boolean)
-    .slice(0, 20);
 
   const components = [];
   const unmatched = [];
@@ -397,33 +513,34 @@ function normalizeReading(reading, catalog) {
     }
   }
 
+  const safeBoard = readMatchesTarget ? board : {};
   return {
     board: {
-      number: text(board.number, 60),
-      name: text(board.name, 120),
-      customer: text(board.customer, 120),
-      project: text(board.project, 120),
-      type: text(board.type, 60),
-      manufacturer: text(board.manufacturer, 60),
-      mainBreakerType: text(board.mainBreakerType, 40),
-      mainBreakerModel: text(board.mainBreakerModel, 80),
-      mainBreakerAmpere: mainAmpere || text(board.mainBreakerAmpere, 20),
-      cabinetCount: Math.min(Math.max(Math.trunc(Number(board.cabinetCount) || 1), 1), 40),
-      jobNumber: text(board.jobNumber, 60),
-      revision: text(board.revision, 60),
-      supplyVoltage: text(board.supplyVoltage, 40),
-      frequency: text(board.frequency, 30),
-      earthingSystem: text(board.earthingSystem, 30),
-      ipRating: text(board.ipRating, 30),
-      formSeparation: text(board.formSeparation, 40),
-      enclosureSize: text(board.enclosureSize, 80),
-      standards: (Array.isArray(board.standards) ? board.standards : [])
+      number: selectedBoardNumber,
+      name: text(safeBoard.name, 120),
+      customer: text(safeBoard.customer, 120),
+      project: text(safeBoard.project, 120),
+      type: text(safeBoard.type, 60),
+      manufacturer: resolveBoardManufacturer(safeBoard),
+      mainBreakerType: text(safeBoard.mainBreakerType, 40),
+      mainBreakerModel: text(safeBoard.mainBreakerModel, 80),
+      mainBreakerAmpere: readMatchesTarget ? mainAmpere || text(safeBoard.mainBreakerAmpere, 20) : "",
+      cabinetCount: Math.min(Math.max(Math.trunc(Number(safeBoard.cabinetCount) || 1), 1), 40),
+      jobNumber: text(safeBoard.jobNumber, 60),
+      revision: text(safeBoard.revision, 60),
+      supplyVoltage: text(safeBoard.supplyVoltage, 40),
+      frequency: text(safeBoard.frequency, 30),
+      earthingSystem: text(safeBoard.earthingSystem, 30),
+      ipRating: text(safeBoard.ipRating, 30),
+      formSeparation: text(safeBoard.formSeparation, 40),
+      enclosureSize: text(safeBoard.enclosureSize, 80),
+      standards: (Array.isArray(safeBoard.standards) ? safeBoard.standards : [])
         .map((standard) => text(standard, 80)).filter(Boolean).slice(0, 20),
-      notes: text(board.notes, 600),
+      notes: text(safeBoard.notes, 600),
     },
     components: consolidateComponents(components),
     unmatched: consolidateComponents(unmatched),
-    warnings,
+    warnings: [...new Set(warnings)].slice(0, 20),
   };
 }
 
@@ -439,4 +556,6 @@ module.exports = {
   normalizeReading,
   partKey,
   poleKey,
+  resolveBoardManufacturer,
+  targetBoardNumberFromFileName,
 };
