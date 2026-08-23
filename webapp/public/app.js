@@ -54,6 +54,7 @@ const ICON_PATHS = {
   board: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16"/><path d="M9 3v6"/><path d="M9 14h6"/><path d="M9 17h4"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   team: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16 15.2c2.6.3 4.5 2 4.5 4.8"/>',
+  building: '<path d="M4 21V5l8-3 8 3v16"/><path d="M2 21h20"/><path d="M8 7h1"/><path d="M15 7h1"/><path d="M8 11h1"/><path d="M15 11h1"/><path d="M8 15h1"/><path d="M15 15h1"/><path d="M10 21v-3h4v3"/>',
   alert: '<path d="M12 3l10 17H2z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/>',
   pulse: '<path d="M3 12h4l2.5-6 4 12L16 12h5"/>',
   hash: '<path d="M5 9h14"/><path d="M5 15h14"/><path d="M10 4L8 20"/><path d="M16 4l-2 16"/>',
@@ -459,6 +460,8 @@ const NAV_ITEMS = [
   { view: "catalog", label: "Catalog", icon: "catalog", group: "operations" },
   { view: "deliveries", label: "Deliveries", icon: "note", group: "operations", count: () => state.deliveries.length },
   { view: "team", label: "Team", icon: "team", group: "operations", adminOnly: true, count: () => (state.members || []).length },
+  { view: "contacts", label: "Companies & Customers", icon: "building", group: "reference", count: () => new Set(state.projects.map((project) => project.customer).filter(Boolean)).size },
+  { view: "manufacturers", label: "Manufacturers", icon: "tag", group: "reference" },
 ];
 
 function renderNav() {
@@ -471,6 +474,7 @@ function renderNav() {
       currentGroup = item.group;
       if (currentGroup === "primary") nav.append(el("span", "nav-section-label", "Work"));
       if (currentGroup === "operations") nav.append(el("span", "nav-section-label", "Operations"));
+      if (currentGroup === "reference") nav.append(el("span", "nav-section-label", "Reference"));
     }
     const btn = el("button");
     btn.classList.add(`nav-${item.group}`);
@@ -498,6 +502,8 @@ function switchView(view) {
   // The catalog is the one view whose data is not in /api/state, so it loads
   // when it is first opened rather than on every refresh.
   if (view === "catalog") renderCatalog();
+  if (view === "contacts") renderContacts();
+  if (view === "manufacturers") renderManufacturers();
   if (view === "board-create") renderBoardCreate();
   if (view === "project-create") renderProjectCreate();
   if (view === "board-detail") renderBoardDetail();
@@ -520,6 +526,8 @@ async function refresh() {
   if (catalog) drawCatalog();
   else if (currentView === "catalog") renderCatalog();
   renderDeliveries();
+  renderContacts();
+  if (catalog) renderManufacturers();
   renderProjects();
   renderBoards();
   if (currentView === "board-create") renderBoardCreate();
@@ -2302,6 +2310,116 @@ async function renderCatalog() {
     catalog = (await api("/api/catalog")).parts;
   }
   drawCatalog();
+}
+
+// ------------------------------------------------ companies, customers & manufacturers
+
+function archiveSearch(placeholder, onInput) {
+  const wrap = el("label", "archive-search");
+  wrap.append(icon("search", 17));
+  const input = el("input");
+  input.type = "search";
+  input.placeholder = placeholder;
+  input.addEventListener("input", () => onInput(input.value));
+  wrap.append(input);
+  return wrap;
+}
+
+function renderContacts() {
+  const view = $("#view-contacts");
+  view.replaceChildren();
+  view.append(viewHead("Companies & Customers"));
+
+  const customers = [...new Set(state.projects.map((project) => project.customer?.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const intro = el("div", "archive-intro");
+  intro.append(
+    chipIcon("building", "var(--primary)"),
+    el("div", null),
+    el("span", "archive-total", String(customers.length)),
+  );
+  intro.children[1].append(
+    el("h3", null, "Customer archive"),
+    el("p", null, "Companies and customers connected to your projects and boards."),
+  );
+  view.append(intro);
+
+  const grid = el("div", "archive-card-grid");
+  const draw = (value = "") => {
+    grid.replaceChildren();
+    const query = value.trim().toLowerCase();
+    const visible = customers.filter((name) => !query || name.toLowerCase().includes(query));
+    visible.forEach((name) => {
+      const projects = state.projects.filter((project) => project.customer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const boards = state.boards.filter((board) => board.customer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const sites = new Set(projects.map((project) => project.site).filter(Boolean));
+      const card = el("button", "archive-card");
+      card.type = "button";
+      card.append(chipIcon("building", projects[0]?.colorHex || "var(--primary)"));
+      const copy = el("span", "archive-card-copy");
+      copy.append(
+        el("strong", null, name),
+        el("small", null, `${projects.length} project${projects.length === 1 ? "" : "s"} · ${boards.length} board${boards.length === 1 ? "" : "s"}${sites.size ? ` · ${sites.size} site${sites.size === 1 ? "" : "s"}` : ""}`),
+      );
+      card.append(copy, icon("chevron", 16));
+      card.addEventListener("click", () => switchView("projects"));
+      grid.append(card);
+    });
+    if (!visible.length) grid.append(emptyState("search", customers.length ? "No companies or customers match that search." : "Customers appear here when projects are created."));
+  };
+  view.append(archiveSearch("Search companies and customers", draw), grid);
+  draw();
+}
+
+async function renderManufacturers() {
+  const view = $("#view-manufacturers");
+  if (!catalog) {
+    view.replaceChildren(viewHead("Manufacturers"), emptyState("tag", "Loading manufacturers…"));
+    catalog = (await api("/api/catalog")).parts;
+  }
+  view.replaceChildren();
+  view.append(viewHead("Manufacturers"));
+
+  const names = [...new Set([
+    ...BOARD_MANUFACTURERS,
+    ...(catalog || []).map((part) => part.manufacturer).filter(Boolean),
+  ])].sort((a, b) => (a === "Generic" ? -1 : b === "Generic" ? 1 : a.localeCompare(b)));
+  const intro = el("div", "archive-intro");
+  intro.append(chipIcon("tag", "var(--secondary)"), el("div", null), el("span", "archive-total", String(names.length)));
+  intro.children[1].append(
+    el("h3", null, "Manufacturer library"),
+    el("p", null, "Brands used by boards and components, following the phone app archive."),
+  );
+  view.append(intro);
+
+  const grid = el("div", "manufacturer-grid");
+  const draw = (value = "") => {
+    grid.replaceChildren();
+    const query = value.trim().toLowerCase();
+    const visible = names.filter((name) => !query || name.toLowerCase().includes(query));
+    visible.forEach((name) => {
+      const parts = (catalog || []).filter((part) => part.manufacturer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const boards = state.boards.filter((board) => board.manufacturer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const card = el("article", "manufacturer-card");
+      const logoURL = manufacturerImage(name);
+      const logo = el("div", "manufacturer-logo");
+      if (logoURL) {
+        const image = el("img");
+        image.src = logoURL;
+        image.alt = "";
+        logo.append(image);
+      } else {
+        logo.append(el("strong", null, name.slice(0, 2).toUpperCase()));
+      }
+      const copy = el("div", "manufacturer-copy");
+      copy.append(el("h3", null, name), el("p", null, `${parts.length} catalog item${parts.length === 1 ? "" : "s"} · ${boards.length} board${boards.length === 1 ? "" : "s"}`));
+      card.append(logo, copy, el("span", "manufacturer-status", parts.length || boards.length ? "In use" : "Available"));
+      grid.append(card);
+    });
+    if (!visible.length) grid.append(emptyState("search", "No manufacturers match that search."));
+  };
+  view.append(archiveSearch("Search manufacturers", draw), grid);
+  draw();
 }
 
 function drawCatalog() {
