@@ -55,8 +55,19 @@ BOARD FIELDS
 - name: the board name/description, not the project name or drawing title.
 - customer: the client/customer named on the drawing.
 - project: the project, site or building name. Keep it separate from customer.
-- type: the printed board classification, such as MDB, SMDB/SDB, MCC, ATS,
-  Lighting Board, Power Board, Generator Board, Solar Board or UPS Board.
+- type: classify the board as the closest of: Main LV Board, MDB, Sub
+  Distribution, MCC, Cabinet Collection, ATS, Metering Board, Capacitor Bank,
+  Control Board, Lighting, Power, Apartment, Generator Board, UPS Board, PV
+  Solar, EV Charging, Site Temporary, Fire Pump, HVAC, ELV / BMS, PCC,
+  Synchronizing, Bypass Board, Transformer Board, Pump Board, Elevator,
+  Outdoor Lighting, PDU, Harmonic Filter, Fire Alarm or Earthing. Prefer the
+  printed title-block classification. If it is absent, infer the best match
+  from the board name, incoming/outgoing topology, load labels and installed
+  equipment. This is a reviewable guess; do not leave type blank merely because
+  the exact wording is not printed.
+- typeConfidence: high when the type is printed explicitly, medium when several
+  strong schematic clues agree, and low when the classification is tentative.
+- typeEvidence: concise printed wording or schematic clues supporting the guess.
 - manufacturer: the metal enclosure/cabinet brand only. First list every visible
   company/logo in manufacturerCandidates and classify its role as
   enclosure_manufacturer, panel_builder, electrical_contractor, customer,

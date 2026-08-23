@@ -79,7 +79,7 @@ const BOARD_SCHEME_SCHEMA = {
     board: {
       type: "object",
       required: [
-        "number", "name", "customer", "project", "type", "manufacturer",
+        "number", "name", "customer", "project", "type", "typeConfidence", "typeEvidence", "manufacturer",
         "manufacturerRole", "manufacturerEvidence", "manufacturerCandidates",
         "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "cabinetCount",
         "jobNumber", "revision", "supplyVoltage", "frequency", "earthingSystem",
@@ -90,7 +90,9 @@ const BOARD_SCHEME_SCHEMA = {
         name: { type: "string", description: "Board name or description, separate from the project name." },
         customer: { type: "string", description: "Customer or client explicitly named on the drawing." },
         project: { type: "string", description: "Project, site or building name, separate from customer." },
-        type: { type: "string", description: "Printed board classification such as MDB, SMDB, MCC or ATS." },
+        type: { type: "string", description: "Best supported board classification. Prefer the printed type; otherwise infer from the board purpose, topology and installed equipment." },
+        typeConfidence: { type: "string", description: "Confidence in the board type guess: high, medium or low." },
+        typeEvidence: { type: "string", description: "Short visible or schematic evidence used to classify the board type." },
         manufacturer: { type: "string", description: "Board/enclosure manufacturer exactly as printed, including Tamhash, Yakir or Rittal; empty only when unstated." },
         manufacturerRole: { type: "string", description: "Role of the chosen manufacturer name: enclosure_manufacturer, panel_builder, electrical_contractor, customer, designer or unknown." },
         manufacturerEvidence: { type: "string", description: "Short visible label/logo evidence supporting the enclosure manufacturer choice." },
@@ -172,7 +174,7 @@ function boardSchemePrompt(fileName) {
   const targetNumber = targetBoardNumberFromFileName(named);
   const responseShape = {
     board: {
-      number: "", name: "", customer: "", project: "", type: "", manufacturer: "",
+      number: "", name: "", customer: "", project: "", type: "", typeConfidence: "", typeEvidence: "", manufacturer: "",
       manufacturerRole: "", manufacturerEvidence: "", manufacturerCandidates: [{ name: "", role: "", evidence: "", sourcePage: 0 }],
       mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", cabinetCount: 0,
       jobNumber: "", revision: "", supplyVoltage: "", frequency: "", earthingSystem: "",
@@ -190,6 +192,7 @@ function boardSchemePrompt(fileName) {
     "main incomer and every component actually used across the schematic pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
     "Before returning JSON, perform one final document-wide aggregation: identical manufacturer + model + rating + poles + curve + sensitivity must be one component row with the total unique-device quantity across every target-board page. sourcePage is traceability only and must never create a separate row.",
+    "Classify the board into the closest supported PanelVault type. Prefer an explicit title-block type; if none is printed, make a reviewable best guess from the board name, incoming/outgoing topology, loads and installed equipment, and return confidence plus concise evidence.",
     "First map every PDF page to its governing title-block board number in pageBoards. Count components only after that map is complete, and put that board number on every component line.",
     "For every breaker, separate its current, poles and trip curve: C16 is rating 16A with curve C; 6A + N is rating 6A with poles 1P+N. Never confuse 6kA breaking capacity with a 6A current rating.",
     targetNumber ? `MANDATORY TARGET BOARD: "${targetNumber}" was inferred from the upload filename "${named.slice(0, 200)}". Extract only pages mapped to this exact board number. If it is not visibly present, return no components and explain that in warnings; never substitute the preceding, following, nearest, or primary board.` : named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
@@ -608,6 +611,9 @@ function normalizeReading(reading, catalog, options = {}) {
       customer: text(safeBoard.customer, 120),
       project: text(safeBoard.project, 120),
       type: text(safeBoard.type, 60),
+      typeConfidence: /^(?:high|medium|low)$/i.test(String(safeBoard.typeConfidence || "").trim())
+        ? String(safeBoard.typeConfidence).trim().toLowerCase() : "low",
+      typeEvidence: text(safeBoard.typeEvidence, 240),
       manufacturer: resolveBoardManufacturer(safeBoard),
       mainBreakerType: text(safeBoard.mainBreakerType, 40),
       mainBreakerModel: text(safeBoard.mainBreakerModel, 80),

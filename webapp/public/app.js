@@ -2946,18 +2946,58 @@ function memberSelect(selected, predicate = () => true, emptyLabel = "Unassigned
 }
 
 const BOARD_CREATION_TYPES = [
-  { id: "MDB", name: "Main Distribution", icon: "boltShield", note: "Primary low-voltage distribution board" },
-  { id: "SMDB", name: "Sub Distribution", icon: "board", note: "Feeds a floor, zone, or downstream area" },
-  { id: "MCC", name: "Motor Control Centre", icon: "motor", note: "Motor starters, drives, and control" },
-  { id: "ATS", name: "Automatic Transfer", icon: "toggle", note: "Automatic changeover between supplies" },
-  { id: "Lighting", name: "Lighting Board", icon: "bolt", note: "Lighting circuits and control" },
-  { id: "Power", name: "Power Board", icon: "plug", note: "Socket and general power circuits" },
-  { id: "Generator", name: "Generator Board", icon: "gauge", note: "Generator distribution and protection" },
-  { id: "Solar", name: "Solar Board", icon: "pulse", note: "PV generation and AC distribution" },
-  { id: "UPS", name: "UPS Board", icon: "shield", note: "Critical backed-up power" },
-  { id: "Fire Pump", name: "Fire Pump Panel", icon: "alert", note: "Dedicated fire-pump control and power" },
-  { id: "EV Charging", name: "EV Charging", icon: "terminal", note: "Vehicle-charging distribution" },
+  { id: "main-lv", name: "Main LV Board", icon: "boltShield", note: "Main low-voltage intake" },
+  { id: "mdb", name: "MDB", icon: "boltShield", note: "Main Distribution" },
+  { id: "sub-distribution", name: "Sub Distribution", icon: "board", note: "Sub boards" },
+  { id: "mcc", name: "MCC", icon: "motor", note: "Motor Control Center" },
+  { id: "cabinet-collection", name: "Cabinet Collection", icon: "board", note: "Multi-cabinet assembly" },
+  { id: "ats", name: "ATS", icon: "toggle", note: "Automatic Transfer Switch" },
+  { id: "metering", name: "Metering Board", icon: "gauge", note: "Meters and CTs" },
+  { id: "capacitor", name: "Capacitor Bank", icon: "pulse", note: "Power factor correction" },
+  { id: "control", name: "Control Board", icon: "toggle", note: "Controls and automation" },
+  { id: "lighting", name: "Lighting", icon: "bolt", note: "Lighting boards" },
+  { id: "power", name: "Power", icon: "plug", note: "Power boards" },
+  { id: "apartment", name: "Apartment", icon: "board", note: "Residential boards" },
+  { id: "generator", name: "Generator Board", icon: "gauge", note: "Generator distribution" },
+  { id: "ups", name: "UPS Board", icon: "shield", note: "Critical power" },
+  { id: "pv", name: "PV Solar", icon: "pulse", note: "Solar AC/DC board" },
+  { id: "ev", name: "EV Charging", icon: "terminal", note: "Charging infrastructure" },
+  { id: "temporary-site", name: "Site Temporary", icon: "alert", note: "Construction site power" },
+  { id: "fire-pump", name: "Fire Pump", icon: "alert", note: "Life-safety motor board" },
+  { id: "hvac", name: "HVAC", icon: "motor", note: "Mechanical services" },
+  { id: "elv-bms", name: "ELV / BMS", icon: "terminal", note: "Low-current systems" },
+  { id: "pcc", name: "PCC", icon: "boltShield", note: "Power control center" },
+  { id: "synchronizing", name: "Synchronizing", icon: "toggle", note: "Generator sync board" },
+  { id: "bypass", name: "Bypass Board", icon: "toggle", note: "Maintenance bypass" },
+  { id: "transformer", name: "Transformer Board", icon: "boltShield", note: "Transformer feeder" },
+  { id: "pump", name: "Pump Board", icon: "motor", note: "Water and process pumps" },
+  { id: "elevator", name: "Elevator", icon: "motor", note: "Lift supply board" },
+  { id: "outdoor-lighting", name: "Outdoor Lighting", icon: "bolt", note: "Street and facade lighting" },
+  { id: "pdu", name: "PDU", icon: "terminal", note: "Data center distribution" },
+  { id: "harmonic-filter", name: "Harmonic Filter", icon: "pulse", note: "Power quality" },
+  { id: "fire-alarm", name: "Fire Alarm", icon: "alert", note: "Life-safety controls" },
+  { id: "earthing", name: "Earthing", icon: "plug", note: "Grounding and bonding" },
 ];
+
+const DEFAULT_BOARD_SUBTYPE = "No subtype";
+const GENERAL_BOARD_SUBTYPES = [DEFAULT_BOARD_SUBTYPE, "Control", "EV Charger", "Metering", "Automation", "Pump Control", "HVAC Control", "Generator Control", "Solar", "UPS", "Temporary Site"];
+
+function boardSubtypeOptions(boardType) {
+  const lower = String(boardType || "").toLowerCase();
+  if (lower.includes("ev") || lower.includes("charging")) {
+    return [DEFAULT_BOARD_SUBTYPE, "EV Charger", "Load Management", "Parking Level", "Fast Charger", "Metering"];
+  }
+  if (lower.includes("mcc") || lower.includes("motor") || lower.includes("pump") || lower.includes("hvac")) {
+    return [DEFAULT_BOARD_SUBTYPE, "Control", "Pump Control", "HVAC Control", "VFD", "Soft Starter", "Automation"];
+  }
+  if (lower.includes("lighting")) {
+    return [DEFAULT_BOARD_SUBTYPE, "Indoor Lighting", "Outdoor Lighting", "Emergency Lighting", "Timer Control", "Astronomical Clock"];
+  }
+  if (lower.includes("ats") || lower.includes("generator")) {
+    return [DEFAULT_BOARD_SUBTYPE, "Generator Control", "ATS Control", "Synchronization", "Bypass"];
+  }
+  return GENERAL_BOARD_SUBTYPES;
+}
 
 function openNewBoardModal() {
   boardCreationMode = null;
@@ -3087,10 +3127,52 @@ function schemeIntakePanel(kind, onComplete) {
 function normalizedCreationBoardType(value) {
   const source = String(value || "").trim().toUpperCase();
   if (!source) return null;
-  if (source.includes("SMDB") || source === "SDB" || source.includes("SUB DISTRIBUTION")) return "SMDB";
-  if (source.includes("MDB") || source.includes("MAIN DISTRIBUTION")) return "MDB";
+  if (source.includes("SMDB") || source === "SDB" || source.includes("SUB DISTRIBUTION")) return "sub-distribution";
+  if (source.includes("MAIN LV") || source.includes("MAIN LOW VOLTAGE") || source === "MLVB") return "main-lv";
+  if (source.includes("MDB") || source.includes("MAIN DISTRIBUTION")) return "mdb";
+  const aliases = [
+    ["mcc", /\bMCC\b|MOTOR CONTROL/], ["ats", /\bATS\b|AUTOMATIC TRANSFER/],
+    ["metering", /METERING|METER BOARD/], ["capacitor", /CAPACITOR|POWER FACTOR|\bPFC\b/],
+    ["outdoor-lighting", /OUTDOOR|STREET|FACADE/], ["lighting", /LIGHTING/],
+    ["apartment", /APARTMENT|RESIDENTIAL|DWELLING/], ["generator", /GENERATOR|\bGENSET\b/],
+    ["ups", /\bUPS\b|UNINTERRUPTIBLE/], ["pv", /\bPV\b|SOLAR|PHOTOVOLTAIC/],
+    ["ev", /\bEV\b|CHARGING/], ["temporary-site", /TEMPORARY|CONSTRUCTION SITE/],
+    ["fire-pump", /FIRE PUMP/], ["fire-alarm", /FIRE ALARM/], ["hvac", /\bHVAC\b|AIR CONDITION/],
+    ["elv-bms", /\bELV\b|\bBMS\b|LOW CURRENT/], ["pcc", /\bPCC\b|POWER CONTROL CENTER/],
+    ["synchronizing", /SYNCHRON/], ["bypass", /BYPASS/], ["transformer", /TRANSFORMER/],
+    ["pump", /PUMP/], ["elevator", /ELEVATOR|\bLIFT\b/], ["pdu", /\bPDU\b|POWER DISTRIBUTION UNIT/],
+    ["harmonic-filter", /HARMONIC FILTER/], ["earthing", /EARTHING|GROUNDING/],
+    ["cabinet-collection", /CABINET COLLECTION|MULTI.CABINET/], ["control", /CONTROL|AUTOMATION/],
+    ["power", /POWER BOARD|POWER DISTRIBUTION|\bPDB\b/],
+  ];
+  const alias = aliases.find(([, pattern]) => pattern.test(source));
+  if (alias) return alias[0];
   return BOARD_CREATION_TYPES.find((item) => source.includes(item.id.toUpperCase())
     || source.includes(item.name.toUpperCase()))?.id || null;
+}
+
+function boardTypeVerification(reading, selectedType) {
+  const board = reading?.board || {};
+  const suggestion = normalizedCreationBoardType(board.type);
+  const wrap = el("div", "board-type-verification");
+  const copy = el("div", "board-type-verification-copy");
+  const confidence = String(board.typeConfidence || "low").toLowerCase();
+  copy.append(
+    el("span", `ai-confidence ${confidence}`, `AI suggestion · ${confidence} confidence`),
+    el("strong", null, suggestion ? `Verify ${selectedType.name}` : "Choose the correct board type"),
+    el("p", null, board.typeEvidence || `Gemini classified the drawing as “${board.type || selectedType.name}”. Confirm or change it before creation.`),
+  );
+  const fieldWrap = el("label", "board-type-verification-field", "Board type");
+  const select = el("select");
+  BOARD_CREATION_TYPES.forEach((type) => select.append(new Option(type.name, type.id, false, type.id === selectedType.id)));
+  select.addEventListener("change", () => {
+    boardCreationType = select.value;
+    renderBoardCreate();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  fieldWrap.append(select, el("small", null, "You can override the AI guess."));
+  wrap.append(copy, fieldWrap);
+  return wrap;
 }
 
 function schemeReviewCard(reading, context) {
@@ -3106,6 +3188,7 @@ function schemeReviewCard(reading, context) {
   const facts = el("div", "scheme-review-facts");
   [
     ["Board", [board.number, board.name].filter(Boolean).join(" — ")],
+    ["AI board type", [board.type, board.typeConfidence ? `${board.typeConfidence} confidence` : ""].filter(Boolean).join(" · ")],
     ["Project", board.project],
     ["Customer", board.customer],
     ["Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")],
@@ -3191,7 +3274,7 @@ function renderBoardCreate() {
       const button = el("button", "board-type-card");
       button.append(chipIcon(boardType.icon, "var(--primary)"));
       const copy = el("div");
-      copy.append(el("span", "board-type-code", boardType.id), el("h3", null, boardType.name), el("p", null, boardType.note));
+      copy.append(el("span", "board-type-code", boardType.note), el("h3", null, boardType.name));
       button.append(copy, icon("chevron", 18));
       button.addEventListener("click", () => {
         boardCreationType = boardType.id;
@@ -3209,9 +3292,10 @@ function renderBoardCreate() {
   const heroType = el("div", "selected-board-type");
   heroType.append(chipIcon(selectedType.icon, "var(--primary)"));
   const heroCopy = el("div");
-  heroCopy.append(el("span", "eyebrow", selectedType.id), el("h2", null, selectedType.name), el("p", null, selectedType.note));
+  heroCopy.append(el("span", "eyebrow", selectedType.note), el("h2", null, selectedType.name));
   heroType.append(heroCopy);
   detailsHero.append(heroType);
+  if (boardSchemeReading) detailsHero.append(boardTypeVerification(boardSchemeReading, selectedType));
   view.append(detailsHero);
   if (boardSchemeReading) view.append(schemeReviewCard(boardSchemeReading, "Board"));
 
@@ -3224,8 +3308,7 @@ function renderBoardCreate() {
   const project = pageField(selectField("Project", projects, "No Project"));
   const customer = pageField(field("Customer name", "search or type customer"));
   const company = pageField(field("Company you are doing it for", "optional company"));
-  const subtype = pageField(field("Subtype", "Standard"));
-  subtype.input.value = "Standard";
+  const subtype = pageField(selectField("Subtype", boardSubtypeOptions(selectedType.name), DEFAULT_BOARD_SUBTYPE));
   const manufacturer = pageField(selectField("Board manufacturer", BOARD_MANUFACTURERS, "Generic"));
   const cabinets = pageField(selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1"));
   const buildFormat = pageField(selectField("Build format", ["Panels", "Plate"], "Panels"));
@@ -3323,8 +3406,8 @@ function renderBoardCreate() {
         customer: customer.input.value,
         company: company.input.value,
         project: project.select.value,
-        type: boardCreationType,
-        subtype: subtype.input.value,
+        type: selectedType.name,
+        subtype: subtype.select.value,
         manufacturer: manufacturer.select.value,
         cabinetCount: cabinets.select.value,
         buildFormat: buildFormat.select.value,

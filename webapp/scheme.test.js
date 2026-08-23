@@ -51,6 +51,7 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /extract only pages mapped to this exact board number/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /MANDATORY TARGET BOARD: "3918.24-12-1"/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /closest supported PanelVault type/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
 });
@@ -105,6 +106,19 @@ test("a title-block contractor is not the board manufacturer and Tamhash evidenc
     pageBoards: [], components: [], warnings: [],
   }, CATALOG, { fileName: "3918.24-12-1 MDB.pdf" });
   assert.equal(result.board.manufacturer, "Tamhash");
+});
+
+test("an inferred board type keeps its confidence and evidence for human verification", () => {
+  const result = normalizeReading({
+    board: {
+      type: "MCC", typeConfidence: "Medium",
+      typeEvidence: "Motor feeders with contactors and overload relays",
+    },
+    components: [],
+  }, CATALOG);
+  assert.equal(result.board.type, "MCC");
+  assert.equal(result.board.typeConfidence, "medium");
+  assert.match(result.board.typeEvidence, /motor feeders/i);
 });
 
 test("breaker shorthand is split into current, poles and curve", () => {
