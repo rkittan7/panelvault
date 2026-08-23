@@ -36,6 +36,8 @@ test("the production instruction surveys title blocks and component schedules", 
   assert.match(BOARD_SCHEME_INSTRUCTION, /component schedule/i);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
 });
 
 test("the document response JSON Schema includes extraction constraints", () => {

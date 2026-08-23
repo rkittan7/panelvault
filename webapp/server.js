@@ -18,7 +18,6 @@ const { createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
 const {
   BOARD_SCHEME_INSTRUCTION,
-  BOARD_SCHEME_SCHEMA,
   boardSchemePrompt,
   normalizeReading,
 } = require("./scheme");
@@ -980,7 +979,6 @@ const routes = {
       mimeType: mimeType || "application/pdf",
       systemInstruction: BOARD_SCHEME_INSTRUCTION,
       prompt: boardSchemePrompt(fileName),
-      schema: BOARD_SCHEME_SCHEMA,
     });
 
     const catalog = [...CATALOG, ...(session.company.customParts || [])];

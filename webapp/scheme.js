@@ -84,11 +84,25 @@ const BOARD_SCHEME_SCHEMA = {
 
 function boardSchemePrompt(fileName) {
   const named = String(fileName || "").trim();
+  const responseShape = {
+    board: {
+      number: "", name: "", customer: "", project: "", type: "", manufacturer: "",
+      mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", cabinetCount: 0,
+      jobNumber: "", revision: "", supplyVoltage: "", frequency: "", earthingSystem: "",
+      ipRating: "", formSeparation: "", enclosureSize: "", standards: [], notes: "",
+    },
+    components: [{
+      rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
+      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0,
+    }],
+    warnings: [],
+  };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
-    "main incomer and every component schedule/BOM line using the supplied schema.",
+    "main incomer and every component schedule/BOM line.",
     named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
     "Return empty strings, empty arrays or 0 for information that is not visibly stated.",
+    `Return one JSON object with exactly this shape (the components array may be empty): ${JSON.stringify(responseShape)}`,
   ].filter(Boolean).join(" ");
 }
 

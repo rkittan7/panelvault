@@ -87,4 +87,4 @@ HARD RULES
 - Do not translate identifiers, model numbers, tags or ratings.
 - If a page/table is unreadable, clipped, rotated incorrectly or contradictory,
   add a concise warning. Never silently invent the missing content.
-- Return only the JSON object required by the supplied schema.
+- Return only the JSON object in the exact shape specified by the user request.

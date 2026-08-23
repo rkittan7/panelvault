@@ -17,6 +17,20 @@ function resolveModel(value) {
   return MODEL_REPLACEMENTS.get(requested) || requested || DEFAULT_MODEL;
 }
 
+function geminiErrorMessage(result) {
+  const apiError = result && result.error;
+  const base = apiError?.message || "Gemini request failed.";
+  const violations = (Array.isArray(apiError?.details) ? apiError.details : [])
+    .flatMap((detail) => detail?.fieldViolations || detail?.field_violations || [])
+    .map((violation) => {
+      const field = String(violation?.field || "").trim();
+      const description = String(violation?.description || "").trim();
+      return [field, description].filter(Boolean).join(": ");
+    })
+    .filter(Boolean);
+  return violations.length ? `${base} ${violations.join(" ")}` : base;
+}
+
 /** Inline document parts are base64, which is 4 characters per 3 bytes. */
 const MAX_DOCUMENT_BASE64 = 11_000_000; // ~8 MB of file
 
@@ -77,7 +91,7 @@ function createGeminiClient({
       );
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(result.error?.message || "Gemini request failed.");
+        const error = new Error(geminiErrorMessage(result));
         error.statusCode = response.status === 429 ? 429 : 502;
         throw error;
       }
@@ -97,15 +111,16 @@ function createGeminiClient({
      *
      * Gemini takes a PDF as an inline part and reads it natively — pages,
      * tables and the drawing itself — so an AutoCAD scheme does not have to be
-     * rasterised or OCR'd first. `responseJsonSchema` makes the model answer
-     * with JSON of a fixed shape instead of prose that would have to be parsed
-     * out of a code fence. Unlike the deprecated OpenAPI `responseSchema`, it
-     * accepts the standard JSON Schema constraints used by the board schema.
+     * rasterised or OCR'd first. JSON mode makes the model answer with JSON
+     * instead of prose that would have to be parsed out of a code fence. The
+     * exact shape is supplied in the extraction prompt and validated by the
+     * server; sending the full schema here can exceed Gemini's structured-
+     * output complexity limit before the PDF is even read.
      *
      * The timeout is far longer than `generate`'s: a multi-page A1 scheme is a
      * lot of tokens and routinely takes the better part of a minute.
      */
-    async readDocument({ data, mimeType, prompt, systemInstruction, schema }) {
+    async readDocument({ data, mimeType, prompt, systemInstruction }) {
       if (!apiKey) {
         const error = new Error("Gemini is not configured on this server.");
         error.statusCode = 503;
@@ -133,14 +148,6 @@ function createGeminiClient({
           parts: [
             {
               inline_data: { mime_type: mimeType, data },
-              // Dense AutoCAD sheets contain small table text. Gemini 3's
-              // recommended PDF setting preserves more document detail; use
-              // high for a photographed sheet where native PDF text is absent.
-              mediaResolution: {
-                level: mimeType === "application/pdf"
-                  ? "media_resolution_medium"
-                  : "media_resolution_high",
-              },
             },
             { text: prompt },
           ],
@@ -149,7 +156,6 @@ function createGeminiClient({
           responseMimeType: "application/json",
         },
       };
-      if (schema) body.generationConfig.responseJsonSchema = schema;
       if (systemInstruction) {
         body.systemInstruction = { parts: [{ text: systemInstruction }] };
       }
@@ -165,7 +171,7 @@ function createGeminiClient({
       );
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(result.error?.message || "Gemini request failed.");
+        const error = new Error(geminiErrorMessage(result));
         error.statusCode = response.status === 429 ? 429 : 502;
         throw error;
       }
