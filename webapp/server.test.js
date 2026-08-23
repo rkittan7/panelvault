@@ -905,3 +905,72 @@ test("sign-in tells every client the same capabilities, and the Swift copy agree
     server.stop();
   }
 });
+
+test("a board stage moves on the id it was sent, and only a manager deletes a board", async () => {
+  const { baseURL, stop } = await startServer();
+  try {
+    const owner = await json(baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Stage Works", name: "Owner", password: "secret12" }),
+    });
+    const manager = { Authorization: `Bearer ${owner.body.token}` };
+
+    const invite = await json(baseURL, "/api/invites", {
+      method: "POST", headers: manager, body: JSON.stringify({ role: "staff" }),
+    });
+    const builder = await json(baseURL, "/api/mobile/join", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: owner.body.company.code,
+        inviteCode: invite.body.invite.code,
+        name: "Builder", password: "builder-secret",
+      }),
+    });
+    const staff = { Authorization: `Bearer ${builder.body.token}` };
+
+    const created = await json(baseURL, "/api/boards", {
+      method: "POST", headers: manager,
+      body: JSON.stringify({
+        number: "3918.26-1", group: "3918.26", name: "Feeder Board",
+        customer: "Acme", project: "No Project", type: "MDB",
+      }),
+    });
+    assert.equal(created.response.status, 200);
+    const boardID = created.body.board.id;
+
+    // The stage asked for is the stage the board lands on. The website used to
+    // send no stageID at all, which reached this route as undefined.
+    const moved = await json(baseURL, "/api/board-stage", {
+      method: "POST", headers: manager,
+      body: JSON.stringify({ boardID, stageID: "wiring" }),
+    });
+    assert.equal(moved.response.status, 200);
+    assert.equal(moved.body.board.currentStage.id, "wiring");
+
+    const noStage = await json(baseURL, "/api/board-stage", {
+      method: "POST", headers: manager, body: JSON.stringify({ boardID }),
+    });
+    assert.equal(noStage.response.status, 400);
+
+    // Deleting is a manager's call, not the builder's.
+    const refused = await json(baseURL, "/api/board-delete", {
+      method: "POST", headers: staff, body: JSON.stringify({ boardID }),
+    });
+    assert.equal(refused.response.status, 403);
+
+    const deleted = await json(baseURL, "/api/board-delete", {
+      method: "POST", headers: manager, body: JSON.stringify({ boardID }),
+    });
+    assert.equal(deleted.response.status, 200);
+
+    const after = await json(baseURL, "/api/state", { headers: manager });
+    assert.equal(after.body.boards.find((board) => board.id === boardID), undefined);
+
+    const gone = await json(baseURL, "/api/board-delete", {
+      method: "POST", headers: manager, body: JSON.stringify({ boardID }),
+    });
+    assert.equal(gone.response.status, 404);
+  } finally {
+    stop();
+  }
+});

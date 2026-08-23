@@ -2141,6 +2141,28 @@ const routes = {
     sendJSON(res, 200, { ok: true, board: workspacePayload(company).boards.find((item) => item.id === board.id) });
   },
 
+  /* Deleting a board takes its movements' reference with it, so it is a
+     manager's decision and not the assigned builder's — canUpdateBoard is
+     deliberately not used here. Stock already consumed against the board is
+     left alone: those movements happened, and rewriting stock history to tidy
+     up a deleted board would be worse than an orphaned reference. */
+  "POST /api/board-delete": async (req, res, session) => {
+    const { company, user } = session;
+    const { boardID } = await readBody(req);
+    if (!isAdmin(user)) return fail(res, 403, "Only a manager can delete a board.");
+    const board = company.boards.find((item) => item.id === boardID);
+    if (!board) return fail(res, 404, "Board not found.");
+    company.boards = company.boards.filter((item) => item.id !== boardID);
+    bumpWorkspace(company);
+    await save();
+    for (const attachment of board.attachments || []) {
+      await storage.deleteAttachment(attachment.objectPath).catch((error) => {
+        console.error(`PanelVault attachment cleanup failed: ${error.message}`);
+      });
+    }
+    sendJSON(res, 200, { ok: true, boardID });
+  },
+
   "POST /api/board-qa": async (req, res, session) => {
     const { company, user } = session;
     const { boardID, action, note } = await readBody(req);

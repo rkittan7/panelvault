@@ -1313,7 +1313,17 @@ function renderBoards() {
     || (left.name || "").localeCompare(right.name || "", undefined, { numeric: true });
   const finishedSort = (left, right) => (right.number || "").localeCompare(left.number || "", undefined, { numeric: true })
     || (left.name || "").localeCompare(right.name || "", undefined, { numeric: true });
-  const groupFor = (board) => board.group || "Ungrouped";
+  /* Boards are numbered per job — 3918.26-1, 3918.26-2 and so on — so the
+     number up to its last dash is the job the board belongs to. Sectioning on
+     that puts one job's boards together under their own gray rule instead of
+     scattering them through whatever `group` happened to be typed. A board
+     with no number falls back to its group rather than being stranded. */
+  const groupFor = (board) => {
+    const number = String(board.number || "").trim();
+    if (!number) return board.group || "Ungrouped";
+    const cut = number.lastIndexOf("-");
+    return cut > 0 ? number.slice(0, cut) : number;
+  };
   const grouped = (boards) => {
     const groups = new Map();
     boards.forEach((board) => {
@@ -1348,6 +1358,51 @@ function renderBoards() {
 
   appendStage("In Progress", visibleBoards.filter((board) => !isFinished(board)), false);
   appendStage("Finished", visibleBoards.filter(isFinished), true);
+}
+
+/* Deleting a board cannot be undone from the interface, so the confirmation
+   names what goes and makes the reader type the board number to arm it. A
+   plain OK button is too easy to hit from the same place Assign and Reassign
+   sit, and those are recoverable. */
+function openDeleteBoardModal(board) {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, "Delete this board"));
+    modal.append(el("div", "modal-sub", `${board.name} · ${board.number}`));
+
+    const counts = [
+      (board.components || []).length && `${(board.components || []).length} component line(s)`,
+      (board.attachments || []).length && `${(board.attachments || []).length} file(s)`,
+    ].filter(Boolean);
+    modal.append(el("p", "hint",
+      counts.length
+        ? `This removes the board and its ${counts.join(" and ")}. Stock already booked out against it stays as it is — those movements happened.`
+        : "This removes the board. Stock already booked out against it stays as it is — those movements happened."));
+
+    const confirm = field("Type the board number to confirm", board.number || "board number");
+    modal.append(confirm.label);
+    const error = el("div", "form-error hidden");
+    error.setAttribute("role", "alert");
+    modal.append(error);
+
+    modal.append(modalActions(close, "Delete board", async () => {
+      if (confirm.input.value.trim() !== String(board.number || "").trim()) {
+        error.textContent = "The board number does not match.";
+        error.classList.remove("hidden");
+        return;
+      }
+      try {
+        await api("/api/board-delete", { boardID: board.id });
+        state.boards = state.boards.filter((item) => item.id !== board.id);
+        selectedBoardID = null;
+        close();
+        switchView("boards");
+        await refresh();
+      } catch (caught) {
+        error.textContent = caught.message || "Could not delete this board.";
+        error.classList.remove("hidden");
+      }
+    }));
+  });
 }
 
 function openBoardDetail(boardID) {
@@ -1400,20 +1455,40 @@ function renderStageTracker(board) {
   return tracker;
 }
 
+/* Moving a board along a stage.
+
+   Three things were wrong here. The stage being moved to was never sent, so
+   the server saw `stageID` undefined, failed its own validation and returned
+   "Unknown board stage" on every click. The syncing flag was raised before the
+   request, which disabled every stage button and swapped the header for a
+   spinner. And the finally block called refresh(), which refetches all state
+   and re-renders the nav, dashboard, stock and every other view to reflect one
+   changed field on one board.
+
+   The click is now optimistic: the board moves at once, the request follows,
+   and only the board detail redraws. The previous stage is kept so a failed
+   request can put it back rather than leaving the screen lying. */
 async function updateBoardStage(board, stageID) {
-  boardChecklistSyncing = true;
+  const previous = { productionStage: board.productionStage, status: board.status,
+                     stages: board.stages, currentStage: board.currentStage,
+                     completion: board.completion };
+  board.productionStage = stageID;
   boardChecklistAnimation = { boardID: board.id };
   renderBoardDetail();
   try {
-    const result = await api("/api/board-stage", {
-      boardID: board.id,
-    });
+    const result = await api("/api/board-stage", { boardID: board.id, stageID });
     Object.assign(board, result.board);
+    // Keep the shared copy in step so the dashboard and the boards list agree
+    // without paying for a full state reload.
+    const shared = state.boards.find((item) => item.id === board.id);
+    if (shared && shared !== board) Object.assign(shared, result.board);
+    renderBoardDetail();
+    renderBoards();
+    renderDashboard();
   } catch (error) {
+    Object.assign(board, previous);
+    renderBoardDetail();
     window.alert(error.message);
-  } finally {
-    boardChecklistSyncing = false;
-    await refresh();
   }
 }
 
@@ -1833,6 +1908,7 @@ function renderBoardDetail() {
     actions.append(smallBtn("Review QA", "accent", null, () => openQAModal(board)));
   }
   if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", null, () => openAssignModal(board)));
+  if (isAdmin()) actions.append(smallBtn("Delete board", "danger", null, () => openDeleteBoardModal(board)));
   top.append(identity, actions);
   view.append(top);
 
