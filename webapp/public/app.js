@@ -1054,7 +1054,8 @@ function renderProjects() {
   state.projects.forEach((project) => {
     const linked = state.boards.filter((board) => board.project === project.name);
     const completed = linked.filter((board) => board.status === "Completed").length;
-    const row = el("div", "row");
+    const row = el("button", "row click project-row");
+    row.type = "button";
     row.append(chipIcon("folder", project.colorHex || "var(--primary)"));
     const main = el("div", "row-main");
     main.append(el("div", "row-title", project.name));
@@ -1062,6 +1063,7 @@ function renderProjects() {
     row.append(main);
     if (project.dueDate) row.append(el("div", "row-sub", `Due ${new Date(project.dueDate).toLocaleString()}`));
     row.append(statusBadge(linked.length && completed === linked.length ? "Completed" : project.status));
+    row.addEventListener("click", () => openProjectOverview(project.name));
     list.append(row);
   });
   view.append(list);
@@ -1558,6 +1560,36 @@ function openCustomerOverview(customer) {
   });
 }
 
+function openProjectOverview(projectName) {
+  const project = state.projects.find((item) => item.name === projectName);
+  const boards = state.boards.filter((board) => board.project === projectName);
+  const completed = boards.filter((board) => board.status === "Completed").length;
+  const average = boards.length
+    ? Math.round(boards.reduce((sum, board) => sum + (board.completion || 0), 0) / boards.length)
+    : 0;
+  openModal((modal, close) => {
+    modal.classList.add("wide", "board-drilldown-modal");
+    modal.append(el("span", "eyebrow", "Project overview"), el("h3", null, projectName || "No project"));
+    modal.append(el("p", "modal-sub", [
+      project?.customer,
+      project?.site,
+      project?.dueDate ? `Due ${new Date(project.dueDate).toLocaleString()}` : null,
+    ].filter(Boolean).join(" · ") || "Boards connected to this project."));
+    const metrics = el("div", "drilldown-metrics four");
+    metrics.append(
+      drilldownMetric("Boards", boards.length),
+      drilldownMetric("In progress", boards.length - completed, "var(--secondary)"),
+      drilldownMetric("Finished", completed, "var(--positive)"),
+      drilldownMetric("Avg. completion", `${average}%`, "var(--warning)"),
+    );
+    modal.append(metrics, el("div", "section-label", "Project boards"));
+    const list = el("div", "board-drilldown-list");
+    boards.sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
+      .forEach((board) => list.append(boardDrilldownRow(board, close)));
+    modal.append(boards.length ? list : emptyState("board", "No boards are linked to this project yet."));
+  });
+}
+
 function openBreakerOverview(sourceBoard) {
   const breakerLabel = [sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel, sourceBoard.mainBreakerAmpere].filter(Boolean).join(" · ");
   const matching = state.boards.filter((board) =>
@@ -1658,7 +1690,8 @@ function renderBoardDetail() {
   const outDate = board.dateOut ? new Date(board.dateOut).toLocaleDateString() : "Not set";
   const dueDate = board.dueDate ? new Date(board.dueDate).toLocaleDateString() : "No due date";
   properties.append(
-    boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project),
+    boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project,
+      board.project && board.project !== "No Project" ? () => openProjectOverview(board.project) : null),
     boardProperty("team", "Builder", board.assignedName || "Unassigned", board.assignedName
       ? () => openWorkerOverview(board.assignedTo, board.assignedName) : null),
     boardProperty("shield", "QA reviewer", board.qaAssignedName || "Unassigned", board.qaAssignedName
@@ -1716,7 +1749,10 @@ function renderBoardDetail() {
     ? `${(board.costItems || []).length} part type${(board.costItems || []).length === 1 ? "" : "s"}`
     : "No stock issued yet"));
   if (canSeeCosts()) linkedList.append(boardProperty("pulse", "Parts cost", money(board.costMinor || 0)));
-  linkedList.append(boardProperty("folder", "Customer / project", [board.customer, board.project !== "No Project" ? board.project : null].filter(Boolean).join(" · ")));
+  linkedList.append(boardProperty("folder", "Customer / project", [board.customer, board.project !== "No Project" ? board.project : null].filter(Boolean).join(" · "),
+    board.project && board.project !== "No Project"
+      ? () => openProjectOverview(board.project)
+      : board.customer ? () => openCustomerOverview(board.customer) : null));
   linkedPanel.append(linkedList);
   if ((board.costItems || []).length) {
     const parts = el("div", "linked-parts");

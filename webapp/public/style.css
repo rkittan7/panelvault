@@ -638,6 +638,10 @@ input:focus, select:focus, textarea:focus {
 }
 .row.click { cursor: pointer; }
 .row.click:hover { background: var(--wash-1); }
+.project-row {
+  width: 100%; color: var(--ink); background: transparent;
+  border: 0; font: inherit; text-align: left;
+}
 .row-main { flex: 1; min-width: 0; }
 .row-title {
   font-size: 13px; font-weight: 600;
