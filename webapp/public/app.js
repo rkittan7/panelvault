@@ -771,7 +771,7 @@ function renderDashboard() {
     [board.name, board.project !== "No Project" ? board.project : board.customer].filter(Boolean).join(" · "), "Assign", () => openAssignModal(board),
   )));
   low.slice(0, 3).forEach((item) => attentionPanel.body.append(attentionItem(
-    "alert", "var(--warning)", `${item.part.manufacturer} ${item.part.model}`,
+    "alert", "var(--warning)", partTitle(item.part),
     `${item.onHand} on hand · minimum ${item.minimumLevel}${item.location ? ` · ${item.location}` : ""}`, "Review stock", () => switchView("stock"),
   )));
   if (!attentionCount) {
@@ -831,7 +831,7 @@ function renderDashboard() {
       const row = el("div", "row click");
       row.append(partChip(item.part));
       const copy = el("div", "row-main");
-      copy.append(el("div", "row-title", `${item.part.manufacturer} ${item.part.model}`), el("div", "row-sub", item.location || item.part.type));
+      copy.append(el("div", "row-title", partTitle(item.part)), el("div", "row-sub", item.location || item.part.type));
       const quantity = el("div", "qty-col");
       quantity.append(el("div", "num low", String(item.onHand)), el("div", "cap", `min ${item.minimumLevel}`));
       row.append(copy, quantity);
@@ -907,7 +907,7 @@ function renderStock() {
       const row = el("div", "row");
       row.append(partChip(s.part));
       const main = el("div", "row-main");
-      main.append(el("div", "row-title", `${s.part.manufacturer} ${s.part.model}`));
+      main.append(el("div", "row-title", partTitle(s.part)));
       const bits = [s.part.type, s.part.rating, s.part.poles, s.part.curve,
         s.part.serialNumber && `Serial: ${s.part.serialNumber}`, s.location].filter(Boolean).join(" · ");
       main.append(partSubLine(s.part, bits));
@@ -2046,7 +2046,7 @@ function partModalHead(part, note, lead = false) {
     head.append(figure);
   }
   const text = el("div", "part-head-text");
-  text.append(el("div", "part-head-title", `${part.manufacturer} ${part.model}`));
+  text.append(el("div", "part-head-title", partTitle(part)));
   const bits = [part.type, part.rating, note].filter(Boolean).join(" · ");
   const sub = el("div", "modal-sub brand-line");
   const mark = brandMark(part.manufacturer);
@@ -2130,6 +2130,51 @@ function stockCurveOptions(part) {
   return [];
 }
 
+/* ---- how far up the ampere list a part can actually go ----
+
+   AMPERE_RATINGS runs to 6300A because a busbar or an ACB can. An S201 stops
+   at 63A, and offering 6300A on it invites a stock line that no such device
+   exists for. The ceiling comes from the part's own rating, which already
+   states a range or a top figure for most of the catalog: "0.5-63A" gives 63,
+   "16-3150A" gives 3150, "IEC 250A frame" gives 250. A part still carrying the
+   "Set A" placeholder has nothing to read, so it keeps the full list rather
+   than being capped at a guess. */
+function ampereValue(text) {
+  const match = String(text || "").match(/([\d.]+)\s*A\b/gi);
+  if (!match) return null;
+  const numbers = match.map((piece) => parseFloat(piece));
+  return numbers.length ? Math.max(...numbers) : null;
+}
+
+/** The ampere options worth offering for a part, largest allowed value last. */
+function ampereOptionsFor(part) {
+  const ceiling = ampereValue(part && part.rating);
+  if (!ceiling) return [...AMPERE_RATINGS];
+  const allowed = AMPERE_RATINGS.filter((value) => ampereValue(value) <= ceiling);
+  // The ceiling itself is rarely one of the standard steps — an AF09 tops out
+  // at 9A and an OT at 3150A, neither of which the list carries. Truncating to
+  // the step below would refuse the very rating the part is sold at, so the
+  // ceiling is offered in its own right when the list has no room for it.
+  if (!allowed.some((value) => ampereValue(value) === ceiling)) {
+    allowed.push(`${ceiling}A`);
+  }
+  return allowed.length ? allowed : [...AMPERE_RATINGS];
+}
+
+/* A stocked S201 at 6A and one at 16A are different things on the shelf and
+   the same words on screen, because the title is only ever the brand and the
+   model. Where a part carries one exact ampere figure — which is what choosing
+   a stock variant produces — it belongs in the title next to the model. A
+   catalog family whose rating is a range or a placeholder is left alone: a
+   heading of "S201 0.5-63A" tells a reader nothing they want. */
+function partTitle(part) {
+  if (!part) return "";
+  const name = `${part.manufacturer} ${part.model}`.trim();
+  const rating = String(part.rating || "").trim();
+  const exact = /^[\d.]+\s*A$/i.test(rating);
+  return exact ? `${name} · ${rating}` : name;
+}
+
 function exactChoiceField(labelText, placeholder, values, selected = "") {
   const field = selectField(labelText, [placeholder, ...values], values.includes(selected) ? selected : placeholder);
   field.placeholder = placeholder;
@@ -2143,7 +2188,7 @@ function openStockVariantModal(template) {
     modal.append(partModalHead(template, "Choose the exact stock variant", true));
 
     const grid = el("div", "creation-grid stock-variant-grid");
-    const ratingValues = [...AMPERE_RATINGS];
+    const ratingValues = ampereOptionsFor(template);
     if (template.rating && template.rating !== "Set A" && !ratingValues.includes(template.rating)) {
       ratingValues.unshift(template.rating);
     }
@@ -2245,7 +2290,7 @@ async function openPartPicker() {
           const row = el("div", "row click");
           row.append(partChip(p));
           const main = el("div", "row-main");
-          main.append(el("div", "row-title", `${p.manufacturer} ${p.model}`));
+          main.append(el("div", "row-title", partTitle(p)));
           const bits = [p.type, p.rating, p.poles, p.curve, p.serialNumber && `Serial: ${p.serialNumber}`]
             .filter(Boolean).join(" · ");
           main.append(partSubLine(p, bits));
