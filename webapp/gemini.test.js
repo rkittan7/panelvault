@@ -71,9 +71,33 @@ test("reading a document sends it inline and returns parsed JSON", async () => {
   assert.equal(result.data.board.number, "3918.24-1");
   assert.equal(request.body.contents[0].parts[0].inline_data.mime_type, "application/pdf");
   assert.equal(request.body.contents[0].parts[0].inline_data.data, "JVBERi0=");
-  // Extraction, not invention.
-  assert.equal(request.body.generationConfig.temperature, 0);
+  assert.equal(
+    request.body.contents[0].parts[0].mediaResolution.level,
+    "media_resolution_medium",
+  );
+  // Gemini 3 is tuned for its default temperature; the no-guess rule belongs
+  // in the extraction instruction and semantic validation instead.
+  assert.equal(request.body.generationConfig.temperature, undefined);
   assert.equal(request.body.generationConfig.responseMimeType, "application/json");
+});
+
+test("a photographed drawing uses high media resolution", async () => {
+  let requestBody;
+  const client = createGeminiClient({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: '{"board":{},"components":[],"warnings":[]}' }] } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+
+  await client.readDocument({ data: "AAAA", mimeType: "image/jpeg", prompt: "read" });
+  assert.equal(
+    requestBody.contents[0].parts[0].mediaResolution.level,
+    "media_resolution_high",
+  );
 });
 
 test("reading a document rejects unsupported types and oversized files", async () => {

@@ -1,6 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { matchCatalogPart, normalizeReading } = require("./scheme");
+const {
+  BOARD_SCHEME_INSTRUCTION,
+  BOARD_SCHEME_SCHEMA,
+  boardSchemePrompt,
+  matchCatalogPart,
+  modelKeys,
+  normalizeReading,
+} = require("./scheme");
 
 const CATALOG = [
   { id: "abb-s201-1p", manufacturer: "ABB", model: "S201", type: "MCB" },
@@ -21,6 +28,26 @@ test("spelling and spacing differences on the drawing still match", () => {
     const hit = matchCatalogPart(CATALOG, { manufacturer: "Schneider", model, type: "MCB" });
     assert.equal(hit && hit.id, "schneider-ic60n", `failed for ${model}`);
   }
+});
+
+test("the production instruction surveys title blocks and component schedules", () => {
+  assert.match(BOARD_SCHEME_INSTRUCTION, /survey the complete document/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /title block/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /component schedule/i);
+  assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
+});
+
+test("printed ABB notation resolves conservatively to its catalog family", () => {
+  const extendedCatalog = [
+    ...CATALOG,
+    { id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB" },
+    { id: "abb-f200", manufacturer: "ABB", model: "F200", type: "RCCB" },
+  ];
+  assert.ok(modelKeys("SACE Tmax XT1").includes("xt1"));
+  assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "XT1D" }).id, "abb-tmax-xt1");
+  assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "F204A" }).id, "abb-f200");
+  assert.equal(matchCatalogPart(CATALOG, { manufacturer: "ABB", model: "S201M" }).id, "abb-s201-1p");
 });
 
 test("a model belonging to another brand is refused, not coerced", () => {
@@ -50,22 +77,34 @@ test("noise too short to identify a part never matches", () => {
 
 test("a reading is split into catalog parts and lines needing a person", () => {
   const result = normalizeReading({
-    board: { number: "3918.24-1", name: "Main Distribution Board", cabinetCount: 3 },
+    board: {
+      number: "3918.24-1",
+      name: "Main Distribution Board",
+      cabinetCount: 3,
+      supplyVoltage: "400/230V AC",
+      standards: ["IEC 61439-2"],
+    },
     components: [
-      { manufacturer: "ABB", model: "S201", type: "MCB", quantity: 12, reference: "Q1" },
-      { manufacturer: "Nobody", model: "ZX9000", type: "Relay", quantity: 2 },
+      { manufacturer: "ABB", model: "S201", type: "MCB", quantity: 12, reference: "Q1", rawText: "ABB S201 C16 x12", sourcePage: 42 },
+      { manufacturer: "Nobody", model: "ZX9000", type: "Relay", quantity: 2, rawText: "Nobody ZX9000 24VDC" },
     ],
+    warnings: ["Page 7 is rotated and partly unreadable."],
   }, CATALOG);
 
   assert.equal(result.board.number, "3918.24-1");
   assert.equal(result.board.cabinetCount, 3);
+  assert.equal(result.board.supplyVoltage, "400/230V AC");
+  assert.deepEqual(result.board.standards, ["IEC 61439-2"]);
   assert.equal(result.components.length, 1);
   assert.deepEqual(
     { partID: result.components[0].partID, quantity: result.components[0].quantity },
     { partID: "abb-s201-1p", quantity: 12 },
   );
+  assert.equal(result.components[0].rawText, "ABB S201 C16 x12");
+  assert.equal(result.components[0].sourcePage, 42);
   assert.equal(result.unmatched.length, 1);
-  assert.match(result.unmatched[0].description, /ZX9000/);
+  assert.equal(result.unmatched[0].description, "Nobody ZX9000 24VDC");
+  assert.deepEqual(result.warnings, ["Page 7 is rotated and partly unreadable."]);
 });
 
 test("model output is clamped before it can reach a board draft", () => {

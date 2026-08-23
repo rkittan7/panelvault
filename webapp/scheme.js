@@ -1,60 +1,86 @@
 // Reading an AutoCAD board scheme: what to ask Gemini for, and how to turn
 // what comes back into something PanelVault can put on a board.
 //
-// Kept out of server.js so the matching rules can be tested directly. Nothing
-// here talks to the network or touches stored data.
+// Kept out of server.js so the extraction and matching rules can be tested
+// directly. The production prompt lives as a reviewable text file instead of
+// being buried in a JavaScript string.
+const fs = require("node:fs");
+const path = require("node:path");
 
-const BOARD_SCHEME_INSTRUCTION = [
-  "You read single-line and panel-layout drawings exported from AutoCAD for",
-  "electrical distribution boards, and return what is actually printed on them.",
-  "",
-  "Rules you must follow:",
-  "- Report only what the drawing states. Leave a field empty rather than",
-  "  inferring it. An empty field is corrected in seconds; a confident wrong",
-  "  one gets built into a real panel.",
-  "- Read the component schedule or bill of materials if the drawing has one.",
-  "  That table, not the symbols, is the reliable source of quantities.",
-  "- Quantities are per board. If the drawing covers several boards, report the",
-  "  one the title block names.",
-  "- Keep manufacturer and model exactly as printed (\"iC60N\", not \"IC60\").",
-  "- Amperages include the unit, as in \"630A\".",
-].join("\n");
+const BOARD_SCHEME_INSTRUCTION = fs.readFileSync(
+  path.join(__dirname, "prompts", "scheme-extract.txt"),
+  "utf8",
+).trim();
 
 /** The exact shape the phone decodes. */
 const BOARD_SCHEME_SCHEMA = {
   type: "object",
+  additionalProperties: false,
+  required: ["board", "components", "warnings"],
   properties: {
     board: {
       type: "object",
+      additionalProperties: false,
+      required: [
+        "number", "name", "customer", "project", "type", "manufacturer",
+        "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "cabinetCount",
+        "jobNumber", "revision", "supplyVoltage", "frequency", "earthingSystem",
+        "ipRating", "formSeparation", "enclosureSize", "standards", "notes",
+      ],
       properties: {
-        number: { type: "string", description: "Board number from the title block, e.g. 3918.24-1" },
-        name: { type: "string", description: "Board name or description, e.g. Main Distribution Board" },
-        customer: { type: "string", description: "Customer or client named on the drawing" },
-        project: { type: "string", description: "Project or site name" },
-        type: { type: "string", description: "MDB, SDB, MCC, ATS, Lighting, Control, or similar" },
-        manufacturer: { type: "string", description: "Enclosure manufacturer if stated" },
-        mainBreakerType: { type: "string", description: "MCCB, ACB, MCB or Main Breaker" },
-        mainBreakerModel: { type: "string", description: "Main incomer manufacturer and model" },
-        mainBreakerAmpere: { type: "string", description: "Main incomer rating with unit, e.g. 630A" },
-        cabinetCount: { type: "integer", description: "Number of cabinets or sections" },
-        notes: { type: "string", description: "Anything an electrician should check before building" },
+        number: { type: "string", description: "Exact board/drawing number from the relevant title block." },
+        name: { type: "string", description: "Board name or description, separate from the project name." },
+        customer: { type: "string", description: "Customer or client explicitly named on the drawing." },
+        project: { type: "string", description: "Project, site or building name, separate from customer." },
+        type: { type: "string", description: "Printed board classification such as MDB, SMDB, MCC or ATS." },
+        manufacturer: { type: "string", description: "Board/enclosure manufacturer only when explicitly stated." },
+        mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB or isolator." },
+        mainBreakerModel: { type: "string", description: "Exact manufacturer/model printed for the main incomer." },
+        mainBreakerAmpere: { type: "string", description: "Main incomer current rating including unit." },
+        cabinetCount: { type: "integer", minimum: 0, maximum: 40, description: "Physical cabinets or sections; 0 when unstated." },
+        jobNumber: { type: "string", description: "Job or order number exactly as printed." },
+        revision: { type: "string", description: "Drawing revision/state exactly as printed." },
+        supplyVoltage: { type: "string", description: "Supply voltage exactly as printed." },
+        frequency: { type: "string", description: "Supply frequency exactly as printed." },
+        earthingSystem: { type: "string", description: "Earthing system exactly as printed, e.g. TN-S or TN-C-S." },
+        ipRating: { type: "string", description: "Enclosure IP rating exactly as printed." },
+        formSeparation: { type: "string", description: "Internal separation form exactly as printed." },
+        enclosureSize: { type: "string", description: "Enclosure dimensions exactly as printed." },
+        standards: { type: "array", maxItems: 20, items: { type: "string" }, description: "Standards explicitly printed for this board." },
+        notes: { type: "string", description: "Board-specific construction/review notes; no generic prose." },
       },
     },
     components: {
       type: "array",
-      description: "Every part in the schedule, one entry per line.",
+      maxItems: 200,
+      description: "Every distinct component schedule/BOM line for the selected board.",
       items: {
         type: "object",
+        additionalProperties: false,
+        required: [
+          "rawText", "manufacturer", "model", "type", "rating", "poles",
+          "curve", "sensitivity", "quantity", "reference", "sourcePage",
+        ],
         properties: {
-          manufacturer: { type: "string" },
-          model: { type: "string" },
-          type: { type: "string", description: "MCB, MCCB, RCBO, Contactor, VFD, and so on" },
-          rating: { type: "string" },
-          poles: { type: "string" },
-          quantity: { type: "integer" },
-          reference: { type: "string", description: "Circuit or tag reference, e.g. Q3" },
+          rawText: { type: "string", description: "Identifying schedule row transcribed from the source." },
+          manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
+          model: { type: "string", description: "Model/series exactly as printed, preserving significant suffixes." },
+          type: { type: "string", description: "Printed device type such as MCB, MCCB, contactor or meter." },
+          rating: { type: "string", description: "Current/power/voltage rating exactly as printed." },
+          poles: { type: "string", description: "Pole count exactly as printed." },
+          curve: { type: "string", description: "Trip curve/class exactly as printed." },
+          sensitivity: { type: "string", description: "RCD sensitivity exactly as printed." },
+          quantity: { type: "integer", minimum: 0, maximum: 999, description: "Explicit quantity or tag count; 0 when unknown." },
+          reference: { type: "string", description: "Exact device tag(s), circuit or schedule reference." },
+          sourcePage: { type: "integer", minimum: 0, description: "One-based PDF page for this line; 0 when unknown." },
         },
       },
+    },
+    warnings: {
+      type: "array",
+      maxItems: 20,
+      items: { type: "string" },
+      description: "Unreadable, ambiguous, conflicting or multi-board issues a reviewer must check.",
     },
   },
 };
@@ -62,16 +88,36 @@ const BOARD_SCHEME_SCHEMA = {
 function boardSchemePrompt(fileName) {
   const named = String(fileName || "").trim();
   return [
-    "Read this electrical distribution board scheme and return its details and",
-    "its component schedule.",
-    named ? `The file is named "${named.slice(0, 200)}", which may carry the board number.` : "",
-    "If a field is not printed on the drawing, return an empty string for it.",
+    "Read the complete electrical board document and extract the relevant title block,",
+    "main incomer and every component schedule/BOM line using the supplied schema.",
+    named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
+    "Return empty strings, empty arrays or 0 for information that is not visibly stated.",
   ].filter(Boolean).join(" ");
 }
 
 /** Normalised text used to compare a read part against the catalog. */
 function partKey(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** Comparable model keys, including only conservative notation reductions.
+ * Catalog rows name product families ("SACE Tmax XT1") while schedules often
+ * print a variant ("XT1D"). These reductions find the family without erasing
+ * the exact raw line that the reviewer still needs to verify. */
+function modelKeys(value) {
+  const raw = partKey(value);
+  if (!raw) return [];
+  const keys = new Set([raw]);
+  let withoutRangeWords = raw;
+  for (const prefix of ["acti9", "sace", "tmax", "sentron"]) {
+    if (withoutRangeWords.startsWith(prefix)) withoutRangeWords = withoutRangeWords.slice(prefix.length);
+  }
+  if (withoutRangeWords) keys.add(withoutRangeWords);
+  if (/^s20[1-4]m$/.test(withoutRangeWords)) keys.add(withoutRangeWords.slice(0, -1));
+  const tmaxVariant = withoutRangeWords.match(/^(xt[1-7])[cdn]$/);
+  if (tmaxVariant) keys.add(tmaxVariant[1]);
+  if (/^f20[1-4]a$/.test(withoutRangeWords)) keys.add("f200");
+  return [...keys].filter((key) => key.length >= 3);
 }
 
 /** Best catalog part for something read off a drawing, or null.
@@ -82,19 +128,23 @@ function partKey(value) {
  * agree whenever the drawing names one, and an ambiguous tie is refused.
  */
 function matchCatalogPart(catalog, part) {
-  const model = partKey(part.model);
-  if (!model || model.length < 3) return null;
+  const models = modelKeys(part.model || part.rawText);
+  if (!models.length) return null;
   const manufacturer = partKey(part.manufacturer);
 
   const scored = catalog
     .map((candidate) => {
-      const candidateModel = partKey(candidate.model);
-      if (!candidateModel) return null;
+      const candidateModels = modelKeys(candidate.model);
+      if (!candidateModels.length) return null;
 
       let score = 0;
-      if (candidateModel === model) score = 3;
-      else if (candidateModel.includes(model) || model.includes(candidateModel)) score = 2;
-      else return null;
+      for (const model of models) {
+        for (const candidateModel of candidateModels) {
+          if (candidateModel === model) score = Math.max(score, 3);
+          else if (candidateModel.includes(model) || model.includes(candidateModel)) score = Math.max(score, 2);
+        }
+      }
+      if (!score) return null;
 
       // A model alone is ambiguous across brands — several ranges share
       // numbers — so the brand must agree whenever the drawing names one.
@@ -131,6 +181,10 @@ const text = (value, max) => String(value ?? "").trim().slice(0, max);
 function normalizeReading(reading, catalog) {
   const board = reading?.board || {};
   const parts = Array.isArray(reading?.components) ? reading.components : [];
+  const warnings = (Array.isArray(reading?.warnings) ? reading.warnings : [])
+    .map((warning) => text(warning, 240))
+    .filter(Boolean)
+    .slice(0, 20);
 
   const components = [];
   const unmatched = [];
@@ -144,17 +198,29 @@ function normalizeReading(reading, catalog) {
         model: hit.model,
         type: hit.type,
         quantity,
-        reference: text(part.reference, 60),
+        reference: text(part.reference, 120),
+        rawText: text(part.rawText, 400),
+        rating: text(part.rating, 60),
+        poles: text(part.poles, 30),
+        curve: text(part.curve, 30),
+        sensitivity: text(part.sensitivity, 30),
+        sourcePage: Math.min(Math.max(Math.trunc(Number(part.sourcePage) || 0), 0), 1000),
       });
     } else {
-      const description = [part.manufacturer, part.model, part.rating]
+      const description = text(part.rawText, 400) || [part.manufacturer, part.model, part.rating]
         .map((bit) => text(bit, 60)).filter(Boolean).join(" ");
       if (!description && !text(part.type, 60)) continue;
       unmatched.push({
         description: description.slice(0, 140),
         type: text(part.type, 60),
         quantity,
-        reference: text(part.reference, 60),
+        reference: text(part.reference, 120),
+        rawText: text(part.rawText, 400),
+        rating: text(part.rating, 60),
+        poles: text(part.poles, 30),
+        curve: text(part.curve, 30),
+        sensitivity: text(part.sensitivity, 30),
+        sourcePage: Math.min(Math.max(Math.trunc(Number(part.sourcePage) || 0), 0), 1000),
       });
     }
   }
@@ -171,10 +237,21 @@ function normalizeReading(reading, catalog) {
       mainBreakerModel: text(board.mainBreakerModel, 80),
       mainBreakerAmpere: text(board.mainBreakerAmpere, 20),
       cabinetCount: Math.min(Math.max(Math.trunc(Number(board.cabinetCount) || 1), 1), 40),
+      jobNumber: text(board.jobNumber, 60),
+      revision: text(board.revision, 60),
+      supplyVoltage: text(board.supplyVoltage, 40),
+      frequency: text(board.frequency, 30),
+      earthingSystem: text(board.earthingSystem, 30),
+      ipRating: text(board.ipRating, 30),
+      formSeparation: text(board.formSeparation, 40),
+      enclosureSize: text(board.enclosureSize, 80),
+      standards: (Array.isArray(board.standards) ? board.standards : [])
+        .map((standard) => text(standard, 80)).filter(Boolean).slice(0, 20),
       notes: text(board.notes, 600),
     },
     components,
     unmatched,
+    warnings,
   };
 }
 
@@ -183,6 +260,7 @@ module.exports = {
   BOARD_SCHEME_SCHEMA,
   boardSchemePrompt,
   matchCatalogPart,
+  modelKeys,
   normalizeReading,
   partKey,
 };

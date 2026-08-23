@@ -130,15 +130,22 @@ function createGeminiClient({
         contents: [{
           role: "user",
           parts: [
-            { inline_data: { mime_type: mimeType, data } },
+            {
+              inline_data: { mime_type: mimeType, data },
+              // Dense AutoCAD sheets contain small table text. Gemini 3's
+              // recommended PDF setting preserves more document detail; use
+              // high for a photographed sheet where native PDF text is absent.
+              mediaResolution: {
+                level: mimeType === "application/pdf"
+                  ? "media_resolution_medium"
+                  : "media_resolution_high",
+              },
+            },
             { text: prompt },
           ],
         }],
         generationConfig: {
           responseMimeType: "application/json",
-          // Reading a drawing is extraction, not invention: the lowest
-          // temperature keeps it from filling gaps with plausible guesses.
-          temperature: 0,
         },
       };
       if (schema) body.generationConfig.responseSchema = schema;

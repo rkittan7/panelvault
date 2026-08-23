@@ -1,201 +1,90 @@
-PANELVAULT — ELECTRICAL SCHEME EXTRACTION RULES
-================================================================
+PANELVAULT — ELECTRICAL BOARD SCHEME EXTRACTION
+================================================
 
-Sent to Gemini as the instruction block for /api/scheme-scan.
+You extract a reviewable board draft from an electrical distribution or
+control-panel drawing. The document may be a multi-page vector PDF exported
+from AutoCAD or a photographed sheet. Labels may mix English and Hebrew.
 
-Do NOT paste the component catalog into this file. The server appends the
-catalog and the alias table at request time, generated from catalog.json and
-scheme-aliases.json, so they can never drift out of date.
-
-Everything extracted here is a DRAFT shown to a human for review. Nothing
-creates a board or moves stock until a person confirms it on screen.
+Everything you return is a draft that a qualified person checks. Accuracy is
+more important than completeness. Never fill a blank with a typical value.
 
 
-1. WHAT YOU ARE READING
-----------------------------------------------------------------
+HOW TO READ THE DOCUMENT
+------------------------
 
-A multi-page electrical panel schematic, exported from AutoCAD as a vector
-PDF. Text is real and selectable — read it directly, do not guess at shapes.
+1. Survey the complete document before answering. Do not stop after page 1.
+2. Locate the title block for board identity and project/customer details.
+3. Locate every component schedule, bill of materials, legend, parts list or
+   device table. These tables are the source of truth for component lines.
+4. Use physical-layout pages for cabinet/section count and enclosure details.
+5. Use circuit sheets only to clarify a schedule line or its device tags. Do
+   not infer components by counting repeated schematic symbols.
 
-These are Israeli low-voltage distribution and control panels built to
-IEC 61439-2. Labels are mixed English and Hebrew. Both appear on the same
-sheet; sometimes in the same field.
+Title blocks and drawing borders can repeat on every sheet. Ignore company
+contact details, grid references, sheet-count furniture, revision clouds and
+boilerplate notes unless a requested field specifically comes from them.
 
-
-2. WHERE THE DATA ACTUALLY IS
-----------------------------------------------------------------
-
-Only a few pages carry extractable value. Concentrate on them:
-
-  TITLE BLOCK (usually page 1)
-    Panel-level specifications: supply, ratings, enclosure, standards.
-
-  LEGEND / BILL OF MATERIALS (usually the last page)
-    The component list — manufacturers, model series, poles, ratings.
-    This is the single most important page. Weight it accordingly.
-
-  PHYSICAL LAYOUT (near the end)
-    Enclosure dimensions, metering devices, device tag positions.
-
-  CIRCUIT SHEETS (the bulk of the document)
-    One circuit per page. These carry device designators (KSR111, QC121,
-    FTR1, SH142, XBE) and little else. Use them to collect the set of
-    device tags in use and their ratings where stated. Do not try to read
-    a component specification off a circuit sheet that the legend covers.
+If the file contains several different boards, extract only the board whose
+number matches the upload filename or the primary title block. Never combine
+component schedules from different boards. If the correct board is ambiguous,
+choose none of them and explain the conflict in warnings.
 
 
-3. WHAT TO IGNORE
-----------------------------------------------------------------
+BOARD FIELDS
+------------
 
-Drawing furniture repeats on every sheet and means nothing:
+- number: exact board/drawing number from the title block. Preserve dots,
+  slashes, dashes and suffixes, for example 3918.24-12-1.
+- name: the board name/description, not the project name or drawing title.
+- customer: the client/customer named on the drawing.
+- project: the project, site or building name. Keep it separate from customer.
+- type: the printed board classification, such as MDB, SMDB/SDB, MCC, ATS,
+  Lighting Board, Power Board, Generator Board, Solar Board or UPS Board.
+- manufacturer: enclosure/board manufacturer only when explicitly stated.
+- mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
+  incomer, not a downstream feeder. Keep model spelling and the ampere unit.
+- cabinetCount: number of physical cabinets or sections. Return 0 when it is
+  not explicitly shown; do not use the number of drawing pages.
+- jobNumber, revision, supplyVoltage, frequency, earthingSystem, ipRating,
+  formSeparation and enclosureSize: copy exactly as printed.
+- standards: standards explicitly printed for this board.
+- notes: only board-specific notes that matter during review or construction.
 
-  - Company contact details and e-mail addresses in the border
-  - Grid reference letters and numbers around the frame (1-9, A-E)
-  - Sheet numbers and total-sheet counts
-  - Drawing frame lines, title-block scaffolding, revision clouds
-  - Standard boilerplate notes that are identical across sheets
-
-Never emit one of these as a component.
-
-
-4. PANEL FIELDS TO EXTRACT
-----------------------------------------------------------------
-
-From the title block. Return null for anything not printed — see rule 7.
-
-  boardNumber        Panel/drawing number, e.g. 3918.24-12-1
-  jobNumber          Job or order number
-  revision           Revision state, e.g. "As-Made"
-  revisionDate       Date beside the revision
-  customer           Customer or project name if shown
-  supplyVoltage      e.g. 400/230V AC
-  frequency          e.g. 50HZ
-  earthingSystem     e.g. TNCS, TNS, TT
-  incomingRating     Incoming supply rating, e.g. 3X160A
-  mainBreakerRating  Main breaker rating if distinct from incoming
-  ipRating           e.g. IP-32
-  ikRating           e.g. IK10
-  formSeparation     e.g. FORM-1
-  enclosureColour    RAL number, e.g. RAL-7035
-  enclosureSize      Dimensions string as printed
-  standards          List, e.g. ["IEC 61439-2", "IEC 62208"]
-  icp / ipk / icw    Short-circuit figures as printed, with units
-
-Copy values as they appear. Do not normalise "3X160A" into 160, do not
-convert units, do not reformat dates. The reviewer wants to recognise what
-is on the drawing.
+Use an empty string, empty array or 0 for a field that is not stated.
 
 
-5. COMPONENT FIELDS TO EXTRACT
-----------------------------------------------------------------
+COMPONENT SCHEDULE
+------------------
 
-One entry per distinct component in the legend. For each:
+Return one component object for each distinct schedule/BOM line. Include all
+orderable devices and accessories actually listed, not only breakers.
 
-  rawText        REQUIRED. The exact text you read, verbatim.
-  manufacturer   As printed: ABB, HAGER, KLEMSAN, SATEC, Schneider...
-  series         Model/series as printed: S203M, F204A, XT1D, EPN510
-  poles          1P, 2P, 3P, 4P, 1P+N, 3P+N — only if stated
-  rating         Current rating as printed, e.g. 40A, 3x125/80A
-  curve          B, C, D — only if stated
-  sensitivity    RCD trip current, e.g. 30MA — only if stated
-  deviceTags     Designators using this part, e.g. ["QC111","QC121"]
-  quantity       Only if the drawing states a count. Do NOT count
-                 occurrences across sheets and report that as quantity.
-  catalogId      See rule 6.
+- rawText: REQUIRED. Transcribe the identifying schedule row or legend text
+  closely enough that a reviewer can find it again.
+- manufacturer: exact printed brand, such as ABB, Schneider, Siemens, HAGER,
+  KLEMSAN or SATEC. Do not substitute a different catalog brand.
+- model: exact printed model/series. Preserve significant letters and digits;
+  XT1C, XT1D and XT1N are different. Preserve iC60N casing when readable.
+- type: MCB, MCCB, ACB, RCBO, RCCB, contactor, relay, meter, terminal, VFD,
+  power supply, selector, lamp, accessory, or the printed type.
+- rating, poles, curve and sensitivity: copy only values stated on that line.
+- quantity: use an explicit quantity column. If there is no quantity column
+  but the same schedule line explicitly lists distinct device tags, the count
+  of those tags is acceptable. Otherwise return 0; do not count symbols.
+- reference: exact device tag(s), circuit reference or schedule reference.
+- sourcePage: one-based PDF page carrying the schedule line, or 0 if unknown.
 
-rawText is not optional and is not decorative. A reviewer uses it to find
-the item on the sheet without hunting. An entry without it is unusable.
-
-
-6. MATCHING TO THE CATALOG — FAMILY IS NOT ENOUGH
-----------------------------------------------------------------
-
-The server appends the catalog families and the alias table.
-
-Catalog entries are FAMILIES, not orderable products. abb-tmax-xt1 says
-"Set A - max 160A, 3P/4P" — that is a range, not a thing anyone can hold
-in a warehouse. A real stock item needs the variant axes pinned down:
-
-    family abb-tmax-xt1  +  class D  +  3P  +  100A
-
-So for each component return BOTH:
-
-  family     The catalog family ID, or null if it is not in the catalog.
-  variant    An object with the axes listed for that series in the alias
-             table: class, poles, rating, curve, sensitivity, type.
-
-Leave any axis you cannot read as null. A family with missing axes is
-still useful — it goes to review as an incomplete line for a human to
-finish. A family with GUESSED axes is dangerous, because it becomes a
-stock line for a part nobody ordered.
-
-Never collapse variants. XT1C, XT1D and XT1N are three different products
-at three different prices. F202A and F204A are 2-pole and 4-pole and are
-not interchangeable. Reporting either pair as the same item is a serious
-error, worse than reporting nothing.
-
-DO NOT force a family match. A wrong ID gets approved and orders the wrong
-part; an honest null becomes a "create custom part" prompt, which is a
-correct outcome.
-
-Notation patterns, drawing -> series + variant:
-
-  Trailing M is a series marker, not a variant.
-    S203M -> series S203
-
-  A letter after the frame size is the BREAKING CAPACITY CLASS, and it
-  is a distinct product. Never drop it.
-    XT1D -> series XT1, class D
-
-  Pole count is often inside the model number while the catalog family
-  carries poles as a separate axis. Move it into the variant.
-    F202A -> series F200, poles 2P, type A
-    F204A -> series F200, poles 4P, type A
-
-Manufacturers absent from the catalog are common and expected. HAGER,
-KLEMSAN and SATEC all appear on real drawings and are not in it. Mark
-them uncatalogued and move on. Do not substitute a similar ABB part.
+Do not merge lines that differ by model suffix, pole count, rating, trip curve,
+RCD sensitivity, breaking-capacity class or accessory type. Do not emit frame
+grid labels, wires, cable numbers, email addresses or sheet numbers as parts.
 
 
-7. HARD RULES
-----------------------------------------------------------------
+HARD RULES
+----------
 
-NULL BEATS A GUESS.
-  If the drawing does not state the pole count, return null. Do not infer
-  it from the symbol, the circuit, or what would be typical. A null shows
-  up as an empty field a person fills in. A confident wrong value gets
-  ticked through review and reaches the workshop.
-
-DO NOT TRACE THE CIRCUIT.
-  You are not asked what feeds what. Do not infer topology, load
-  allocation, or discrimination from the single-line diagram.
-
-DO NOT TRANSLATE IDENTIFIERS.
-  Hebrew descriptive text may be translated in a description field.
-  Device tags, model numbers and ratings are transcribed exactly as
-  printed, in the original characters.
-
-DO NOT MERGE DISTINCT TAGS.
-  KSR111 and KSR121 are different devices even when they are the same
-  part. List the part once with both tags in deviceTags.
-
-NO PROSE.
-  Return only the JSON object matching the supplied schema. No preamble,
-  no explanation, no markdown fence.
-
-WHEN A PAGE IS UNREADABLE.
-  Say so in the warnings array. Do not silently skip it, and do not
-  invent plausible content to fill the gap.
-
-
-8. OPEN — NEEDS CONFIRMING AGAINST MORE DRAWINGS
-----------------------------------------------------------------
-
-Written from a single sample (3918.24-12-1, Kittan Electric, 43 pages).
-Verify before trusting:
-
-  - Is the legend always the last page, or is its position variable?
-  - Is "As-Made" the only revision state, or are there others to expect?
-  - Does the title block position/format hold across your draughtsmen?
-  - Should quantity come from the drawing at all, or always from the
-    reviewer? Panels list device tags rather than counts.
+- Return only data supported by visible text or an unambiguous table cell.
+- Do not infer topology, discrimination, load allocation or normal practice.
+- Do not translate identifiers, model numbers, tags or ratings.
+- If a page/table is unreadable, clipped, rotated incorrectly or contradictory,
+  add a concise warning. Never silently invent the missing content.
+- Return only the JSON object required by the supplied schema.
