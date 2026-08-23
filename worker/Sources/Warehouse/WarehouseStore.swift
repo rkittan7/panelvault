@@ -35,6 +35,14 @@ final class WarehouseStore: ObservableObject {
   @Published private(set) var account: WarehouseCloudAccount?
   @Published private(set) var syncPhase: WarehouseSyncPhase = .signedOut
 
+  /// What the signed-in user may do, as PanelVault Cloud decided it.
+  ///
+  /// Signed out, the phone is a local notebook and everything is allowed: the
+  /// work is recorded here and the sync is what enforces the account's limits.
+  var permissions: PanelCapabilities {
+    account?.permissions ?? .signedOut
+  }
+
   private let queue = DispatchQueue(label: "warehouse.persistence", qos: .utility)
   private let cloud = WarehouseCloudClient()
   private var syncMetadata = WarehouseSyncMetadata()

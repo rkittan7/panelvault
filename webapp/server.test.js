@@ -741,3 +741,56 @@ test("scheme reading is authenticated, guarded, and allowed a document-sized bod
     server.stop();
   }
 });
+
+test("sign-in tells every client the same capabilities, and the Swift copy agrees", async () => {
+  const server = await startServer();
+  const { baseURL } = server;
+  try {
+    const registered = await json(baseURL, "/api/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Kittan Electric", name: "Rawe", password: "secret12" }),
+    });
+    const code = registered.body.companyCode;
+
+    // The phones must be told what they may do, not left to guess from the
+    // role name — guessing is what let the apps lock out staff managers.
+    const mobile = await json(baseURL, "/api/mobile/login", {
+      method: "POST",
+      body: JSON.stringify({ companyCode: code, name: "Rawe", password: "secret12" }),
+    });
+    assert.equal(mobile.response.status, 200);
+    assert.deepEqual(mobile.body.can, {
+      administer: true, seeCosts: true, signOffQA: true, manageMembers: true,
+    });
+    assert.equal(mobile.body.roleLabel, "Owner");
+
+    // The browser reads the same block from /api/state.
+    const web = await json(baseURL, "/api/login", {
+      method: "POST",
+      body: JSON.stringify({ companyCode: code, name: "Rawe", password: "secret12" }),
+    });
+    const cookie = { Cookie: `session=${web.body.token || ""}` };
+    const state = await json(baseURL, "/api/state", {
+      headers: { Authorization: `Bearer ${mobile.body.token}`, ...cookie },
+    });
+    assert.deepEqual(state.body.me.can, mobile.body.can);
+
+    // The apps ship the same rules for accounts cached before the server sent
+    // them. If server.js and Permissions.swift ever disagree, this fails.
+    const swift = fs.readFileSync(
+      path.join(webapp, "..", "warehouse", "Sources", "Permissions.swift"), "utf8");
+    const setFor = (name) => {
+      const line = swift.match(new RegExp(`${name}: \\[([^\\]]*)\\]`));
+      return line ? line[1].match(/"([^"]+)"/g).map((s) => s.replace(/"/g, "")).sort() : [];
+    };
+    assert.deepEqual(setFor("administer"), ["manager", "owner", "staff-manager"]);
+    assert.deepEqual(setFor("seeCosts"), ["manager", "owner"]);
+    assert.deepEqual(setFor("signOffQA"), ["manager", "owner", "qa", "staff-manager"]);
+    assert.match(swift, /manageMembers:\s*role == "owner"/);
+    for (const label of ["Owner", "Manager", "Staff Manager", "QA", "Staff"]) {
+      assert.ok(swift.includes(`"${label}"`), `Swift is missing the ${label} label`);
+    }
+  } finally {
+    server.stop();
+  }
+});

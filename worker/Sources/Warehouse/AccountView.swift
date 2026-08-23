@@ -140,7 +140,7 @@ struct AccountView: View {
           VStack(alignment: .leading, spacing: 3) {
             Text(account.companyName)
               .font(.title3.weight(.heavy))
-            Text("\(account.userName)  ·  \(account.role.capitalized)")
+            Text("\(account.userName)  ·  \(account.roleLabel)")
               .font(.subheadline.weight(.semibold))
               .foregroundStyle(theme.mutedText)
           }

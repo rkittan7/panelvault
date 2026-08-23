@@ -84,6 +84,33 @@ either, the app says so and offers the manual form rather than pretending.
 The matching rules live in `webapp/scheme.js` and are covered by
 `webapp/scheme.test.js`.
 
+## Roles and permissions
+
+One definition, on the server. `capabilitiesFor()` in `webapp/server.js` decides
+what an account may do, and both the website (`/api/state`) and the phones
+(`/api/mobile/login`) are handed the same block:
+
+| Capability | Roles |
+| --- | --- |
+| `administer` — change stock, manage parts, teach barcodes, create and assign boards | Owner, Manager, Staff Manager |
+| `seeCosts` — unit prices, stock value, board cost | Owner, Manager |
+| `signOffQA` | Owner, Manager, Staff Manager, QA |
+| `manageMembers` | Owner |
+
+The apps used to re-derive this from the role name as `owner || manager`, in six
+separate places, which locked **Staff Managers** out of stocktakes, part
+creation and barcode teaching that PanelVault Cloud has always allowed them.
+They now read the capabilities the server sent, so the phone permits exactly
+what the server will accept.
+
+`PanelCapabilities.forRole` in `warehouse/Sources/Permissions.swift` carries the
+same rules for an account cached before the server sent them, or one signed in
+against an older PanelVault Cloud. A test in `webapp/server.test.js` reads that
+Swift file and fails if it stops matching `server.js`, so the two cannot drift.
+
+Signed out, the phone allows everything: it is a local notebook, and the sync is
+what enforces the account's limits.
+
 ## Component and manufacturer photos
 
 Every component and every manufacturer can carry a picture, and all four

@@ -14,6 +14,12 @@ struct WarehouseCloudAccount: Codable, Equatable {
   let userID: String
   let userName: String
   let role: String
+  /// Sent by the server at sign-in. Optional so an account stored by an
+  /// earlier build still decodes; `permissions` falls back to the role rules.
+  var can: PanelCapabilities? = nil
+
+  var permissions: PanelCapabilities { can ?? .forRole(role) }
+  var roleLabel: String { PanelRole.label(role) }
 }
 
 enum WarehouseSyncPhase: Equatable {
@@ -170,6 +176,9 @@ struct CloudLoginResponse: Decodable {
   struct Company: Decodable { let code: String; let name: String }
   struct User: Decodable { let id: String; let name: String; let role: String }
 
+  /// Absent when signing in to a PanelVault Cloud older than this app.
+  let can: PanelCapabilities?
+
   let token: String
   let expiresAt: String
   let company: Company
@@ -310,7 +319,8 @@ struct WarehouseCloudClient {
       companyName: response.company.name,
       userID: response.user.id,
       userName: response.user.name,
-      role: response.user.role
+      role: response.user.role,
+      can: response.can
     )
   }
 

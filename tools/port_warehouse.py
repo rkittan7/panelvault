@@ -33,7 +33,7 @@ OUT = "worker/Sources/Warehouse"
 # has `CatalogImageLibrary` from the PanelVault side, and porting the warehouse
 # copy would redeclare it in the same target. The views built on top of it live
 # in CatalogPartViews.swift, which does get ported.
-SKIP = {"Theme.swift", "WarehouseApp.swift", "CatalogImages.swift"}
+SKIP = {"Theme.swift", "WarehouseApp.swift", "CatalogImages.swift", "Permissions.swift"}
 
 RENAME_FILES = {
     "Catalog.swift": "WarehouseCatalog.swift",

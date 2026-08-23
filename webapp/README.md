@@ -62,11 +62,18 @@ back to verify the import.
   6-character company code.
 - **Invite links** — generated on the Team tab, one per role, revocable.
   Workers join with the link and choose their own password.
-- **owner / manager** — change stock, add parts, create and assign boards,
-  invite people. Only the owner can mint manager invites, change roles, or
-  disable members.
-- **worker** — sees stock and assigned boards, records receipts/consumption,
-  can add a previously unknown delivery part, and updates assigned-board status.
+- **Owner / Manager / Staff Manager** — change stock, add parts, teach
+  barcodes, create and assign boards, and invite people. Only the owner can
+  change roles or disable members, and each role can only invite roles below
+  its own.
+- **QA** — signs off finished boards, on top of what Staff can do.
+- **Staff** — sees stock and assigned boards, records receipts and
+  consumption, can add a previously unknown delivery part, and updates the
+  status of a board assigned to them.
+
+The same capability block is sent to the browser and to both iPhone apps, so
+every client permits exactly what the server accepts. See "Roles and
+permissions" in the root README.
 
 Passwords are scrypt-hashed; browser sessions are HMAC-signed http-only
 cookies. The iPhone client uses an expiring HMAC bearer token stored in
@@ -94,6 +101,9 @@ with a tunnel). Two things matter in production:
   appended. Stable movement IDs make retries idempotent.
 - Movement downloads use an increasing company sequence cursor, while stock
   remains derived from the immutable movement log.
+- Permissions have one definition, `capabilitiesFor()`. `/api/state` and
+  `/api/mobile/login` both send it, so the browser and the phones gate their UI
+  on what the server will actually allow rather than re-deriving role rules.
 - `POST /api/ai/board-scheme` reads an AutoCAD board scheme and returns a board
   draft with its component schedule matched to catalog parts. It writes
   nothing, so it runs outside the mutation queue — a minute-long read must not

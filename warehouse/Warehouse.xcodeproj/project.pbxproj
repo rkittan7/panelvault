@@ -19,6 +19,7 @@
 		82E4539345E24E972A3B7464 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAAC75C666127C078B3C69DE /* Theme.swift */; };
 		AFCC866A731541A29F083F7E /* Catalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B18A6FE19A1818A9C7973A /* Catalog.swift */; };
 		B3F7E6EA10A37B578076F339 /* BarcodeStocktakeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3A23F11CFFF1BC55C40E65 /* BarcodeStocktakeView.swift */; };
+		B7BF94AE8D72346C89A13E33 /* Permissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA194DC2C4181F820BAF0CFF /* Permissions.swift */; };
 		BA950C804E9512FFA79FF30E /* catalog in Resources */ = {isa = PBXBuildFile; fileRef = CDE93142A7BF03DE27611A55 /* catalog */; };
 		C8C30C7534E9FFDC0F521BC6 /* WarehouseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1FBD5C6062B7EF9B99F7AE9 /* WarehouseStore.swift */; };
 		CF43AF26E1739E457DDE0D9D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AC152C6C90DF6256B0D5D5 /* DashboardView.swift */; };
@@ -37,6 +38,7 @@
 		CDE93142A7BF03DE27611A55 /* catalog */ = {isa = PBXFileReference; lastKnownFileType = folder; name = catalog; path = ../assets/catalog; sourceTree = SOURCE_ROOT; };
 		D15AAAF01ADCDD39E41D1309 /* CatalogImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImages.swift; sourceTree = "<group>"; };
 		D6BA059F38ED5BF4061417E9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		DA194DC2C4181F820BAF0CFF /* Permissions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Permissions.swift; sourceTree = "<group>"; };
 		DD7BAB02EBB86826A1B38CB3 /* WarehouseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WarehouseApp.swift; sourceTree = "<group>"; };
 		E1111F51AFFAC4E4A4A00C7B /* ReceiveScan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiveScan.swift; sourceTree = "<group>"; };
 		EC3A23F11CFFF1BC55C40E65 /* BarcodeStocktakeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeStocktakeView.swift; sourceTree = "<group>"; };
@@ -66,6 +68,7 @@
 				26AC152C6C90DF6256B0D5D5 /* DashboardView.swift */,
 				0720AC7CA49A4EEC7F41AC3A /* ItemDetailView.swift */,
 				D6BA059F38ED5BF4061417E9 /* Models.swift */,
+				DA194DC2C4181F820BAF0CFF /* Permissions.swift */,
 				E1111F51AFFAC4E4A4A00C7B /* ReceiveScan.swift */,
 				006EF7D8608917EC78A41119 /* ReceiveView.swift */,
 				5A142FEF12D6415BF6F8AA5F /* StockListView.swift */,
@@ -161,6 +164,7 @@
 				CF43AF26E1739E457DDE0D9D /* DashboardView.swift in Sources */,
 				6FC027FAF59C998095C5F1CB /* ItemDetailView.swift in Sources */,
 				CFF293B42E7A5C568DE6F672 /* Models.swift in Sources */,
+				B7BF94AE8D72346C89A13E33 /* Permissions.swift in Sources */,
 				0D448B34A8403EA242037E5F /* ReceiveScan.swift in Sources */,
 				06D1A1F5DFCEBBC147A46FB5 /* ReceiveView.swift in Sources */,
 				7067B85E74809315CC2DEBE7 /* StockListView.swift in Sources */,

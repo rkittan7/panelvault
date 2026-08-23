@@ -146,6 +146,7 @@ FILES = {
     "Cloud.swift": [
         "PanelCloudAccount", "PanelCloudLoginResponse", "PanelCloudMovement",
         "PanelCloudDownloadResponse", "BoardSchemeReading",
+        "PanelCapabilities", "PanelRole",
         "PanelCloudError", "PanelCloudClient",
         "PanelCloudErrorBody", "PanelCloudKeychain", "StockBadge",
     ],
