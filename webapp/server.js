@@ -13,6 +13,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readJSONBody } = require("./body");
 const { createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
 const {
@@ -755,46 +756,15 @@ function fail(res, status, message) {
 }
 
 function readBody(req) {
-  if (req.panelVaultBodyPromise) return req.panelVaultBodyPromise;
   // A megabyte is generous for the JSON every other route sends; the routes
   // that carry a base64 document raise it for themselves in the dispatcher.
-  const limit = req.panelVaultBodyLimit || 1_000_000;
-  req.panelVaultBodyPromise = new Promise((resolve, reject) => {
-    let raw = "";
-    let settled = false;
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      req.off("data", onData);
-      req.off("end", onEnd);
-      req.off("error", onError);
-      callback(value);
-    };
-    const onData = (chunk) => {
-      raw += chunk;
-      if (raw.length > limit) {
-        req.resume();
-        finish(reject, new Error("body too large"));
-      }
-    };
-    const onEnd = () => {
-      try {
-        finish(resolve, raw ? JSON.parse(raw) : {});
-      } catch {
-        finish(reject, new Error("invalid json"));
-      }
-    };
-    const onError = (error) => finish(reject, error);
-    const timer = setTimeout(() => {
-      req.resume();
-      finish(reject, new Error("request body timed out"));
-    }, 10_000);
-    req.on("data", onData);
-    req.on("end", onEnd);
-    req.on("error", onError);
+  // This is an inactivity timeout, not a deadline for the entire upload. A
+  // scheme near the 8 MB file limit becomes almost 11 MB once JSON/base64
+  // encoded and can legitimately take longer than ten seconds to arrive.
+  return readJSONBody(req, {
+    limit: req.panelVaultBodyLimit || 1_000_000,
+    idleTimeout: req.panelVaultBodyIdleTimeout || 10_000,
   });
-  return req.panelVaultBodyPromise;
 }
 
 function sessionFrom(req) {
@@ -2181,7 +2151,12 @@ const server = http.createServer(async (req, res) => {
       };
       if (req.method === "POST") {
         if (OPEN_ROUTES.has(key) && !allowAuthAttempt(req, res)) return;
-        if (LARGE_BODY_ROUTES.has(key)) req.panelVaultBodyLimit = MAX_DOCUMENT_BODY;
+        if (LARGE_BODY_ROUTES.has(key)) {
+          req.panelVaultBodyLimit = MAX_DOCUMENT_BODY;
+          // A document upload may be large and come from a phone connection.
+          // Only fail it after two minutes with no incoming bytes.
+          req.panelVaultBodyIdleTimeout = 120_000;
+        }
         await readBody(req);
         // Reading a scheme changes nothing and can take a minute or more.
         // Running it inside the mutation queue would hold every stock write in
