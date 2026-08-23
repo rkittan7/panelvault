@@ -459,8 +459,10 @@ input:focus, select:focus, textarea:focus {
 .manager-kpi-copy strong { font-size: 26px; line-height: 1.1; letter-spacing: -.04em; margin: 3px 0 2px; }
 .manager-kpi-copy small { color: var(--ink-3); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.manager-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, .82fr); gap: 12px; align-items: start; }
-.manager-main, .manager-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dashboard-top-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1.18fr) minmax(270px, .84fr); gap: 12px; align-items: stretch; }
+.dashboard-top-grid > .panel { min-width: 0; }
+.dashboard-work-grid { display: grid; grid-template-columns: minmax(0, 2.36fr) minmax(270px, .84fr); gap: 12px; align-items: start; }
+.dashboard-side-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .attention-panel { border-color: color-mix(in srgb, var(--warning) 30%, var(--line)); }
 .manager-attention-list { display: flex; flex-direction: column; gap: 6px; }
 .attention-item {
@@ -495,6 +497,8 @@ input:focus, select:focus, textarea:focus {
 .project-percent { font-size: 11px; text-align: right; }
 
 .board-pipeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.dashboard-top-grid .board-pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dashboard-top-grid .board-pipeline .pipeline-stage:last-child { grid-column: 1 / -1; }
 .board-pipeline .pipeline-stage:last-child:nth-child(4n + 3) { grid-column: span 2; }
 .pipeline-stage { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-height: 82px; padding: 11px; color: var(--ink); background: var(--wash-1); border: 1px solid var(--line); border-radius: 12px; font: inherit; }
 .pipeline-stage strong { font-size: 25px; line-height: 1; letter-spacing: -.03em; }
@@ -1394,7 +1398,9 @@ img.brand-logo {
 @media (max-width: 1080px) {
   .dash-grid { grid-template-columns: minmax(0, 1fr); }
   .manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .manager-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-top-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-top-grid > .attention-panel { grid-column: 1 / -1; }
+  .dashboard-work-grid { grid-template-columns: minmax(0, 1fr); }
   .board-type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .board-detail-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1421,6 +1427,8 @@ img.brand-logo {
   .manager-dashboard-head { align-items: flex-start; flex-direction: column; gap: 12px; padding-bottom: 14px; }
   .manager-head-actions { width: 100%; }
   .manager-head-actions button { flex: 1; justify-content: center; }
+  .dashboard-top-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-top-grid > .attention-panel { grid-column: auto; }
   .project-snapshot-row { grid-template-columns: minmax(0, 1fr) 40px 16px; }
   .project-progress { display: none; }
   .attention-action { display: none; }

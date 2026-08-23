@@ -686,7 +686,7 @@ function renderDashboard() {
     .filter((board) => board.status !== "Completed")
     .sort((a, b) => (b.completion || 0) - (a.completion || 0));
   const productionPanel = panel(
-    "In progress boards",
+    "Board progress",
     `${inProgressBoards.length} active`,
     smallBtn("View all", "", null, () => switchView("boards")),
   );
@@ -735,14 +735,13 @@ function renderDashboard() {
     });
     productionPanel.body.append(table);
   }
-  const managerGrid = el("div", "manager-grid");
-  const mainColumn = el("div", "manager-main");
-  const sideColumn = el("div", "manager-side");
-  managerGrid.append(mainColumn, sideColumn);
-  view.append(managerGrid);
+  const dashboardTopGrid = el("div", "dashboard-top-grid");
+  const dashboardWorkGrid = el("div", "dashboard-work-grid");
+  const dashboardSideStack = el("div", "dashboard-side-stack");
+  view.append(dashboardTopGrid, dashboardWorkGrid);
 
   const attentionCount = low.length + unassignedBoards.length + overdueProjects.length;
-  const attentionPanel = panel("Needs attention", attentionCount ? `${attentionCount} items` : "All clear");
+  const attentionPanel = panel("Urgent alerts", attentionCount ? `${attentionCount} items` : "All clear");
   attentionPanel.classList.add("attention-panel");
   attentionPanel.body.classList.add("manager-attention-list");
   const attentionItem = (iconName, color, title, detail, actionLabel, action) => {
@@ -770,9 +769,7 @@ function renderDashboard() {
   if (!attentionCount) {
     attentionPanel.body.append(el("div", "manager-clear", "No overdue projects, unassigned boards or low-stock parts."));
   }
-  sideColumn.append(attentionPanel);
-
-  const projectsPanel = panel("Projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
+  const projectsPanel = panel("Open projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
   projectsPanel.body.classList.add("project-snapshot");
   if (!state.projects.length) {
     projectsPanel.body.append(emptyState("folder", isAdmin() ? "Create your first project to organize its boards and customer." : "No projects yet."));
@@ -800,14 +797,12 @@ function renderDashboard() {
       projectsPanel.body.append(row);
     });
   }
-  mainColumn.append(projectsPanel);
-
   const boardCounts = BOARD_STAGES.map(([id, label]) => ({
     id,
     label,
     count: state.boards.filter((board) => board.currentStage?.id === id).length,
   }));
-  const boardsPanel = panel("Board workload", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
+  const boardsPanel = panel("Production stages", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
   const pipeline = el("div", "board-pipeline");
   boardCounts.forEach(({ id, label, count }) => {
     const stage = el("div", "pipeline-stage");
@@ -815,7 +810,8 @@ function renderDashboard() {
     pipeline.append(stage);
   });
   boardsPanel.body.append(pipeline);
-  mainColumn.append(boardsPanel, productionPanel);
+  dashboardTopGrid.append(projectsPanel, boardsPanel, attentionPanel);
+  dashboardWorkGrid.append(productionPanel, dashboardSideStack);
 
   const stockPanel = panel("Low stock", low.length ? `${low.length} to review` : "Healthy", smallBtn("All stock", "", null, () => switchView("stock")));
   stockPanel.body.classList.add("flush");
@@ -836,7 +832,7 @@ function renderDashboard() {
     });
     stockPanel.body.append(rows);
   }
-  sideColumn.append(stockPanel);
+  dashboardSideStack.append(stockPanel);
 
   if (canSeeCosts() && state.costSummary) {
     const costs = panel("Financial snapshot", "Private to managers");
@@ -846,10 +842,10 @@ function renderDashboard() {
       statTile("var(--secondary)", "Board parts", money(state.costSummary.boardCostMinor), "consumed on boards"),
     );
     costs.body.append(financials);
-    sideColumn.append(costs);
+    dashboardSideStack.append(costs);
   }
 
-  const activity = panel("Latest stock activity", state.movements.length ? `${state.movements.length} recent events` : "");
+  const activity = panel("Recent activity", state.movements.length ? `${state.movements.length} recent events` : "");
   activity.body.classList.add("flush");
   if (!state.movements.length) {
     activity.body.append(el("div", "manager-clear compact", "No warehouse activity yet."));
@@ -858,7 +854,7 @@ function renderDashboard() {
     state.movements.slice(0, 5).forEach((movement) => feed.append(movementRow(movement)));
     activity.body.append(feed);
   }
-  mainColumn.append(activity);
+  dashboardSideStack.append(activity);
 }
 
 // ---------------------------------------------------------------- stock
