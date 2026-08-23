@@ -434,21 +434,28 @@ $("#logout").addEventListener("click", async () => {
 // ---------------------------------------------------------------- shell
 
 const NAV_ITEMS = [
-  { view: "dashboard", label: "Dashboard", icon: "grid" },
-  { view: "projects", label: "Projects", icon: "folder", count: () => state.projects.length },
-  { view: "boards", label: "Boards", icon: "board", count: () => state.boards.length },
-  { view: "stock", label: "Stock", icon: "box", count: () => state.stock.length },
-  { view: "catalog", label: "Catalog", icon: "catalog" },
-  { view: "deliveries", label: "Deliveries", icon: "note", count: () => state.deliveries.length },
-  { view: "team", label: "Team", icon: "team", adminOnly: true, count: () => (state.members || []).length },
+  { view: "dashboard", label: "Dashboard", icon: "grid", group: "overview" },
+  { view: "projects", label: "Open Projects", icon: "folder", group: "primary", count: () => state.projects.filter((project) => project.status !== "Completed").length },
+  { view: "boards", label: "Open Boards", icon: "board", group: "primary", count: () => state.boards.filter((board) => board.status !== "Completed").length },
+  { view: "stock", label: "Stock", icon: "box", group: "operations", count: () => state.stock.length },
+  { view: "catalog", label: "Catalog", icon: "catalog", group: "operations" },
+  { view: "deliveries", label: "Deliveries", icon: "note", group: "operations", count: () => state.deliveries.length },
+  { view: "team", label: "Team", icon: "team", group: "operations", adminOnly: true, count: () => (state.members || []).length },
 ];
 
 function renderNav() {
   const nav = $("#nav");
   nav.replaceChildren();
+  let currentGroup = null;
   NAV_ITEMS.forEach((item) => {
     if (item.adminOnly && !isAdmin()) return;
+    if (item.group !== currentGroup) {
+      currentGroup = item.group;
+      if (currentGroup === "primary") nav.append(el("span", "nav-section-label", "Work"));
+      if (currentGroup === "operations") nav.append(el("span", "nav-section-label", "Operations"));
+    }
     const btn = el("button");
+    btn.classList.add(`nav-${item.group}`);
     // Explicit label: the text span is hidden on mobile, so without this the
     // button would be an unnamed icon to a screen reader.
     btn.setAttribute("aria-label", item.label);
