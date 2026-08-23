@@ -38,6 +38,13 @@ test("the production instruction surveys title blocks and component schedules", 
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
 });
 
+test("the generateContent response schema avoids unsupported JSON Schema fields", () => {
+  const serialized = JSON.stringify(BOARD_SCHEME_SCHEMA);
+  assert.doesNotMatch(serialized, /additionalProperties/);
+  assert.match(serialized, /sourcePage/);
+  assert.match(serialized, /warnings/);
+});
+
 test("printed ABB notation resolves conservatively to its catalog family", () => {
   const extendedCatalog = [
     ...CATALOG,

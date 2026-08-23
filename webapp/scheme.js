@@ -15,12 +15,10 @@ const BOARD_SCHEME_INSTRUCTION = fs.readFileSync(
 /** The exact shape the phone decodes. */
 const BOARD_SCHEME_SCHEMA = {
   type: "object",
-  additionalProperties: false,
   required: ["board", "components", "warnings"],
   properties: {
     board: {
       type: "object",
-      additionalProperties: false,
       required: [
         "number", "name", "customer", "project", "type", "manufacturer",
         "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "cabinetCount",
@@ -56,7 +54,6 @@ const BOARD_SCHEME_SCHEMA = {
       description: "Every distinct component schedule/BOM line for the selected board.",
       items: {
         type: "object",
-        additionalProperties: false,
         required: [
           "rawText", "manufacturer", "model", "type", "rating", "poles",
           "curve", "sensitivity", "quantity", "reference", "sourcePage",
