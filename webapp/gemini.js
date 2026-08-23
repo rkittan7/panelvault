@@ -1,6 +1,22 @@
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+// Render can retain an older environment override even after render.yaml and
+// the application default move forward. Keep known retired Flash ids from
+// pinning a deployment to a model that new Gemini accounts cannot call.
+const MODEL_REPLACEMENTS = new Map([
+  ["gemini-2.5-flash", DEFAULT_MODEL],
+  ["gemini-2.5-flash-preview-05-20", DEFAULT_MODEL],
+  ["gemini-2.5-flash-preview-09-25", DEFAULT_MODEL],
+  ["gemini-2.0-flash", DEFAULT_MODEL],
+  ["gemini-2.0-flash-001", DEFAULT_MODEL],
+]);
+
+function resolveModel(value) {
+  const requested = String(value || "").trim().replace(/^models\//, "");
+  return MODEL_REPLACEMENTS.get(requested) || requested || DEFAULT_MODEL;
+}
+
 /** Inline document parts are base64, which is 4 characters per 3 bytes. */
 const MAX_DOCUMENT_BASE64 = 11_000_000; // ~8 MB of file
 
@@ -15,10 +31,11 @@ const SUPPORTED_DOCUMENT_TYPES = new Set([
 
 function createGeminiClient({
   apiKey = process.env.GEMINI_API_KEY,
-  model = process.env.GEMINI_MODEL || DEFAULT_MODEL,
+  model: requestedModel = process.env.GEMINI_MODEL || DEFAULT_MODEL,
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("Gemini requires Node.js 20 or newer.");
+  const model = resolveModel(requestedModel);
 
   return {
     configured: Boolean(apiKey),
@@ -169,5 +186,6 @@ module.exports = {
   createGeminiClient,
   DEFAULT_MODEL,
   MAX_DOCUMENT_BASE64,
+  resolveModel,
   SUPPORTED_DOCUMENT_TYPES,
 };

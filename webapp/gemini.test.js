@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createGeminiClient } = require("./gemini");
+const { createGeminiClient, DEFAULT_MODEL, resolveModel } = require("./gemini");
 
 test("Gemini client keeps the key in a header and returns generated text", async () => {
   let request;
@@ -26,6 +26,26 @@ test("Gemini client keeps the key in a header and returns generated text", async
 test("Gemini client fails safely when no key is configured", async () => {
   const client = createGeminiClient({ apiKey: "" });
   await assert.rejects(() => client.generate("hello"), { statusCode: 503 });
+});
+
+test("a retired Flash environment override falls forward to the supported model", async () => {
+  let requestedURL = "";
+  const client = createGeminiClient({
+    apiKey: "test-key",
+    model: "models/gemini-2.5-flash",
+    fetchImpl: async (url) => {
+      requestedURL = url;
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "Ready" }] } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+
+  const result = await client.generate("Read this board");
+  assert.equal(resolveModel("gemini-2.5-flash"), DEFAULT_MODEL);
+  assert.equal(client.model, DEFAULT_MODEL);
+  assert.equal(result.model, DEFAULT_MODEL);
+  assert.match(requestedURL, /gemini-3\.6-flash:generateContent$/);
 });
 
 test("reading a document sends it inline and returns parsed JSON", async () => {
