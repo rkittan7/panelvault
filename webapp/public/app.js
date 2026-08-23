@@ -28,6 +28,14 @@ const AMPERE_RATINGS = [
   "2500A", "3200A", "4000A", "5000A", "6300A",
 ];
 const POLE_RATINGS = ["1P", "1P+N", "2P", "3P", "3P+N", "4P", "3PH", "1PH", "DIN"];
+// Kept in step with ManufacturerItem.defaults in the phone app. The website
+// used to expose only a short subset, which made an AI-read Tamhash board fall
+// back to Generic even though its manufacturer and logo already existed.
+const BOARD_MANUFACTURERS = [
+  "Generic", "Rittal", "ABB", "Yakir", "Tamhash", "HAGER", "Delta",
+  "Schneider", "Siemens", "Eaton", "Legrand", "Mean Well", "Phoenix",
+  "Danfoss", "Socomec",
+];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -2807,7 +2815,7 @@ function renderBoardCreate() {
   if (boardCreationMode === "ai" && !boardSchemeReading) {
     const hero = el("div", "creation-hero compact");
     hero.append(el("span", "eyebrow", "New production board"), el("h2", null, "Let the drawing start the board"),
-      el("p", null, "PanelVault reads the title block and component schedule, then opens a draft for your review."));
+      el("p", null, "PanelVault reads the title block and counts the components used across the schematic, then opens a draft for your review."));
     view.append(hero, schemeIntakePanel("Board", async (reading, upload) => {
       boardSchemeReading = reading;
       boardSchemeUpload = upload;
@@ -2867,7 +2875,7 @@ function renderBoardCreate() {
   const company = pageField(field("Company you are doing it for", "optional company"));
   const subtype = pageField(field("Subtype", "Standard"));
   subtype.input.value = "Standard";
-  const manufacturer = pageField(selectField("Board manufacturer", ["Generic", "ABB", "Schneider", "Siemens", "Eaton", "Rittal", "HAGER"], "Generic"));
+  const manufacturer = pageField(selectField("Board manufacturer", BOARD_MANUFACTURERS, "Generic"));
   const cabinets = pageField(selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1"));
   const buildFormat = pageField(selectField("Build format", ["Panels", "Plate"], "Panels"));
   const dateOut = pageField(field("Out date", "", "date"));
@@ -2896,9 +2904,17 @@ function renderBoardCreate() {
       customer.input.disabled = true;
     }
     const availableManufacturers = [...manufacturer.select.options].map((option) => option.value);
+    const manufacturerKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const aiManufacturer = String(aiDraft.manufacturer || "").trim();
     const matchedManufacturer = availableManufacturers.find((value) =>
-      value.toLowerCase() === String(aiDraft.manufacturer || "").trim().toLowerCase());
-    if (matchedManufacturer) manufacturer.select.value = matchedManufacturer;
+      manufacturerKey(value) === manufacturerKey(aiManufacturer));
+    if (matchedManufacturer) {
+      manufacturer.select.value = matchedManufacturer;
+    } else if (aiManufacturer) {
+      // Never erase a printed manufacturer merely because it is not in the
+      // built-in picker yet. The server already accepts company-specific names.
+      manufacturer.select.append(new Option(aiManufacturer, aiManufacturer, true, true));
+    }
     cabinets.select.value = String(Math.max(1, Math.min(12, Number(aiDraft.cabinetCount) || 1)));
     const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
     const matchedBreakerType = breakerTypes.find((value) =>

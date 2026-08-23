@@ -8,6 +8,12 @@ const test = require("node:test");
 
 const webapp = __dirname;
 
+test("the website board manufacturer picker includes Tamhash and preserves new AI names", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /BOARD_MANUFACTURERS[\s\S]*"Tamhash"/);
+  assert.match(browserApp, /manufacturer\.select\.append\(new Option\(aiManufacturer/);
+});
+
 async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {

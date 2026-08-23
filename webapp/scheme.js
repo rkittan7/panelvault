@@ -31,7 +31,7 @@ const BOARD_SCHEME_SCHEMA = {
         customer: { type: "string", description: "Customer or client explicitly named on the drawing." },
         project: { type: "string", description: "Project, site or building name, separate from customer." },
         type: { type: "string", description: "Printed board classification such as MDB, SMDB, MCC or ATS." },
-        manufacturer: { type: "string", description: "Board/enclosure manufacturer only when explicitly stated." },
+        manufacturer: { type: "string", description: "Board/enclosure manufacturer exactly as printed, including Tamhash, Yakir or Rittal; empty only when unstated." },
         mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB or isolator." },
         mainBreakerModel: { type: "string", description: "Exact manufacturer/model printed for the main incomer." },
         mainBreakerAmpere: { type: "string", description: "Main incomer current rating including unit." },
@@ -51,7 +51,7 @@ const BOARD_SCHEME_SCHEMA = {
     components: {
       type: "array",
       maxItems: 200,
-      description: "Every distinct component schedule/BOM line for the selected board.",
+      description: "Distinct component specifications instantiated on the selected board schematic, grouped after counting unique physical device references.",
       items: {
         type: "object",
         required: [
@@ -59,7 +59,7 @@ const BOARD_SCHEME_SCHEMA = {
           "curve", "sensitivity", "quantity", "reference", "sourcePage",
         ],
         properties: {
-          rawText: { type: "string", description: "Identifying schedule row transcribed from the source." },
+          rawText: { type: "string", description: "Representative schematic callout or device label transcribed from the source." },
           manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
           model: { type: "string", description: "Model/series exactly as printed, preserving significant suffixes." },
           type: { type: "string", description: "Printed device type such as MCB, MCCB, contactor or meter." },
@@ -67,9 +67,9 @@ const BOARD_SCHEME_SCHEMA = {
           poles: { type: "string", description: "Pole count exactly as printed." },
           curve: { type: "string", description: "Trip curve/class exactly as printed." },
           sensitivity: { type: "string", description: "RCD sensitivity exactly as printed." },
-          quantity: { type: "integer", minimum: 0, maximum: 999, description: "Explicit quantity or tag count; 0 when unknown." },
-          reference: { type: "string", description: "Exact device tag(s), circuit or schedule reference." },
-          sourcePage: { type: "integer", minimum: 0, description: "One-based PDF page for this line; 0 when unknown." },
+          quantity: { type: "integer", minimum: 0, maximum: 999, description: "Count of unique physical schematic device references; 0 when it cannot be determined safely." },
+          reference: { type: "string", description: "Exact unique device tag(s) included in the quantity." },
+          sourcePage: { type: "integer", minimum: 0, description: "First one-based schematic page using this device group; 0 when unknown." },
         },
       },
     },
@@ -99,7 +99,8 @@ function boardSchemePrompt(fileName) {
   };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
-    "main incomer and every component schedule/BOM line.",
+    "main incomer and every component actually used across the schematic pages.",
+    "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
     named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
     "Return empty strings, empty arrays or 0 for information that is not visibly stated.",
     `Return one JSON object with exactly this shape (the components array may be empty): ${JSON.stringify(responseShape)}`,

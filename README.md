@@ -55,9 +55,11 @@ reports the page count so it is clear what it does not yet hold.
 Creating a board starts with the drawing, because the drawing is what the board
 is. New Board opens on a single step: attach the scheme PDF exported from
 AutoCAD. PanelVault sends it to PanelVault Cloud, Gemini reads the PDF natively
-— pages, title block and the component schedule, no rasterising or OCR — and
-the reading comes back as board details plus a parts list. Only then does the
-form appear, pre-filled, as a review of what was read.
+— pages, title block and every schematic device reference, no rasterising or
+OCR — and the reading comes back as board details plus a counted parts list.
+The final parts/legend page can clarify a model, but quantities come from unique
+devices actually instantiated across the schematic. Only then does the form
+appear, pre-filled, as a review of what was read.
 
 Entering the board by hand is one tap away on that same screen, for when the
 scheme is not ready.

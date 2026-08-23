@@ -30,12 +30,15 @@ test("spelling and spacing differences on the drawing still match", () => {
   }
 });
 
-test("the production instruction surveys title blocks and component schedules", () => {
+test("the production instruction counts unique devices from schematic pages", () => {
   assert.match(BOARD_SCHEME_INSTRUCTION, /survey the complete document/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /title block/i);
-  assert.match(BOARD_SCHEME_INSTRUCTION, /component schedule/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /unique physical device tags\/references/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /never use its summarized quantity\s+as the count/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
 });

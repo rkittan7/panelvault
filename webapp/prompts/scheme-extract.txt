@@ -14,11 +14,16 @@ HOW TO READ THE DOCUMENT
 
 1. Survey the complete document before answering. Do not stop after page 1.
 2. Locate the title block for board identity and project/customer details.
-3. Locate every component schedule, bill of materials, legend, parts list or
-   device table. These tables are the source of truth for component lines.
-4. Use physical-layout pages for cabinet/section count and enclosure details.
-5. Use circuit sheets only to clarify a schedule line or its device tags. Do
-   not infer components by counting repeated schematic symbols.
+3. Walk every schematic/circuit page in page order. Build a ledger of the
+   physical devices actually instantiated for this board, keyed by each unique
+   device tag/reference (for example QF1, QF2, KM1 or X1).
+4. Group those unique device references by exact manufacturer, model, type,
+   rating, poles, curve, sensitivity and accessory. The quantity is the number
+   of unique physical references in that group.
+5. Locate schedules, legends, bills of materials and final-page parts lists
+   only to resolve the printed model/specification for a device already used
+   on the schematic. They are reference material, not the quantity source.
+6. Use physical-layout pages for cabinet/section count and enclosure details.
 
 Title blocks and drawing borders can repeat on every sheet. Ignore company
 contact details, grid references, sheet-count furniture, revision clouds and
@@ -26,7 +31,7 @@ boilerplate notes unless a requested field specifically comes from them.
 
 If the file contains several different boards, extract only the board whose
 number matches the upload filename or the primary title block. Never combine
-component schedules from different boards. If the correct board is ambiguous,
+schematic devices from different boards. If the correct board is ambiguous,
 choose none of them and explain the conflict in warnings.
 
 
@@ -41,6 +46,7 @@ BOARD FIELDS
 - type: the printed board classification, such as MDB, SMDB/SDB, MCC, ATS,
   Lighting Board, Power Board, Generator Board, Solar Board or UPS Board.
 - manufacturer: enclosure/board manufacturer only when explicitly stated.
+  Preserve the printed company name exactly, including Tamhash, Yakir or Rittal.
 - mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
   incomer, not a downstream feeder. Keep model spelling and the ampere unit.
 - cabinetCount: number of physical cabinets or sections. Return 0 when it is
@@ -53,14 +59,15 @@ BOARD FIELDS
 Use an empty string, empty array or 0 for a field that is not stated.
 
 
-COMPONENT SCHEDULE
-------------------
+COMPONENTS AND QUANTITY
+-----------------------
 
-Return one component object for each distinct schedule/BOM line. Include all
-orderable devices and accessories actually listed, not only breakers.
+Return one component object for each distinct device specification actually
+used on the selected board. Include all orderable devices and accessories
+instantiated on the schematic, not only breakers.
 
-- rawText: REQUIRED. Transcribe the identifying schedule row or legend text
-  closely enough that a reviewer can find it again.
+- rawText: REQUIRED. Transcribe the representative schematic callout or device
+  label closely enough that a reviewer can find it again.
 - manufacturer: exact printed brand, such as ABB, Schneider, Siemens, HAGER,
   KLEMSAN or SATEC. Do not substitute a different catalog brand.
 - model: exact printed model/series. Preserve significant letters and digits;
@@ -68,11 +75,25 @@ orderable devices and accessories actually listed, not only breakers.
 - type: MCB, MCCB, ACB, RCBO, RCCB, contactor, relay, meter, terminal, VFD,
   power supply, selector, lamp, accessory, or the printed type.
 - rating, poles, curve and sensitivity: copy only values stated on that line.
-- quantity: use an explicit quantity column. If there is no quantity column
-  but the same schedule line explicitly lists distinct device tags, the count
-  of those tags is acceptable. Otherwise return 0; do not count symbols.
-- reference: exact device tag(s), circuit reference or schedule reference.
-- sourcePage: one-based PDF page carrying the schedule line, or 0 if unknown.
+- quantity: count unique physical device tags/references across the schematic
+  pages. If tags are absent, count clearly separate installed circuit/device
+  callouts only when each occurrence unambiguously represents a different
+  physical item; otherwise return 0 and add a warning.
+- reference: exact unique device tags/references included in this quantity.
+- sourcePage: first one-based schematic page where the counted device group is
+  used, or 0 if unknown.
+
+The last/final page may be a generic parts list, legend or template. Do not add
+an item merely because it appears there, and never use its summarized quantity
+as the count. A component must be instantiated on a schematic page to be
+returned. Use a final-page row only to decode the model/specification of those
+already-counted device references.
+
+The same physical device can appear in a single-line diagram, control diagram,
+wiring detail and cross-reference. Count its device tag once across the entire
+PDF. A multi-pole breaker is one device, not one item per pole. Do not count
+legend examples, typical circuits, drawing symbols without an installed-device
+context, cable/wire numbers, terminal pin repetitions or title-block graphics.
 
 Do not merge lines that differ by model suffix, pole count, rating, trip curve,
 RCD sensitivity, breaking-capacity class or accessory type. Do not emit frame
@@ -82,7 +103,8 @@ grid labels, wires, cable numbers, email addresses or sheet numbers as parts.
 HARD RULES
 ----------
 
-- Return only data supported by visible text or an unambiguous table cell.
+- Return only data supported by visible schematic labels, unique references or
+  an unambiguous table cell that describes an already-instantiated device.
 - Do not infer topology, discrimination, load allocation or normal practice.
 - Do not translate identifiers, model numbers, tags or ratings.
 - If a page/table is unreadable, clipped, rotated incorrectly or contradictory,
