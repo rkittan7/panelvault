@@ -139,6 +139,7 @@ const BOARD_SCHEME_SCHEMA = {
         required: [
           "rawText", "manufacturer", "model", "type", "rating", "poles",
           "curve", "sensitivity", "quantity", "reference", "sourcePage", "boardNumber",
+          "isMainBreaker",
         ],
         properties: {
           rawText: { type: "string", description: "Representative schematic callout or device label transcribed from the source." },
@@ -153,6 +154,7 @@ const BOARD_SCHEME_SCHEMA = {
           reference: { type: "string", description: "Exact unique device tag(s) included in the quantity." },
           sourcePage: { type: "integer", minimum: 0, description: "First one-based schematic page using this device group; 0 when unknown." },
           boardNumber: { type: "string", description: "Exact board number whose schematic pages contain these counted references." },
+          isMainBreaker: { type: "boolean", description: "True only for the board's main incoming breaker; false for every outgoing or downstream device." },
         },
       },
     },
@@ -179,7 +181,7 @@ function boardSchemePrompt(fileName) {
     pageBoards: [{ page: 1, boardNumber: "" }],
     components: [{
       rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
-      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "",
+      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "", isMainBreaker: false,
     }],
     warnings: [],
   };
@@ -187,6 +189,7 @@ function boardSchemePrompt(fileName) {
     "Read the complete electrical board document and extract the relevant title block,",
     "main incomer and every component actually used across the schematic pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
+    "Before returning JSON, perform one final document-wide aggregation: identical manufacturer + model + rating + poles + curve + sensitivity must be one component row with the total unique-device quantity across every target-board page. sourcePage is traceability only and must never create a separate row.",
     "First map every PDF page to its governing title-block board number in pageBoards. Count components only after that map is complete, and put that board number on every component line.",
     "For every breaker, separate its current, poles and trip curve: C16 is rating 16A with curve C; 6A + N is rating 6A with poles 1P+N. Never confuse 6kA breaking capacity with a 6A current rating.",
     targetNumber ? `MANDATORY TARGET BOARD: "${targetNumber}" was inferred from the upload filename "${named.slice(0, 200)}". Extract only pages mapped to this exact board number. If it is not visibly present, return no components and explain that in warnings; never substitute the preceding, following, nearest, or primary board.` : named ? `The upload filename is "${named.slice(0, 200)}". Use it only to select the matching board or confirm an exact board number; do not derive other fields from it.` : "",
@@ -361,45 +364,121 @@ function firstSourcePage(left, right) {
   return pages.length ? Math.min(...pages) : 0;
 }
 
-/** One exact specification appears once in the board. Gemini can still return
- * the same grouped line for multiple pages, so consolidate defensively. When
- * the reference text is identical it is the same physical devices and the
- * larger count wins; different reference groups are added together. */
+function referenceTokens(value) {
+  const source = String(value || "").toUpperCase();
+  const tokens = new Set();
+  const rangePattern = /([A-Z]{1,8})\s*[-_]?\s*(\d+)\s*[-–—]\s*(?:([A-Z]{1,8})\s*[-_]?\s*)?(\d+)/g;
+  let match;
+  while ((match = rangePattern.exec(source))) {
+    const startPrefix = match[1];
+    const endPrefix = match[3] || startPrefix;
+    const start = Number(match[2]);
+    const end = Number(match[4]);
+    if (startPrefix !== endPrefix || end < start || end - start > 999) continue;
+    for (let number = start; number <= end; number += 1) tokens.add(`${startPrefix}${number}`);
+  }
+  const singlePattern = /(?:^|[^A-Z0-9])([A-Z]{1,8})\s*[-_]?\s*(\d+)(?=$|[^A-Z0-9])/g;
+  while ((match = singlePattern.exec(source))) tokens.add(`${match[1]}${Number(match[2])}`);
+  return tokens;
+}
+
+function componentIdentity(line) {
+  if (line.partID) return `part:${partKey(line.partID)}`;
+  const models = modelKeys(line.model);
+  const model = models.sort((left, right) => left.length - right.length)[0] || "";
+  if (model) return `model:${model}|type:${typeKey(line.type)}`;
+  const structured = [line.manufacturer, line.type].map(partKey).filter(Boolean);
+  if (structured.length) return `structured:${structured.join("|")}|${partKey(line.description || line.rawText)}`;
+  return `raw:${partKey(line.description || line.rawText)}`;
+}
+
+function componentAxis(line, field) {
+  if (field === "rating") return partKey(ampereRating(line.rating) || line.rating);
+  if (field === "poles") return partKey(poleKey(line.poles) || line.poles);
+  return partKey(line[field]);
+}
+
+function compatibleComponentSpecifications(left, right) {
+  if (componentIdentity(left) !== componentIdentity(right)) return false;
+  return ["manufacturer", "rating", "poles", "curve", "sensitivity"].every((field) => {
+    const leftValue = componentAxis(left, field);
+    const rightValue = componentAxis(right, field);
+    return !leftValue || !rightValue || leftValue === rightValue;
+  });
+}
+
+/** One exact specification appears once in the board, regardless of page.
+ * Missing OCR axes are allowed to join a matching populated specification,
+ * while conflicting ratings/poles/curves remain separate. Repeated reference
+ * ranges are counted once; distinct ranges contribute to the document total. */
 function consolidateComponents(lines) {
-  const consolidated = new Map();
+  const consolidated = [];
   for (const line of Array.isArray(lines) ? lines : []) {
-    const fallbackIdentity = line.partID || [
-      line.manufacturer, line.model, line.type,
-      line.description || (!line.model && !line.type ? line.rawText : ""),
-    ].map(partKey).join("|");
-    const key = [
-      fallbackIdentity,
-      partKey(line.rating),
-      partKey(line.poles),
-      partKey(line.curve),
-      partKey(line.sensitivity),
-    ].join("|");
-    const existing = consolidated.get(key);
-    if (!existing) {
-      consolidated.set(key, { ...line });
-      continue;
+    let group = consolidated.find((candidate) => compatibleComponentSpecifications(candidate.line, line));
+    if (!group) {
+      group = { line: { ...line }, referenceGroups: new Map(), unreferencedQuantity: 0 };
+      consolidated.push(group);
     }
 
-    const existingReference = text(existing.reference, 120);
+    const existing = group.line;
+    for (const field of ["manufacturer", "model", "type", "rating", "poles", "curve", "sensitivity", "rawText", "description"]) {
+      if (!existing[field] && line[field]) existing[field] = line[field];
+    }
+    if (!existing.partID && line.partID) existing.partID = line.partID;
+
     const incomingReference = text(line.reference, 120);
-    const sameReferences = Boolean(existingReference && incomingReference
-      && partKey(existingReference) === partKey(incomingReference));
-    const existingQuantity = Math.max(1, Math.trunc(Number(existing.quantity) || 1));
     const incomingQuantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
-    existing.quantity = Math.min(9999, sameReferences
-      ? Math.max(existingQuantity, incomingQuantity)
-      : existingQuantity + incomingQuantity);
-    if (incomingReference && !sameReferences) {
-      existing.reference = [...new Set([existingReference, incomingReference].filter(Boolean))].join(", ").slice(0, 120);
+    if (incomingReference) {
+      const key = partKey(incomingReference);
+      const previous = group.referenceGroups.get(key);
+      if (!previous || incomingQuantity > previous.quantity) {
+        group.referenceGroups.set(key, {
+          reference: incomingReference,
+          quantity: incomingQuantity,
+          tokens: referenceTokens(incomingReference),
+        });
+      }
+    } else {
+      group.unreferencedQuantity += incomingQuantity;
     }
     existing.sourcePage = firstSourcePage(existing.sourcePage, line.sourcePage);
   }
-  return [...consolidated.values()];
+
+  return consolidated.map(({ line, referenceGroups, unreferencedQuantity }) => {
+    const groups = [...referenceGroups.values()];
+    const allReferencesReliable = groups.length > 0
+      && groups.every((group) => group.tokens.size === group.quantity);
+    const uniqueTokens = new Set(groups.flatMap((group) => [...group.tokens]));
+    const referencedQuantity = allReferencesReliable
+      ? uniqueTokens.size
+      : groups.reduce((sum, group) => sum + group.quantity, 0);
+    return {
+      ...line,
+      quantity: Math.min(9999, referencedQuantity + unreferencedQuantity),
+      reference: groups.map((group) => group.reference).join(", ").slice(0, 120),
+    };
+  });
+}
+
+function findMainBreakerPart(parts, board) {
+  const mainModel = text(board?.mainBreakerModel, 80);
+  const candidates = Array.isArray(parts) ? parts : [];
+  const ranked = candidates
+    .map((part, index) => {
+      const wording = `${part?.reference || ""} ${part?.rawText || ""}`;
+      const modelMatches = mainModel && sameModel(part?.model || part?.rawText, mainModel);
+      let rank = 0;
+      if (part?.isMainBreaker === true) rank += 100;
+      if (/main\s*(?:incomer|incoming|breaker)|incomer|incoming/i.test(wording)) rank += 50;
+      if (modelMatches) rank += 20;
+      if (Math.max(1, Math.trunc(Number(part?.quantity) || 1)) === 1) rank += 5;
+      const ampere = ampereRating(part?.rating, part?.rawText);
+      if (ampere) rank += 10;
+      return { part, index, rank, ampere };
+    })
+    .filter((candidate) => candidate.rank >= 35 && candidate.ampere)
+    .sort((left, right) => right.rank - left.rank || left.index - right.index);
+  return ranked[0] || null;
 }
 
 /** Turn a raw model reading into the payload the phone consumes.
@@ -443,8 +522,13 @@ function normalizeReading(reading, catalog, options = {}) {
     return true;
   });
   const mainModel = text(board.mainBreakerModel, 80);
-  const mainAmpere = ampereRating(board.mainBreakerAmpere);
-  if (readMatchesTarget && mainModel && !parts.some((part) => sameModel(part?.model || part?.rawText, mainModel))) {
+  const boardMainAmpere = ampereRating(board.mainBreakerAmpere);
+  const mainBreakerPart = findMainBreakerPart(parts, board);
+  const mainAmpere = mainBreakerPart?.ampere || boardMainAmpere;
+  if (mainBreakerPart?.ampere && boardMainAmpere && mainBreakerPart.ampere !== boardMainAmpere) {
+    warnings.push(`Main breaker current was corrected from ${boardMainAmpere} to ${mainBreakerPart.ampere} using its installed-device callout.`);
+  }
+  if (readMatchesTarget && mainModel && !mainBreakerPart) {
     parts.unshift({
       rawText: [board.mainBreakerType, mainModel, mainAmpere].filter(Boolean).join(" "),
       manufacturer: "",
@@ -458,6 +542,7 @@ function normalizeReading(reading, catalog, options = {}) {
       reference: "Main incomer",
       sourcePage: 0,
       boardNumber: selectedBoardNumber,
+      isMainBreaker: true,
     });
   }
 
@@ -465,9 +550,11 @@ function normalizeReading(reading, catalog, options = {}) {
   const unmatched = [];
   for (const part of parts.slice(0, 200)) {
     const quantity = Math.min(Math.max(Math.trunc(Number(part.quantity) || 1), 1), 999);
-    const isMain = mainModel && sameModel(part?.model || part?.rawText, mainModel)
-      && (quantity === 1 || /main|incomer|incoming/i.test(String(part?.reference || "")));
-    const detectedAmpere = ampereRating(part.rating, part.rawText) || (isMain ? mainAmpere : "");
+    const isMain = part === mainBreakerPart?.part || part?.isMainBreaker === true
+      || (mainModel && sameModel(part?.model || part?.rawText, mainModel)
+        && /main|incomer|incoming/i.test(String(part?.reference || "")));
+    const detectedAmpere = isMain ? mainAmpere || ampereRating(part.rating, part.rawText)
+      : ampereRating(part.rating, part.rawText);
     const detectedPoles = poleKey(part.poles, part.rawText, part.rating) || text(part.poles, 30);
     const detectedCurve = breakerCurve(part.curve, part.rating, part.rawText) || text(part.curve, 30);
     const normalizedPart = {

@@ -29,6 +29,9 @@ HOW TO READ THE DOCUMENT
    of unique physical references in that group. Return that exact specification
    once for the entire document, never once per page. If it recurs on later
    pages, merge its references and increase the single consolidated quantity.
+   Example: two ABB S203 C63 devices on page 2 plus three ABB S203 C63 devices
+   on page 6 must produce one S203 / 63A / 3P / C row with quantity 5, not two
+   page rows. sourcePage is only the first page and is never a grouping field.
 6. Locate schedules, legends, bills of materials and final-page parts lists
    only to resolve the printed model/specification for a device already used
    on the schematic. They are reference material, not the quantity source.
@@ -67,8 +70,10 @@ BOARD FIELDS
   brand. manufacturerRole must describe the selected name's actual role.
 - mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
   incomer, not a downstream feeder. Keep model spelling and the ampere unit.
+  Read the printed current digit by digit and cross-check the incomer callout;
+  never calculate it from outgoing loads, cable sizes or protection settings.
   Return that same main incomer once in components as an installed device; its
-  component rating must equal mainBreakerAmpere.
+  component rating must equal mainBreakerAmpere and isMainBreaker must be true.
 - cabinetCount: number of physical cabinets or sections. Return 0 when it is
   not explicitly shown; do not use the number of drawing pages.
 - jobNumber, revision, supplyVoltage, frequency, earthingSystem, ipRating,
@@ -110,6 +115,8 @@ instantiated on the schematic, not only breakers.
   used, or 0 if unknown.
 - boardNumber: exact target board number assigned to the counted schematic
   pages. Never use a component whose page belongs to another board.
+- isMainBreaker: true only on the single main incomer component. Every outgoing
+  or downstream breaker must return false.
 
 The last/final page may be a generic parts list, legend or template. Do not add
 an item merely because it appears there, and never use its summarized quantity

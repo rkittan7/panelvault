@@ -17,6 +17,7 @@ const {
 const CATALOG = [
   { id: "abb-s201-1p", manufacturer: "ABB", model: "S201", type: "MCB", rating: "Set A", poles: "1P", curve: "B/C/D Curve" },
   { id: "abb-s202-2p", manufacturer: "ABB", model: "S202", type: "MCB", rating: "Set A", poles: "2P", curve: "B/C/D Curve" },
+  { id: "abb-s203-3p", manufacturer: "ABB", model: "S203", type: "MCB", rating: "0.5-63A", poles: "3P", curve: "B/C/D Curve" },
   { id: "abb-sn201-1pn", manufacturer: "ABB", model: "SN201", type: "MCB", rating: "Set A", poles: "1P+N", curve: "B/C Curve" },
   { id: "schneider-ic60n", manufacturer: "Schneider", model: "Acti9 iC60N", type: "MCB" },
   { id: "siemens-5sy", manufacturer: "Siemens", model: "SENTRON 5SY", type: "MCB" },
@@ -148,6 +149,25 @@ test("recurring component lines are consolidated once across all pages", () => {
   assert.equal(result.components[0].sourcePage, 2);
 });
 
+test("S203 63A page rows become one document total without double-counting repeated references", () => {
+  const result = normalizeReading({
+    board: {},
+    components: [
+      { manufacturer: "ABB", model: "S203", type: "MCB", rating: "63A", poles: "", curve: "C", quantity: 2, reference: "QF1-QF2", sourcePage: 2 },
+      { manufacturer: "ABB", model: "S203", type: "MCB", rating: "C63", poles: "3P", curve: "", quantity: 3, reference: "QF3-QF5", sourcePage: 6 },
+      { manufacturer: "ABB", model: "S203", type: "MCB", rating: "63 A", poles: "3P", curve: "C", quantity: 2, reference: "QF1-QF2", sourcePage: 9 },
+    ],
+  }, CATALOG);
+
+  assert.equal(result.components.length, 1);
+  assert.equal(result.components[0].partID, "abb-s203-3p");
+  assert.equal(result.components[0].rating, "63A");
+  assert.equal(result.components[0].poles, "3P");
+  assert.equal(result.components[0].curve, "C");
+  assert.equal(result.components[0].quantity, 5);
+  assert.equal(result.components[0].sourcePage, 2);
+});
+
 test("an exact scanned ampere chooses the matching catalog variant", () => {
   const variants = [
     { id: "breaker-125", manufacturer: "ABB", model: "XT1", type: "MCCB", rating: "125A", poles: "3P" },
@@ -178,6 +198,25 @@ test("the extracted main breaker is present in components with its ampere", () =
   assert.equal(result.components[0].rating, "160A");
   assert.equal(result.components[0].quantity, 1);
   assert.equal(result.components[0].reference, "Main incomer");
+});
+
+test("the installed main-breaker callout corrects a conflicting board-level OCR current", () => {
+  const result = normalizeReading({
+    board: {
+      mainBreakerType: "MCCB",
+      mainBreakerModel: "SACE Tmax XT1",
+      mainBreakerAmpere: "128A",
+    },
+    components: [{
+      manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB", rating: "160A",
+      quantity: 1, reference: "Main incomer Q0", rawText: "Q0 XT1 160A", isMainBreaker: true,
+    }],
+  }, [{ id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB", rating: "IEC 160A frame", poles: "3P/4P" }]);
+
+  assert.equal(result.board.mainBreakerAmpere, "160A");
+  assert.equal(result.components.length, 1);
+  assert.equal(result.components[0].rating, "160A");
+  assert.match(result.warnings.join(" "), /corrected from 128A to 160A/i);
 });
 
 test("the document response JSON Schema includes extraction constraints", () => {
