@@ -643,24 +643,25 @@ function renderDashboard() {
   const unassignedBoards = openBoards.filter((board) => !board.assignedTo);
   const overdueProjects = activeProjects.filter((project) => project.dueDate && new Date(project.dueDate) < today);
   const units = state.stock.reduce((sum, item) => sum + Math.max(item.onHand, 0), 0);
+  const qaBoards = openBoards.filter((board) => board.currentStage?.id === "qa" || board.status === "QA Ready");
 
-  const hero = el("section", "manager-hero");
-  const heroCopy = el("div", "manager-hero-copy");
-  heroCopy.append(
-    el("div", "manager-eyebrow", today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })),
-    el("h2", null, `Good ${today.getHours() < 12 ? "morning" : today.getHours() < 18 ? "afternoon" : "evening"}, ${state.me.name.split(/\s+/)[0]}`),
-    el("p", null, "Projects, production and stock—one clear view of what needs your attention."),
+  const dashboardHead = el("header", "manager-dashboard-head");
+  const headCopy = el("div", "manager-dashboard-title");
+  headCopy.append(
+    el("h2", null, "Manager Dashboard"),
+    el("p", null, "Overview of projects, board production and stock."),
   );
-  hero.append(heroCopy);
+  dashboardHead.append(headCopy);
+  const headActions = el("div", "manager-head-actions");
+  headActions.append(el("span", "manager-year", String(today.getFullYear())));
   if (isAdmin()) {
-    const quick = el("div", "manager-quick-actions");
-    quick.append(
+    headActions.append(
       smallBtn("New project", "accent", "plus", openNewProjectModal),
       smallBtn("New board", "", "plus", openNewBoardModal),
     );
-    hero.append(quick);
   }
-  view.append(hero);
+  dashboardHead.append(headActions);
+  view.append(dashboardHead);
 
   const kpis = el("div", "manager-kpis");
   const managerKpi = (iconName, color, label, value, note, target) => {
@@ -674,10 +675,10 @@ function renderDashboard() {
     return card;
   };
   kpis.append(
-    managerKpi("folder", "var(--primary)", "Active projects", activeProjects.length, `${state.projects.length} total`, "projects"),
-    managerKpi("board", "var(--secondary)", "Boards in production", openBoards.length, `${unassignedBoards.length} unassigned`, "boards"),
-    managerKpi("alert", low.length ? "var(--warning)" : "var(--positive)", "Low stock", low.length, low.length ? "needs ordering" : "stock is healthy", "stock"),
-    managerKpi("box", "var(--positive)", "Parts on hand", units.toLocaleString(), `${state.stock.length} tracked types`, "stock"),
+    managerKpi("board", "var(--primary)", "Active boards", openBoards.length, `${state.boards.length} total boards`, "boards"),
+    managerKpi("folder", "var(--secondary)", "Open projects", activeProjects.length, `${overdueProjects.length} overdue`, "projects"),
+    managerKpi("alert", qaBoards.length ? "var(--warning)" : "var(--positive)", "Awaiting QA", qaBoards.length, qaBoards.length ? "ready for inspection" : "QA queue is clear", "boards"),
+    managerKpi("box", low.length ? "var(--negative)" : "var(--positive)", "Low stock", low.length, low.length ? "needs attention" : `${units.toLocaleString()} parts on hand`, "stock"),
   );
   view.append(kpis);
 
@@ -734,8 +735,6 @@ function renderDashboard() {
     });
     productionPanel.body.append(table);
   }
-  view.append(productionPanel);
-
   const managerGrid = el("div", "manager-grid");
   const mainColumn = el("div", "manager-main");
   const sideColumn = el("div", "manager-side");
@@ -771,7 +770,7 @@ function renderDashboard() {
   if (!attentionCount) {
     attentionPanel.body.append(el("div", "manager-clear", "No overdue projects, unassigned boards or low-stock parts."));
   }
-  mainColumn.append(attentionPanel);
+  sideColumn.append(attentionPanel);
 
   const projectsPanel = panel("Projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
   projectsPanel.body.classList.add("project-snapshot");
@@ -816,7 +815,7 @@ function renderDashboard() {
     pipeline.append(stage);
   });
   boardsPanel.body.append(pipeline);
-  sideColumn.append(boardsPanel);
+  mainColumn.append(boardsPanel, productionPanel);
 
   const stockPanel = panel("Low stock", low.length ? `${low.length} to review` : "Healthy", smallBtn("All stock", "", null, () => switchView("stock")));
   stockPanel.body.classList.add("flush");
