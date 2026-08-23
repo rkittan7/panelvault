@@ -79,6 +79,8 @@ test("reading a document sends it inline and returns parsed JSON", async () => {
   // in the extraction instruction and semantic validation instead.
   assert.equal(request.body.generationConfig.temperature, undefined);
   assert.equal(request.body.generationConfig.responseMimeType, "application/json");
+  assert.deepEqual(request.body.generationConfig.responseJsonSchema, { type: "object" });
+  assert.equal(request.body.generationConfig.responseSchema, undefined);
 });
 
 test("a photographed drawing uses high media resolution", async () => {

@@ -97,9 +97,10 @@ function createGeminiClient({
      *
      * Gemini takes a PDF as an inline part and reads it natively — pages,
      * tables and the drawing itself — so an AutoCAD scheme does not have to be
-     * rasterised or OCR'd first. `responseSchema` makes the model answer with
-     * JSON of a fixed shape instead of prose that would have to be parsed out
-     * of a code fence.
+     * rasterised or OCR'd first. `responseJsonSchema` makes the model answer
+     * with JSON of a fixed shape instead of prose that would have to be parsed
+     * out of a code fence. Unlike the deprecated OpenAPI `responseSchema`, it
+     * accepts the standard JSON Schema constraints used by the board schema.
      *
      * The timeout is far longer than `generate`'s: a multi-page A1 scheme is a
      * lot of tokens and routinely takes the better part of a minute.
@@ -148,7 +149,7 @@ function createGeminiClient({
           responseMimeType: "application/json",
         },
       };
-      if (schema) body.generationConfig.responseSchema = schema;
+      if (schema) body.generationConfig.responseJsonSchema = schema;
       if (systemInstruction) {
         body.systemInstruction = { parts: [{ text: systemInstruction }] };
       }

@@ -38,7 +38,7 @@ test("the production instruction surveys title blocks and component schedules", 
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /select the matching board/i);
 });
 
-test("the generateContent response schema avoids unsupported JSON Schema fields", () => {
+test("the document response JSON Schema includes extraction constraints", () => {
   const serialized = JSON.stringify(BOARD_SCHEME_SCHEMA);
   assert.doesNotMatch(serialized, /additionalProperties/);
   assert.match(serialized, /sourcePage/);
