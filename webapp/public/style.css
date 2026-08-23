@@ -854,6 +854,21 @@ img.brand-logo {
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
 }
+/* The brand mark in the tile slot. Same 64px footprint as the type tile it
+   replaces, but no tinted plate behind it — the logos are cut-outs, so they
+   sit on the sheet under their own halo the way every other mark does. */
+.brand-tile {
+  width: 64px; height: 64px; flex-shrink: 0;
+  display: grid; place-items: center;
+  padding: 4px;
+}
+.brand-tile img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  filter:
+    drop-shadow(0 0 6px color-mix(in srgb, var(--glow, #7FA6C9) 34%, transparent))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--glow, #7FA6C9) 18%, transparent));
+}
+
 .part-title-text { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .part-title {
   font-size: 22px; font-weight: 700; letter-spacing: -0.02em;

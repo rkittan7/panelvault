@@ -23,5 +23,27 @@
     "abb-tmax-xt5": "components/abb-tmax-xt5.png",
     "abb-tmax-xt6": "components/abb-tmax-xt6.png",
     "abb-tmax-xt7": "components/abb-tmax-xt7.png"
+  },
+  "versions": {
+    "components/abb-s201-1p.png": "75f3c30059",
+    "components/abb-s202-2p.png": "b8ba59a579",
+    "components/abb-s203-3p.png": "f6849da685",
+    "components/abb-tmax-xt1.png": "6788b38d32",
+    "components/abb-tmax-xt2.png": "8fcce05486",
+    "components/abb-tmax-xt3.png": "71d1b1f510",
+    "components/abb-tmax-xt4.png": "e9d581f5fb",
+    "components/abb-tmax-xt5.png": "d6304e72ad",
+    "components/abb-tmax-xt6.png": "6129b325a7",
+    "components/abb-tmax-xt7.png": "3eada7b131",
+    "manufacturers/abb.png": "c74bd7936e",
+    "manufacturers/eaton.png": "f7b28a8f9b",
+    "manufacturers/hager.png": "228b66d6c0",
+    "manufacturers/legrand.png": "c75b608c0a",
+    "manufacturers/mean-well.png": "e9c5dd0d50",
+    "manufacturers/rittal.png": "57c8518f66",
+    "manufacturers/schneider.png": "d9febc543d",
+    "manufacturers/siemens.png": "6929e824aa",
+    "manufacturers/tamhash.png": "fbe300b403",
+    "manufacturers/yakir.png": "ad73cf69ce"
   }
 }

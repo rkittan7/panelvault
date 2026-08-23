@@ -2141,11 +2141,25 @@ function serveCatalogImage(req, res, urlPath) {
   }
   const ext = path.extname(filePath).toLowerCase();
   if (!CATALOG_IMAGE_TYPES.has(ext)) return fail(res, 403, "no");
+
+  // A photo is replaced under the name it already had — that is the whole
+  // point of naming files after catalog ids — so the URL never changes when
+  // the bytes do. A bare max-age therefore pins whatever a browser saw first
+  // for its full life: dropping a real photo over a placeholder left everyone
+  // who had loaded the placeholder staring at it for another day, with the
+  // fresh manifest pointing right at it. Send a validator and make the browser
+  // ask; an unchanged file costs a 304 and no body.
+  const stat = fs.statSync(filePath);
+  const etag = `"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
+  if (req.headers["if-none-match"] === etag) {
+    res.writeHead(304, { ETag: etag, "Cache-Control": "public, max-age=0, must-revalidate" });
+    return res.end();
+  }
   res.writeHead(200, {
     "Content-Type": MIME[ext] || "application/octet-stream",
-    // Photos change only when someone drops a new file in and redeploys, and
-    // the manifest is re-fetched on every page load, so a long cache is safe.
-    "Cache-Control": ext === ".json" ? "no-cache" : "public, max-age=86400",
+    ETag: etag,
+    "Last-Modified": stat.mtime.toUTCString(),
+    "Cache-Control": ext === ".json" ? "no-cache" : "public, max-age=0, must-revalidate",
   });
   fs.createReadStream(filePath).pipe(res);
 }

@@ -115,7 +115,7 @@ function chipIcon(name, color) {
    iPhone apps bundle. The manifest is loaded once at boot so no render site has
    to probe the server for a photo that may not exist: a part is only drawn with
    an <img> when the manifest says a file is really there. */
-let catalogImages = { components: {}, manufacturers: {} };
+let catalogImages = { components: {}, manufacturers: {}, versions: {} };
 
 async function loadCatalogImages() {
   try {
@@ -125,6 +125,8 @@ async function loadCatalogImages() {
     catalogImages = {
       components: index.components || {},
       manufacturers: index.manufacturers || {},
+      // Content stamps written alongside the paths — see imageURL.
+      versions: index.versions || {},
     };
   } catch {
     /* No photos dropped in yet, or the folder is missing: every render site
@@ -182,8 +184,18 @@ function tintByBrand(node, name) {
   return node;
 }
 
+/* A photo is replaced under the name it already had, so the path alone cannot
+   tell a browser the bytes changed — and one that cached the old file under a
+   long max-age will not even ask. The manifest itself is served `no-cache`, so
+   the stamp it carries is always current: hanging it on the URL turns a
+   replaced photo into a different URL, which no cache can answer from a stale
+   entry. Absent stamp (a manifest written before this existed) just yields the
+   bare path, exactly as before. */
 function imageURL(file) {
-  return file ? `/catalog-images/${file.split("/").map(encodeURIComponent).join("/")}` : null;
+  if (!file) return null;
+  const path = file.split("/").map(encodeURIComponent).join("/");
+  const version = catalogImages.versions && catalogImages.versions[file];
+  return `/catalog-images/${path}${version ? `?v=${encodeURIComponent(version)}` : ""}`;
 }
 
 function partPhotoURL(part) {
@@ -2365,16 +2377,36 @@ function openCatalogPartModal(part) {
       modal.append(figure);
     }
 
+    // The brand's own mark leads when there is one — a reader recognises the
+    // logo faster than the category glyph, and the type is spelled out in the
+    // line below and again in the specification. The type icon stays as the
+    // fallback for the brands with no logo yet.
     const head = el("div", "part-title-row");
-    const tile = el("div", "type-tile");
-    tile.append(icon(iconForType(part.type), 28));
-    head.append(tile);
+    const logoURL = brandLogoURL(part.manufacturer);
+    if (logoURL) {
+      const tile = el("div", "brand-tile");
+      tile.style.setProperty("--glow", brandLogoGlow(part.manufacturer));
+      const img = el("img");
+      img.src = logoURL;
+      img.alt = part.manufacturer;
+      // A manifest entry with no file behind it must not leave a gap where the
+      // mark should be: fall back to the glyph the app would have shown.
+      img.addEventListener("error", () => {
+        const fallback = el("div", "type-tile");
+        fallback.append(icon(iconForType(part.type), 28));
+        tile.replaceWith(fallback);
+      });
+      tile.append(img);
+      head.append(tile);
+    } else {
+      const tile = el("div", "type-tile");
+      tile.append(icon(iconForType(part.type), 28));
+      head.append(tile);
+    }
     const text = el("div", "part-title-text");
     text.append(el("div", "part-title", part.model));
     const brand = el("div", "part-brand");
     brand.append(icon("tag", 13), el("span", null, part.manufacturer));
-    const mark = brandMark(part.manufacturer);
-    if (mark) brand.append(mark);
     text.append(brand);
     head.append(text);
     modal.append(head);
