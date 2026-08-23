@@ -3,7 +3,7 @@
 
 warehouse/Sources/Catalog.swift is the machine-written form of PanelVault's
 `ComponentGroup.samples` — the same parts, the same ids, already grouped into
-the fifteen categories the apps browse by. This reads it and writes the JSON
+the categories the apps browse by. This reads it and writes the JSON
 the website serves, so PanelVault Cloud's catalog is the app's catalog rather
 than a flat list that has to be kept in step by hand.
 
@@ -90,6 +90,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",
                         help="verify webapp/catalog.json matches the Swift catalog")
+    parser.add_argument("--allow-drop", action="store_true",
+                        help="permit removing part ids that catalog.json still "
+                             "lists; only for a part added in error that no "
+                             "stock line or board can yet reference")
     args = parser.parse_args()
 
     parts = parse_catalog()
@@ -104,12 +108,18 @@ def main():
         with open(CATALOG_JSON, encoding="utf-8") as handle:
             existing = json.load(handle)
         missing = {part["id"] for part in existing} - set(ids)
-        if missing:
+        if missing and not args.allow_drop:
             sys.exit(
                 f"{len(missing)} part id(s) in catalog.json are not in the Swift "
                 f"catalog, which would break stock and boards that reference "
-                f"them: {', '.join(sorted(missing)[:5])}…"
+                f"them: {', '.join(sorted(missing)[:5])}…\n"
+                f"If these were added in error and nothing can reference them "
+                f"yet, re-run with --allow-drop."
             )
+        if missing:
+            # Named in full rather than counted: dropping an id is the one thing
+            # here that can strand data, so it belongs in the run's output.
+            print(f"dropping {len(missing)} part id(s): {', '.join(sorted(missing))}")
     except FileNotFoundError:
         pass
 
