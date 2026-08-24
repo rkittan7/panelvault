@@ -75,6 +75,9 @@ function normalizeCompanies() {
   for (const company of Object.values(db.companies || {})) {
     company.movements ||= [];
     company.customParts ||= [];
+    // Customers and companies typed straight into the archive, for the ones
+    // that have no project or board naming them yet.
+    company.contacts ||= [];
     company.partSettings ||= {};
     company.projects ||= [];
     company.boards ||= [];
@@ -1066,6 +1069,7 @@ async function createCompanyAccount({ companyName, name, password }) {
     movements: [],
     customParts: [],
     partSettings: {},
+    contacts: [],
     projects: [],
     boards: [],
     workspaceVersion: 0,
@@ -1247,6 +1251,7 @@ const routes = {
         invitableRoles: invitableRoles(user),
       },
       roleLabels: ROLE_LABELS,
+      contacts: company.contacts,
       stock: stockEntries(company, withCosts),
       movements: [...company.movements]
         .sort((a, b) => b.date.localeCompare(a.date))
@@ -1839,6 +1844,69 @@ const routes = {
     bumpWorkspace(company);
     await save();
     sendJSON(res, 200, { project });
+  },
+
+  /** Add a customer or a company to the archive by hand.
+   *
+   * The archive is otherwise built from the names on projects and boards, which
+   * means a customer you have not raised any work for yet cannot be recorded.
+   * These fill that gap; everything derived keeps working as it did.
+   */
+  "POST /api/contacts": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add customers.");
+    const body = await readBody(req);
+    const name = String(body.name || "").trim().slice(0, 160);
+    const kind = body.kind === "company" ? "company" : "customer";
+    if (!name) return fail(res, 400, "Enter a name.");
+
+    // Derived names count as taken: adding "Electra" a second time would put
+    // two cards with one name on the page.
+    const taken = kind === "company"
+      ? company.boards.map((board) => board.company)
+      : [...company.projects.map((project) => project.customer), ...company.boards.map((board) => board.customer)];
+    const clash = [...taken, ...company.contacts.filter((c) => c.kind === kind).map((c) => c.name)]
+      .some((value) => String(value || "").trim().toLowerCase() === name.toLowerCase());
+    if (clash) {
+      return fail(res, 409, kind === "company" ? "That company is already listed." : "That customer is already listed.");
+    }
+
+    const contact = {
+      id: id("contact"),
+      name,
+      kind,
+      note: String(body.note || "").trim().slice(0, 400),
+      colorHex: /^#[0-9a-f]{6}$/i.test(body.colorHex || "") ? body.colorHex.toUpperCase() : "#5E78FF",
+      createdAt: new Date().toISOString(),
+    };
+    company.contacts.push(contact);
+    await save();
+    sendJSON(res, 200, { contact });
+  },
+
+  /** Remove one that was added by hand.
+   *
+   * Only ever removes the typed-in record. A name that a project or board also
+   * carries stays on the page because the work still names it, so deleting is
+   * refused rather than appearing to do nothing.
+   */
+  "POST /api/contact-delete": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can remove customers.");
+    const { contactID } = await readBody(req);
+    const contact = company.contacts.find((item) => item.id === contactID);
+    if (!contact) return fail(res, 404, "That customer is not in the archive.");
+    const key = contact.name.trim().toLowerCase();
+    const used = contact.kind === "company"
+      ? company.boards.some((board) => String(board.company || "").trim().toLowerCase() === key)
+      : company.projects.some((project) => String(project.customer || "").trim().toLowerCase() === key)
+        || company.boards.some((board) => String(board.customer || "").trim().toLowerCase() === key);
+    if (used) {
+      return fail(res, 409, "This name is on a project or a board, so it stays in the archive.");
+    }
+    company.contacts = company.contacts.filter((item) => item.id !== contactID);
+    await save();
+    sendJSON(res, 200, { ok: true, contactID });
   },
 
   "POST /api/boards": async (req, res, session) => {

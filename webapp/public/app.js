@@ -461,7 +461,7 @@ const NAV_ITEMS = [
   { view: "catalog", label: "Catalog", icon: "catalog", group: "operations" },
   { view: "deliveries", label: "Deliveries", icon: "note", group: "operations", count: () => state.deliveries.length },
   { view: "team", label: "Team", icon: "team", group: "operations", adminOnly: true, count: () => (state.members || []).length },
-  { view: "contacts", label: "Companies & Customers", icon: "building", group: "reference", count: () => new Set(state.projects.map((project) => project.customer).filter(Boolean)).size },
+  { view: "contacts", label: "Customers", icon: "building", group: "reference", count: () => contactArchiveNames().length },
   { view: "manufacturers", label: "Manufacturers", icon: "tag", group: "reference" },
 ];
 
@@ -1882,8 +1882,8 @@ function drilldownMetric(label, value, color = "var(--primary)") {
 }
 
 function openCustomerOverview(customer) {
-  const boards = state.boards.filter((board) => board.customer === customer);
-  const projects = state.projects.filter((project) => project.customer === customer);
+  const boards = state.boards.filter((board) => sameName(board.customer, customer));
+  const projects = state.projects.filter((project) => sameName(project.customer, customer));
   const completed = boards.filter((board) => board.status === "Completed").length;
   openModal((modal, close) => {
     modal.classList.add("wide", "board-drilldown-modal");
@@ -1907,7 +1907,28 @@ function openCustomerOverview(customer) {
     boards.sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
       .forEach((board) => list.append(boardDrilldownRow(board, close)));
     modal.append(boards.length ? list : emptyState("board", "No boards are linked to this customer."));
+    appendContactRemoval(modal, close, "customer", customer, projects.length + boards.length);
   });
+}
+
+/** Offers to take a typed-in name back off the archive.
+ *
+ * Only for a name that was added by hand and has no work against it — one that
+ * a project or board carries is put there by that record, not by us, so there
+ * is nothing here to remove. */
+function appendContactRemoval(modal, close, kind, name, workCount) {
+  if (!isAdmin() || workCount) return;
+  const contact = storedContact(kind, name);
+  if (!contact) return;
+  const actions = el("div", "actions");
+  const remove = el("button", "btn-ghost", "Remove from archive");
+  remove.type = "button";
+  remove.addEventListener("click", () => {
+    close();
+    removeContact(contact);
+  });
+  actions.append(remove);
+  modal.append(actions);
 }
 
 /** A brand's page: what the catalog holds under it, the boards it is named on,
@@ -2894,27 +2915,8 @@ function uniqueNames(values) {
 }
 
 /** Customer, company and brand names are free text somebody typed, so "Electra"
-    and "electra" are one name. Accent-sensitive but case-insensitive, the same
-    rule the phone app matches on. */
-function sameName(a, b) {
-  if (!a || !b) return false;
-  return String(a).trim().localeCompare(String(b).trim(), undefined, { sensitivity: "accent" }) === 0;
-}
-
-/** Distinct names in the spelling they were first written with. */
-function distinctNames(values) {
-  const seen = [];
-  values.map((value) => String(value || "").trim()).filter(Boolean).forEach((value) => {
-    if (!seen.some((name) => sameName(name, value))) seen.push(value);
-  });
-  return seen.sort((a, b) => a.localeCompare(b));
-}
-
-/** A brand counts a board as its work when it built the cabinet or when its
-    make is on the main breaker — the same rule as the phone app's brand page. */
-function boardUsesManufacturer(board, name) {
-  return sameName(board.manufacturer, name) || sameName(board.mainBreakerModel, name);
-}
+    and "electra" are one name. */
+const sameName = (a, b) => Boolean(nameKey(a)) && nameKey(a) === nameKey(b);
 
 function archiveCard(iconName, color, name, detail, open) {
   const card = el("button", "archive-card");
@@ -2929,21 +2931,51 @@ function archiveCard(iconName, color, name, detail, open) {
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
+/** Every name the Customers page lists.
+ *
+ * Customers come off boards as well as projects: a board can be raised for a
+ * customer who has no project yet, and that customer still needs a profile —
+ * reading only the projects is what kept those names invisible. The company a
+ * board is built for is listed below them, and was never shown anywhere before.
+ */
+function contactArchiveCustomers() {
+  return uniqueNames([
+    ...state.projects.map((project) => project.customer),
+    ...state.boards.map((board) => board.customer),
+    ...contactsOfKind("customer").map((contact) => contact.name),
+  ]);
+}
+
+function contactArchiveCompanies() {
+  return uniqueNames([
+    ...state.boards.map((board) => board.company),
+    ...contactsOfKind("company").map((contact) => contact.name),
+  ]);
+}
+
+const contactsOfKind = (kind) => (state.contacts || []).filter((contact) => contact.kind === kind);
+
+/** The typed-in record behind a name, when there is one. Only these can be
+    removed — a name a project or board carries is not ours to delete. */
+function storedContact(kind, name) {
+  return contactsOfKind(kind).find((contact) => sameName(contact.name, name)) || null;
+}
+
+function contactArchiveNames() {
+  return [...contactArchiveCustomers(), ...contactArchiveCompanies()];
+}
+
 function renderContacts() {
   const view = $("#view-contacts");
   view.replaceChildren();
-  view.append(viewHead("Companies & Customers"));
+  const actions = isAdmin()
+    ? [smallBtn("Add customer", "accent", "plus", () => openNewContactModal("customer")),
+       smallBtn("Add company", "", "plus", () => openNewContactModal("company"))]
+    : [];
+  view.append(viewHead("Customers", ...actions));
 
-  // Customers come off boards as well as projects. A board can be raised for a
-  // customer who has no project yet, and that customer still needs a profile
-  // here — reading only the projects is what made those names invisible.
-  const customers = distinctNames([
-    ...state.projects.map((project) => project.customer),
-    ...state.boards.map((board) => board.customer),
-  ]);
-  // The company a board is built for is recorded on the board and was never
-  // shown anywhere, on a page named after it.
-  const companies = distinctNames(state.boards.map((board) => board.company));
+  const customers = contactArchiveCustomers();
+  const companies = contactArchiveCompanies();
 
   const intro = el("div", "archive-intro");
   intro.append(
@@ -2977,6 +3009,7 @@ function renderContacts() {
         plural(projects.length, "project"),
         plural(boards.length, "board"),
         sites.size ? plural(sites.size, "site") : null,
+        storedContact("customer", name)?.note || null,
       ].filter(Boolean).join(" · ");
       customerGrid.append(archiveCard(
         "building", projects[0]?.colorHex || "var(--primary)", name, detail,
@@ -2986,7 +3019,7 @@ function renderContacts() {
     if (!visibleCustomers.length) {
       customerGrid.append(emptyState("search", customers.length
         ? "No customers match that search."
-        : "Customers appear here as soon as a project or board names one."));
+        : "Customers appear here as soon as a project or board names one — or add one now."));
     }
 
     const visibleCompanies = companies.filter(matches);
@@ -2997,10 +3030,14 @@ function renderContacts() {
     companyGrid.classList.toggle("hidden", hideCompanies);
     visibleCompanies.forEach((name) => {
       const boards = state.boards.filter((board) => sameName(board.company, name));
-      const named = distinctNames(boards.map((board) => board.customer));
+      const named = uniqueNames(boards.map((board) => board.customer));
       companyGrid.append(archiveCard(
         "team", "var(--secondary)", name,
-        [plural(boards.length, "board"), plural(named.length, "customer")].join(" · "),
+        [
+          plural(boards.length, "board"),
+          plural(named.length, "customer"),
+          storedContact("company", name)?.note || null,
+        ].filter(Boolean).join(" · "),
         () => openCompanyOverview(name),
       ));
     });
@@ -3009,14 +3046,73 @@ function renderContacts() {
     }
   };
 
-  view.append(archiveSearch("Search companies and customers", draw), customerHead, customerGrid, companyHead, companyGrid);
+  view.append(archiveSearch("Search customers and companies", draw), customerHead, customerGrid, companyHead, companyGrid);
   draw();
+}
+
+/** Add a customer or a company to the archive by hand.
+ *
+ * Everything else on this page is derived from the names on projects and
+ * boards, so a customer you have not raised work for yet had nowhere to live.
+ */
+function openNewContactModal(kind) {
+  const isCompany = kind === "company";
+  openModal((modal, close) => {
+    modal.append(el("h3", null, isCompany ? "Add company" : "Add customer"));
+    modal.append(el("div", "modal-sub", isCompany
+      ? "A company you build for. It also appears on boards that name it."
+      : "Someone you build for. Projects and boards can be raised against them straight away."));
+    const name = field("Name", isCompany ? "e.g. Danya Cebus" : "e.g. Electra");
+    const note = field("Note", "optional");
+    const error = el("div", "form-error hidden");
+    modal.append(name.label, note.label, error);
+    modal.append(modalActions(close, isCompany ? "Add company" : "Add customer", async () => {
+      if (!name.input.value.trim()) {
+        error.textContent = "Enter a name.";
+        error.classList.remove("hidden");
+        return;
+      }
+      error.classList.add("hidden");
+      try {
+        await api("/api/contacts", { kind, name: name.input.value, note: note.input.value });
+      } catch (caught) {
+        error.textContent = caught.message || "That could not be saved.";
+        error.classList.remove("hidden");
+        return;
+      }
+      close();
+      await refresh();
+      switchView("contacts");
+    }));
+  });
+}
+
+/** Take a typed-in name back off the archive. */
+function removeContact(contact) {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, `Remove ${contact.name}?`));
+    modal.append(el("div", "modal-sub", "This only removes the entry from the archive. Nothing else is touched."));
+    const error = el("div", "form-error hidden");
+    modal.append(error);
+    modal.append(modalActions(close, "Remove", async () => {
+      try {
+        await api("/api/contact-delete", { contactID: contact.id });
+      } catch (caught) {
+        error.textContent = caught.message || "That could not be removed.";
+        error.classList.remove("hidden");
+        return;
+      }
+      close();
+      await refresh();
+      switchView("contacts");
+    }));
+  });
 }
 
 /** Everything built for one company, whoever the end customer was. */
 function openCompanyOverview(company) {
   const boards = state.boards.filter((board) => sameName(board.company, company));
-  const customers = distinctNames(boards.map((board) => board.customer));
+  const customers = uniqueNames(boards.map((board) => board.customer));
   const completed = boards.filter((board) => board.status === "Completed").length;
   openModal((modal, close) => {
     modal.classList.add("wide", "board-drilldown-modal");
@@ -3041,62 +3137,7 @@ function openCompanyOverview(company) {
       .sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
       .forEach((board) => list.append(boardDrilldownRow(board, close)));
     modal.append(boards.length ? list : emptyState("board", "No boards are linked to this company."));
-  });
-}
-
-/** One brand: the boards it is on and what the catalog carries under it. */
-function openManufacturerOverview(name) {
-  const boards = state.boards.filter((board) => boardUsesManufacturer(board, name));
-  const built = boards.filter((board) => sameName(board.manufacturer, name)).length;
-  const parts = (catalog || []).filter((part) => sameName(part.manufacturer, name));
-  openModal((modal, close) => {
-    modal.classList.add("wide", "board-drilldown-modal");
-    modal.append(el("span", "eyebrow", "Manufacturer"), el("h3", null, name));
-    modal.append(el("p", "modal-sub", [plural(boards.length, "board"), plural(parts.length, "catalog item")].join(" · ")));
-    const metrics = el("div", "drilldown-metrics");
-    metrics.append(
-      drilldownMetric("Cabinets built", built),
-      drilldownMetric("On main breaker", boards.length - built, "var(--secondary)"),
-      drilldownMetric("Catalog items", parts.length, "var(--positive)"),
-    );
-    modal.append(metrics);
-
-    modal.append(el("div", "section-label", "Boards"));
-    if (!boards.length) {
-      modal.append(emptyState("board", "No board is built by this brand or carries it on the main breaker."));
-    } else {
-      const list = el("div", "board-drilldown-list");
-      [...boards]
-        .sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
-        .forEach((board) => list.append(boardDrilldownRow(board, close)));
-      modal.append(list);
-    }
-
-    modal.append(el("div", "section-label", "Catalog items"));
-    if (!parts.length) {
-      modal.append(emptyState("box", "The catalog carries nothing under this brand yet."));
-      return;
-    }
-    const list = el("div", "rows");
-    parts.slice(0, 12).forEach((part) => {
-      const row = el("div", "row");
-      row.append(partChip(part));
-      const copy = el("div", "row-main");
-      copy.append(el("div", "row-title", partTitle(part)), el("div", "row-sub", part.type || ""));
-      row.append(copy);
-      list.append(row);
-    });
-    modal.append(list);
-    if (parts.length > 12) {
-      const rest = smallBtn(`See all ${parts.length} in Catalog`, "", null, () => {
-        close();
-        catalogQuery = name;
-        switchView("catalog");
-      });
-      const wrap = el("div", "page-form-actions");
-      wrap.append(rest);
-      modal.append(wrap);
-    }
+    appendContactRemoval(modal, close, "company", company, boards.length);
   });
 }
 
@@ -3124,12 +3165,12 @@ async function renderManufacturers() {
     const query = value.trim().toLowerCase();
     const visible = names.filter((name) => !query || name.toLowerCase().includes(query));
     visible.forEach((name) => {
-      const parts = (catalog || []).filter((part) => part.manufacturer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const parts = (catalog || []).filter((part) => sameName(part.manufacturer, name));
       const boards = state.boards.filter((board) => boardUsesManufacturer(board, name));
       const card = el("button", "manufacturer-card");
       card.type = "button";
       card.addEventListener("click", () => openManufacturerOverview(name));
-      const logoURL = manufacturerImage(name);
+      const logoURL = brandLogoURL(name);
       const logo = el("div", "manufacturer-logo");
       if (logoURL) {
         const image = el("img");
