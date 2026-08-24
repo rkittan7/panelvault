@@ -639,6 +639,114 @@ function panel(title, meta, ...actions) {
   return box;
 }
 
+/** How many alerts the dashboard panel shows before it outgrows the panels
+ * beside it. Measured, not guessed: five alert rows come to 357px against the
+ * 350px of a full "Open projects" panel, so the row keeps its height; a sixth
+ * adds 57px and stretches every panel in the row. The rest are one click away
+ * behind "View all". */
+const DASHBOARD_ALERT_LIMIT = 5;
+
+/** One row in the urgent-alerts list. `close` is passed when the row is inside
+    the all-alerts modal, so acting on it dismisses the modal first. */
+function attentionItem(entry, close) {
+  const item = el("button", "attention-item");
+  item.type = "button";
+  item.append(chipIcon(entry.icon, entry.color));
+  const copy = el("span", "attention-copy");
+  copy.append(el("strong", null, entry.title), el("small", null, entry.detail));
+  item.append(copy, el("span", "attention-action", entry.actionLabel), icon("chevron", 15));
+  item.addEventListener("click", () => {
+    if (close) close();
+    entry.action();
+  });
+  return item;
+}
+
+/** Everything that wants a manager's attention, as one ranked list.
+ *
+ * Low stock used to sit in its own panel down the side of the dashboard, which
+ * said it was a different sort of problem from an overdue project. It is not —
+ * both mean work stops — so the parts are alerts like any other now.
+ *
+ * The groups are interleaved rather than concatenated: a dozen low-stock parts
+ * ahead of the boards would push every unassigned board off the panel, which is
+ * the crowding that gave stock its own panel in the first place. Each group is
+ * sorted worst-first, so the top of the list is still the worst of each kind.
+ */
+function dashboardAlerts(overdueProjects, lowStock, unassignedBoards) {
+  const groups = [
+    [...overdueProjects]
+      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
+      .map((project) => ({
+        kind: "project",
+        icon: "folder",
+        color: "var(--warning)",
+        title: `${project.name} is overdue`,
+        detail: `${project.customer} · due ${new Date(project.dueDate).toLocaleDateString()}`,
+        actionLabel: "Open projects",
+        action: () => switchView("projects"),
+      })),
+    lowStock.map((item) => {
+      const out = item.onHand <= 0;
+      return {
+        kind: "stock",
+        icon: out ? "box" : "alert",
+        color: out ? "var(--negative)" : "var(--warning)",
+        title: partTitle(item.part),
+        detail: [
+          out ? "Out of stock" : `${item.onHand} on hand`,
+          `minimum ${item.minimumLevel}`,
+          item.location,
+        ].filter(Boolean).join(" · "),
+        actionLabel: "Review stock",
+        action: () => switchView("stock"),
+      };
+    }),
+    unassignedBoards.map((board) => ({
+      kind: "board",
+      icon: "board",
+      color: "var(--secondary)",
+      title: `${board.number} needs an owner`,
+      detail: [board.name, board.project !== "No Project" ? board.project : board.customer].filter(Boolean).join(" · "),
+      actionLabel: "Assign",
+      action: () => openAssignModal(board),
+    })),
+  ];
+  const ordered = [];
+  for (let depth = 0; groups.some((group) => depth < group.length); depth += 1) {
+    groups.forEach((group) => {
+      if (depth < group.length) ordered.push(group[depth]);
+    });
+  }
+  return ordered;
+}
+
+/** The full alert list, grouped by what kind of problem each one is. */
+function openAlertsModal(alerts) {
+  openModal((modal, close) => {
+    modal.classList.add("wide");
+    modal.append(el("span", "eyebrow", "Needs attention"), el("h3", null, "Urgent alerts"));
+    modal.append(el("p", "modal-sub", `${alerts.length} item${alerts.length === 1 ? "" : "s"} across projects, stock and boards.`));
+    const list = el("div", "manager-attention-list alert-modal-list");
+    [
+      ["Overdue projects", "project"],
+      ["Low stock", "stock"],
+      ["Unassigned boards", "board"],
+    ].forEach(([label, kind]) => {
+      const items = alerts.filter((entry) => entry.kind === kind);
+      if (!items.length) return;
+      list.append(el("div", "section-label", `${label} · ${items.length}`));
+      items.forEach((entry) => list.append(attentionItem(entry, close)));
+    });
+    modal.append(list);
+    const actions = el("div", "actions");
+    const done = el("button", "btn-ghost", "Close");
+    done.addEventListener("click", close);
+    actions.append(done);
+    modal.append(actions);
+  });
+}
+
 function renderDashboard() {
   const view = $("#view-dashboard");
   view.replaceChildren();
@@ -748,33 +856,19 @@ function renderDashboard() {
   const dashboardSideStack = el("div", "dashboard-side-stack");
   view.append(dashboardTopGrid, dashboardWorkGrid);
 
-  const attentionCount = low.length + unassignedBoards.length + overdueProjects.length;
-  const attentionPanel = panel("Urgent alerts", attentionCount ? `${attentionCount} items` : "All clear");
+  const alerts = dashboardAlerts(overdueProjects, low, unassignedBoards);
+  const shownAlerts = alerts.slice(0, DASHBOARD_ALERT_LIMIT);
+  const hiddenAlerts = alerts.length - shownAlerts.length;
+  const attentionMeta = alerts.length
+    ? (hiddenAlerts ? `${shownAlerts.length} of ${alerts.length}` : `${alerts.length} item${alerts.length === 1 ? "" : "s"}`)
+    : "All clear";
+  const attentionPanel = hiddenAlerts
+    ? panel("Urgent alerts", attentionMeta, smallBtn("View all", "", null, () => openAlertsModal(alerts)))
+    : panel("Urgent alerts", attentionMeta);
   attentionPanel.classList.add("attention-panel");
   attentionPanel.body.classList.add("manager-attention-list");
-  const attentionItem = (iconName, color, title, detail, actionLabel, action) => {
-    const item = el("button", "attention-item");
-    item.type = "button";
-    item.append(chipIcon(iconName, color));
-    const copy = el("span", "attention-copy");
-    copy.append(el("strong", null, title), el("small", null, detail));
-    item.append(copy, el("span", "attention-action", actionLabel), icon("chevron", 15));
-    item.addEventListener("click", action);
-    return item;
-  };
-  overdueProjects.slice(0, 2).forEach((project) => attentionPanel.body.append(attentionItem(
-    "folder", "var(--warning)", `${project.name} is overdue`,
-    `${project.customer} · due ${new Date(project.dueDate).toLocaleDateString()}`, "Open projects", () => switchView("projects"),
-  )));
-  unassignedBoards.slice(0, 2).forEach((board) => attentionPanel.body.append(attentionItem(
-    "board", "var(--secondary)", `${board.number} needs an owner`,
-    [board.name, board.project !== "No Project" ? board.project : board.customer].filter(Boolean).join(" · "), "Assign", () => openAssignModal(board),
-  )));
-  low.slice(0, 3).forEach((item) => attentionPanel.body.append(attentionItem(
-    "alert", "var(--warning)", partTitle(item.part),
-    `${item.onHand} on hand · minimum ${item.minimumLevel}${item.location ? ` · ${item.location}` : ""}`, "Review stock", () => switchView("stock"),
-  )));
-  if (!attentionCount) {
+  shownAlerts.forEach((entry) => attentionPanel.body.append(attentionItem(entry)));
+  if (!alerts.length) {
     attentionPanel.body.append(el("div", "manager-clear", "No overdue projects, unassigned boards or low-stock parts."));
   }
   const projectsPanel = panel("Open projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
@@ -843,27 +937,6 @@ function renderDashboard() {
   boardsPanel.body.append(stageChart);
   dashboardTopGrid.append(projectsPanel, boardsPanel, attentionPanel);
   dashboardWorkGrid.append(productionPanel, dashboardSideStack);
-
-  const stockPanel = panel("Low stock", low.length ? `${low.length} to review` : "Healthy", smallBtn("All stock", "", null, () => switchView("stock")));
-  stockPanel.body.classList.add("flush");
-  if (!low.length) {
-    stockPanel.body.append(el("div", "manager-clear compact", "Every tracked part is above its minimum."));
-  } else {
-    const rows = el("div", "rows");
-    low.slice(0, 5).forEach((item) => {
-      const row = el("div", "row click");
-      row.append(partChip(item.part));
-      const copy = el("div", "row-main");
-      copy.append(el("div", "row-title", partTitle(item.part)), el("div", "row-sub", item.location || item.part.type));
-      const quantity = el("div", "qty-col");
-      quantity.append(el("div", "num low", String(item.onHand)), el("div", "cap", `min ${item.minimumLevel}`));
-      row.append(copy, quantity);
-      row.addEventListener("click", () => switchView("stock"));
-      rows.append(row);
-    });
-    stockPanel.body.append(rows);
-  }
-  dashboardSideStack.append(stockPanel);
 
   if (canSeeCosts() && state.costSummary) {
     const costs = panel("Financial snapshot", "Private to managers");

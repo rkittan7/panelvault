@@ -482,6 +482,9 @@ input:focus, select:focus, textarea:focus {
 .attention-copy strong { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attention-copy small { color: var(--ink-3); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attention-action { color: var(--primary); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+/* The all-alerts modal scrolls its own list so Close stays put. */
+.alert-modal-list { max-height: 56vh; overflow: auto; margin: 0 -4px; padding: 0 4px; }
+.alert-modal-list .section-label:first-child { margin-top: 0; }
 .manager-clear { padding: 22px; color: var(--positive); font-size: 12px; text-align: center; }
 .manager-clear.compact { padding: 18px 12px; }
 

@@ -99,11 +99,13 @@ struct PanelVaultAppView: View {
       }
     }
     .onChange(of: projectPersistenceSignature) { _ in
+      syncDirectoryProfiles()
       applyCustomerColors()
       schedulePersistSnapshot()
       scheduleCloudWorkspacePush()
     }
     .onChange(of: boardPersistenceSignature) { _ in
+      syncDirectoryProfiles()
       applyCustomerColors()
       schedulePersistSnapshot()
       scheduleCloudWorkspacePush()
@@ -194,24 +196,19 @@ struct PanelVaultAppView: View {
         selection: $newHubSelection,
         onCreateBoard: { board in
           createdBoards.insert(board, at: 0)
-          let trimmedCustomer = board.customer.trimmingCharacters(in: .whitespacesAndNewlines)
-          if !trimmedCustomer.isEmpty && !customers.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmedCustomer) == .orderedSame }) {
-            customers.insert(CustomerItem(name: trimmedCustomer, colorHex: board.color.archiveHex), at: 0)
-          }
+          syncDirectoryProfiles()
           persistSnapshot()
         },
         onUpdateBoard: { updatedBoard in
           if let index = createdBoards.firstIndex(where: { $0.id == updatedBoard.id }) {
             createdBoards[index] = updatedBoard
+            syncDirectoryProfiles()
             persistSnapshot()
           }
         },
         onCreateProject: { project in
           projects.insert(project, at: 0)
-          let trimmedCustomer = project.customer.trimmingCharacters(in: .whitespacesAndNewlines)
-          if !trimmedCustomer.isEmpty && !customers.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmedCustomer) == .orderedSame }) {
-            customers.insert(CustomerItem(name: trimmedCustomer, colorHex: project.color.archiveHex), at: 0)
-          }
+          syncDirectoryProfiles()
           pendingProjectOpenID = project.id
           archiveMode = .projects
           archiveStatusFilter = "All"
@@ -276,6 +273,7 @@ struct PanelVaultAppView: View {
       let names = Set(custom.map { $0.name.lowercased() })
       boardTypes = custom + BoardType.samples.filter { !names.contains($0.name.lowercased()) }
     }
+    syncDirectoryProfiles()
     applyCustomerColors()
 
     // Legacy snapshots stored base64; decoding above rewrote those as files, so
@@ -302,6 +300,62 @@ struct PanelVaultAppView: View {
     if !profileImageToken.isEmpty { tokens.insert(profileImageToken) }
 
     ImageStore.shared.sweepOrphans(keeping: tokens)
+  }
+
+  /// Give every customer and company named on a board or project its own
+  /// profile in the Companies and Customers lists.
+  ///
+  /// Typing a new name into the New Board form is how most of these records are
+  /// actually born, so the profile is created from the boards themselves rather
+  /// than only in the creation callback — editing a board's customer or company
+  /// afterwards has to reach the same lists.
+  private func syncDirectoryProfiles() {
+    var addedCustomers: [CustomerItem] = []
+    for project in projects {
+      let name = project.customer.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty, !customerExists(name, pending: addedCustomers) else { continue }
+      addedCustomers.append(
+        CustomerItem(name: name, note: "From project \(project.name)", colorHex: project.color.archiveHex)
+      )
+    }
+    for board in createdBoards {
+      let name = board.customer.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty, !customerExists(name, pending: addedCustomers) else { continue }
+      addedCustomers.append(
+        CustomerItem(name: name, note: "From board \(board.number)", colorHex: board.color.archiveHex)
+      )
+    }
+    if !addedCustomers.isEmpty {
+      customers.insert(contentsOf: addedCustomers, at: 0)
+    }
+
+    var addedCompanies: [ContractorCompany] = []
+    for board in createdBoards {
+      let name = board.company.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty, !companyExists(name, pending: addedCompanies) else { continue }
+      addedCompanies.append(
+        ContractorCompany(
+          id: "company-\(UUID().uuidString)",
+          name: name,
+          role: "Company",
+          projectCount: "0 projects",
+          color: board.color
+        )
+      )
+    }
+    if !addedCompanies.isEmpty {
+      contractorCompanies.insert(contentsOf: addedCompanies, at: 0)
+    }
+  }
+
+  private func customerExists(_ name: String, pending: [CustomerItem]) -> Bool {
+    customers.contains { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+      || pending.contains { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+  }
+
+  private func companyExists(_ name: String, pending: [ContractorCompany]) -> Bool {
+    contractorCompanies.contains { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+      || pending.contains { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
   }
 
   private func applyCustomerColors() {
@@ -927,7 +981,7 @@ struct DashboardView: View {
     .sheet(item: selectedBoardBinding) { boardID in
       if let index = boards.firstIndex(where: { $0.id == boardID.id }) {
         NavigationStack {
-          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, allBoards: boards, onDeleteBoard: {
             deleteBoard(id: boardID.id)
             selectedBoardID = nil
           }) {
@@ -1688,7 +1742,7 @@ struct ProjectsView: View {
       .sheet(item: selectedBoardBinding) { boardSelection in
         NavigationStack {
           if let index = boards.firstIndex(where: { $0.id == boardSelection.id }) {
-            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, allBoards: boards, onDeleteBoard: {
               deleteBoard(boards[index])
               selectedBoardID = nil
             }) {
@@ -3083,7 +3137,7 @@ struct ProjectDetailSheet: View {
       .sheet(item: $selectedBoard) { board in
         NavigationStack {
           if let index = boards.firstIndex(where: { $0.id == board.id }) {
-            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+            CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, allBoards: boards, onDeleteBoard: {
               boards.removeAll { $0.id == board.id }
               selectedBoard = nil
             }) {
@@ -3274,6 +3328,9 @@ struct ManufacturerInlineMark: View {
 struct ManufacturerPropertyPill: View {
   let manufacturer: ManufacturerItem?
   let fallbackName: String
+  /// Opens the brand's page. Left nil where there is nothing to open — a name
+  /// the manufacturer list has never heard of has no page to show.
+  var open: (() -> Void)? = nil
 
   private var name: String {
     manufacturer?.name ?? fallbackName
@@ -3284,6 +3341,17 @@ struct ManufacturerPropertyPill: View {
   }
 
   var body: some View {
+    if let open {
+      Button(action: open) {
+        pill
+      }
+      .buttonStyle(.plain)
+    } else {
+      pill
+    }
+  }
+
+  private var pill: some View {
     HStack(spacing: 8) {
       ManufacturerMarkView(manufacturer: manufacturer, fallbackName: fallbackName, size: 30)
       VStack(alignment: .leading, spacing: 2) {
@@ -3296,6 +3364,11 @@ struct ManufacturerPropertyPill: View {
           .minimumScaleFactor(0.7)
       }
       Spacer(minLength: 0)
+      if open != nil {
+        Image(systemName: "chevron.right")
+          .font(.caption2.bold())
+          .foregroundStyle(color.opacity(0.7))
+      }
     }
     .padding(10)
     .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
@@ -3303,8 +3376,9 @@ struct ManufacturerPropertyPill: View {
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .stroke(color.opacity(0.13), lineWidth: 1)
+        .stroke(color.opacity(open == nil ? 0.13 : 0.34), lineWidth: 1)
     )
+    .contentShape(Rectangle())
   }
 }
 
@@ -3428,6 +3502,7 @@ struct BoardPropertiesOverview: View {
   let theme: PanelTheme
   let board: BoardDraft
   let manufacturers: [ManufacturerItem]
+  var onOpenManufacturer: (() -> Void)? = nil
   let onEditFinishTime: () -> Void
 
   private var manufacturer: ManufacturerItem? {
@@ -3456,7 +3531,7 @@ struct BoardPropertiesOverview: View {
           if BoardSubtypeCatalog.isVisible(board.subtype) {
             ProjectPropertyPill(symbol: "rectangle.grid.1x2.fill", title: "Subtype", value: board.subtype, color: board.color)
           }
-          ManufacturerPropertyPill(manufacturer: manufacturer, fallbackName: board.manufacturer)
+          ManufacturerPropertyPill(manufacturer: manufacturer, fallbackName: board.manufacturer, open: onOpenManufacturer)
           ProjectPropertyPill(symbol: "bolt.fill", title: "Ampere", value: board.ampere, color: board.color)
           ProjectPropertyPill(symbol: "rectangle.split.3x1.fill", title: "Cabinets", value: "\(board.cabinetCount) • \(board.buildFormat)", color: board.color)
           ProjectPropertyPill(symbol: "calendar", title: "Out Date", value: DateDisplay.short.string(from: board.dateOut), color: board.color)
@@ -5829,9 +5904,14 @@ struct CreatedBoardScreen: View {
   @Binding var board: BoardDraft
   var boardTypes: [BoardType] = BoardType.samples
   var manufacturers: [ManufacturerItem] = ManufacturerItem.defaults
+  /// Every board in the archive, so the brand page reached from the manufacturer
+  /// pill can list the other boards carrying that brand. Left empty during board
+  /// creation, where the archive is not to hand yet.
+  var allBoards: [BoardDraft] = []
   var showsCreationFlow = false
   var onDeleteBoard: (() -> Void)? = nil
   let createAnother: () -> Void
+  @State private var manufacturerFocusID: String?
   @State private var catalogOpen = false
   @State private var componentTypes: [String] = []
   @State private var addedComponentsByType: [String: [PanelComponent]] = [:]
@@ -5854,6 +5934,24 @@ struct CreatedBoardScreen: View {
     copy.cabinetChecklists = cabinetChecklists
     copy.personalChecklistItems = personalChecklistItems
     return copy
+  }
+
+  private var boardManufacturer: ManufacturerItem? {
+    syncedManufacturer(named: board.manufacturer, in: manufacturers)
+  }
+
+  private var openManufacturerAction: (() -> Void)? {
+    guard let boardManufacturer else { return nil }
+    return { self.manufacturerFocusID = boardManufacturer.id }
+  }
+
+  /// The brand page needs the focused manufacturer in the list it is handed. A
+  /// board can name a built-in brand the user has since deleted from their own
+  /// list, so the resolved one is put back for the page to find.
+  private var manufacturersForDetail: [ManufacturerItem] {
+    guard let boardManufacturer,
+          !manufacturers.contains(where: { $0.id == boardManufacturer.id }) else { return manufacturers }
+    return manufacturers + [boardManufacturer]
   }
 
   private var cabinetBinding: Binding<Set<String>> {
@@ -5941,7 +6039,12 @@ struct CreatedBoardScreen: View {
 
         BoardCoverPhotoSection(theme: theme, selectedImage: $board.coverImage)
 
-        BoardPropertiesOverview(theme: theme, board: displayBoard, manufacturers: manufacturers) {
+        BoardPropertiesOverview(
+          theme: theme,
+          board: displayBoard,
+          manufacturers: manufacturers,
+          onOpenManufacturer: openManufacturerAction
+        ) {
           editOpen = true
         }
 
@@ -6021,6 +6124,25 @@ struct CreatedBoardScreen: View {
       BoardEditSheet(theme: theme, board: $board, boardTypes: boardTypes, manufacturers: manufacturers, onDelete: onDeleteBoard)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+    .sheet(item: Binding(
+      get: { manufacturerFocusID.map(ManufacturerSelection.init(id:)) },
+      set: { manufacturerFocusID = $0?.id }
+    )) { selection in
+      // Type-erased on purpose: the brand page can itself open a board page, and
+      // erasing here keeps the two screens from referring to each other's view
+      // bodies.
+      AnyView(
+        ManufacturerDetailSheet(
+          theme: theme,
+          manufacturers: manufacturersForDetail,
+          boards: allBoards,
+          boardTypes: boardTypes,
+          focusID: selection.id
+        )
+      )
+      .presentationDetents([.large])
+      .presentationDragIndicator(.visible)
     }
     .fullScreenCover(isPresented: $catalogOpen) {
       NavigationStack {
@@ -7966,7 +8088,7 @@ struct SearchView: View {
       }
       .sheet(item: $selectedBoard) { board in
         if let index = boards.firstIndex(where: { $0.id == board.id }) {
-          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, onDeleteBoard: {
+          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, allBoards: boards, onDeleteBoard: {
             boards.removeAll { $0.id == board.id }
             recentVisits.removeAll { $0.kind == .board && $0.itemID == board.id }
             selectedBoard = nil
@@ -8503,7 +8625,7 @@ struct MoreView: View {
           Button {
             moreSheet = .manufacturers
           } label: {
-            MoreRow(theme: theme, symbol: "tag.fill", title: "Manufacturers", subtitle: "Edit brands, logos and custom makers")
+            MoreRow(theme: theme, symbol: "tag.fill", title: "Manufacturers", subtitle: "Open a brand to see its boards and catalog")
           }
           .buttonStyle(PanelPressButtonStyle())
 
@@ -8576,7 +8698,7 @@ struct MoreView: View {
             manufacturers: manufacturers
           )
         case .manufacturers:
-          ManufacturerManagerSheet(theme: theme, manufacturers: $manufacturers)
+          ManufacturerManagerSheet(theme: theme, manufacturers: $manufacturers, boards: $boards, boardTypes: boardTypes)
         case .boardTypes:
           BoardTypeManagerSheet(theme: theme, boardTypes: $boardTypes)
         }
@@ -9653,7 +9775,7 @@ struct CustomerManagerSheet: View {
                 theme: theme,
                 customer: customer,
                 summary: customerSummary(customer.name),
-                canDelete: customers.contains(where: { $0.id == customer.id }),
+                canDelete: customers.contains(where: { $0.id == customer.id }) && !isLinked(customer.name),
                 open: {
                   openCustomer(customer)
                 },
@@ -9739,6 +9861,14 @@ struct CustomerManagerSheet: View {
     let projectCount = projects.filter { $0.customer.localizedCaseInsensitiveCompare(customerName) == .orderedSame }.count
     let boardCount = boards.filter { $0.customer.localizedCaseInsensitiveCompare(customerName) == .orderedSame }.count
     return "\(projectCount) project\(projectCount == 1 ? "" : "s") • \(boardCount) board\(boardCount == 1 ? "" : "s")"
+  }
+
+  /// A customer still named on a project or board cannot be deleted: the
+  /// profile would be recreated from that record the moment anything changed,
+  /// so the delete would only look like it worked.
+  private func isLinked(_ customerName: String) -> Bool {
+    projects.contains { $0.customer.localizedCaseInsensitiveCompare(customerName) == .orderedSame }
+      || boards.contains { $0.customer.localizedCaseInsensitiveCompare(customerName) == .orderedSame }
   }
 }
 
@@ -9931,7 +10061,7 @@ struct CustomerArchiveDetailSheet: View {
         set: { selectedBoardID = $0?.id }
       )) { selection in
         if let index = boards.firstIndex(where: { $0.id == selection.id }) {
-          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers) {
+          CreatedBoardScreen(theme: theme, board: $boards[index], boardTypes: boardTypes, manufacturers: manufacturers, allBoards: boards) {
             selectedBoardID = nil
           }
         }
@@ -10057,6 +10187,8 @@ struct BoardIDSelection: Identifiable {
 struct ManufacturerManagerSheet: View {
   let theme: PanelTheme
   @Binding var manufacturers: [ManufacturerItem]
+  @Binding var boards: [BoardDraft]
+  let boardTypes: [BoardType]
   @Environment(\.dismiss) private var dismiss
   @State private var name = ""
   @State private var selectedColorHex: UInt32 = 0x5E78FF
@@ -10083,12 +10215,18 @@ struct ManufacturerManagerSheet: View {
             }
           }
 
-          ForEach($manufacturers) { $manufacturer in
-            ManufacturerEditorRow(theme: theme, manufacturer: $manufacturer) {
-              manufacturers.removeAll { $0.id == manufacturer.id }
-            } showDetails: {
-              selectedManufacturerID = manufacturer.id
-            }
+          ForEach(manufacturers) { manufacturer in
+            ManufacturerEditorRow(
+              theme: theme,
+              manufacturer: manufacturer,
+              summary: manufacturerSummary(manufacturer.name),
+              open: {
+                selectedManufacturerID = manufacturer.id
+              },
+              delete: {
+                manufacturers.removeAll { $0.id == manufacturer.id }
+              }
+            )
           }
         }
         .padding(18)
@@ -10101,11 +10239,17 @@ struct ManufacturerManagerSheet: View {
         }
       }
       .sheet(item: selectedManufacturerBinding) { selection in
-        if let manufacturer = manufacturers.first(where: { $0.id == selection.id }) {
-          ManufacturerDetailSheet(theme: theme, manufacturer: manufacturer)
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
+        ManufacturerDetailSheet(
+          theme: theme,
+          manufacturers: manufacturers,
+          boards: boards,
+          boardTypes: boardTypes,
+          focusID: selection.id,
+          manufacturerStore: $manufacturers,
+          boardStore: $boards
+        )
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
       }
     }
   }
@@ -10118,6 +10262,12 @@ struct ManufacturerManagerSheet: View {
     }
   }
 
+  private func manufacturerSummary(_ manufacturerName: String) -> String {
+    let boardCount = boards.filter { ManufacturerUsage.matches(manufacturerName, board: $0) }.count
+    let itemCount = ManufacturerUsage.catalogItemCount(for: manufacturerName)
+    return "\(boardCount) board\(boardCount == 1 ? "" : "s") • \(itemCount) catalog item\(itemCount == 1 ? "" : "s")"
+  }
+
   private func addManufacturer() {
     let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty else { return }
@@ -10128,70 +10278,60 @@ struct ManufacturerManagerSheet: View {
   }
 }
 
+/// Which boards and catalog items belong to a manufacturer.
+///
+/// A brand can be on a board either as the cabinet builder or as the make of
+/// its main breaker, and both count as work for that manufacturer, so the two
+/// lists are answered from one place instead of each screen picking its own.
+enum ManufacturerUsage {
+  static func matches(_ manufacturerName: String, board: BoardDraft) -> Bool {
+    let name = manufacturerName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return false }
+    return board.manufacturer.localizedCaseInsensitiveCompare(name) == .orderedSame
+      || board.mainBreakerModel.localizedCaseInsensitiveCompare(name) == .orderedSame
+  }
+
+  static func catalogItemCount(for manufacturerName: String) -> Int {
+    ComponentGroup.samples.flatMap(\.items).filter {
+      $0.manufacturer.localizedCaseInsensitiveCompare(manufacturerName) == .orderedSame
+    }.count
+  }
+}
+
 struct ManufacturerEditorRow: View {
   let theme: PanelTheme
-  @Binding var manufacturer: ManufacturerItem
+  let manufacturer: ManufacturerItem
+  let summary: String
+  let open: () -> Void
   let delete: () -> Void
-  let showDetails: () -> Void
-  @State private var selectedItem: PhotosPickerItem?
 
   var body: some View {
     GlassCard(theme: theme) {
       HStack(spacing: 12) {
-        PhotosPicker(selection: $selectedItem, matching: .images) {
-          ManufacturerLogoView(manufacturer: manufacturer)
-        }
-        .buttonStyle(.plain)
-        .onChange(of: selectedItem) { item in
-          loadImage(from: item)
-        }
-
-        VStack(alignment: .leading, spacing: 8) {
-          HStack(spacing: 7) {
-            Image(systemName: "tag.fill")
-              .font(.caption.bold())
-              .foregroundStyle(manufacturer.color)
-            TextField("Manufacturer", text: $manufacturer.name)
-              .font(.headline)
-              .lineLimit(1)
-              .minimumScaleFactor(0.7)
-          }
-          Menu {
-            ForEach(AccentPalette.choices) { choice in
-              Button(choice.name) {
-                manufacturer.colorHex = choice.id
+        Button(action: open) {
+          HStack(spacing: 12) {
+            ManufacturerLogoView(manufacturer: manufacturer)
+            VStack(alignment: .leading, spacing: 5) {
+              HStack(spacing: 7) {
+                Image(systemName: "tag.fill")
+                  .font(.caption.bold())
+                  .foregroundStyle(manufacturer.color)
+                Text(manufacturer.name)
+                  .font(.headline)
+                  .lineLimit(1)
+                  .minimumScaleFactor(0.7)
               }
+              Text(summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             }
-          } label: {
-            HStack(spacing: 6) {
-              Circle()
-                .fill(manufacturer.color)
-                .frame(width: 12, height: 12)
-              Text("Color")
-                .font(.caption.bold())
-              Image(systemName: "chevron.down")
-                .font(.caption2.bold())
-            }
-            .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+              .foregroundStyle(.secondary)
           }
-          if manufacturer.imageToken != nil {
-            Button(role: .destructive) {
-              removeLogo()
-            } label: {
-              Label("Remove Logo", systemImage: "trash")
-                .font(.caption.bold())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color(hex: 0xD66A6A))
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-        Button(action: showDetails) {
-          Image(systemName: "info.circle.fill")
-            .font(.title3)
-            .foregroundStyle(theme.primary)
-            .frame(width: 30, height: 30)
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
 
@@ -10199,25 +10339,6 @@ struct ManufacturerEditorRow: View {
       }
       .frame(maxWidth: .infinity)
     }
-  }
-
-  private func loadImage(from item: PhotosPickerItem?) {
-    Task {
-      guard item == selectedItem else { return }
-      guard let data = try? await item?.loadTransferable(type: Data.self),
-            let image = (await ImageStore.imported(from: data))?.image else { return }
-      await MainActor.run {
-        if item == selectedItem {
-          manufacturer.image = image
-        }
-      }
-    }
-  }
-
-  private func removeLogo() {
-    selectedItem = nil
-    ImageStore.shared.delete(manufacturer.imageToken)
-    manufacturer.imageToken = nil
   }
 }
 
@@ -10227,8 +10348,50 @@ struct ManufacturerSelection: Identifiable {
 
 struct ManufacturerDetailSheet: View {
   let theme: PanelTheme
-  let manufacturer: ManufacturerItem
+  let manufacturers: [ManufacturerItem]
+  let boards: [BoardDraft]
+  let boardTypes: [BoardType]
+  /// Which manufacturer the page is showing. Kept as state so the list of every
+  /// other manufacturer at the bottom can move the page to one of them instead
+  /// of stacking another sheet on top.
+  @State var focusID: String
+  /// Handed over only where the page can write back. The manufacturer list in
+  /// More owns both lists, so there the brand can be renamed and its boards
+  /// opened; the same page reached from a board's manufacturer pill is a
+  /// read-only look at the brand.
+  var manufacturerStore: Binding<[ManufacturerItem]>? = nil
+  var boardStore: Binding<[BoardDraft]>? = nil
   @Environment(\.dismiss) private var dismiss
+  @State private var selectedBoardID: String?
+  @State private var logoItem: PhotosPickerItem?
+
+  private var allManufacturers: [ManufacturerItem] {
+    manufacturerStore?.wrappedValue ?? manufacturers
+  }
+
+  private var allBoards: [BoardDraft] {
+    boardStore?.wrappedValue ?? boards
+  }
+
+  private var manufacturer: ManufacturerItem {
+    allManufacturers.first { $0.id == focusID } ?? ManufacturerItem(id: focusID, name: "Manufacturer")
+  }
+
+  private var editableBinding: Binding<ManufacturerItem>? {
+    guard let store = manufacturerStore,
+          store.wrappedValue.contains(where: { $0.id == focusID }) else { return nil }
+    let id = focusID
+    return Binding {
+      store.wrappedValue.first { $0.id == id } ?? ManufacturerItem(id: id, name: "Manufacturer")
+    } set: { updated in
+      guard let index = store.wrappedValue.firstIndex(where: { $0.id == id }) else { return }
+      store.wrappedValue[index] = updated
+    }
+  }
+
+  private var linkedBoards: [BoardDraft] {
+    allBoards.filter { ManufacturerUsage.matches(manufacturer.name, board: $0) }
+  }
 
   private var components: [PanelComponent] {
     ComponentGroup.samples.flatMap(\.items).filter {
@@ -10246,28 +10409,41 @@ struct ManufacturerDetailSheet: View {
     }
   }
 
+  private var otherManufacturers: [ManufacturerItem] {
+    allManufacturers.filter { $0.id != focusID }
+  }
+
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          HStack(spacing: 14) {
-            ManufacturerLogoView(manufacturer: manufacturer)
-            VStack(alignment: .leading, spacing: 5) {
-              Text(manufacturer.name)
-                .font(.largeTitle.bold())
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-              Text("\(components.count) catalog item\(components.count == 1 ? "" : "s")")
-                .foregroundStyle(.secondary)
+          header
+          if editableBinding != nil {
+            brandEditingRow
+          }
+
+          Text("Boards")
+            .font(.headline)
+
+          if linkedBoards.isEmpty {
+            EmptyStateCard(theme: theme, title: "No boards", subtitle: "Boards built by this manufacturer, or carrying its main breaker, will show here.")
+          } else {
+            ForEach(linkedBoards) { board in
+              if boardStore != nil {
+                Button {
+                  selectedBoardID = board.id
+                } label: {
+                  DashboardBoardRecentRow(theme: theme, board: board, boardTypes: boardTypes, manufacturers: allManufacturers)
+                }
+                .buttonStyle(.plain)
+              } else {
+                DashboardBoardRecentRow(theme: theme, board: board, boardTypes: boardTypes, manufacturers: allManufacturers)
+              }
             }
           }
 
           BoardReferenceSection(theme: theme, title: "Manufacturer", symbol: "tag.fill", color: manufacturer.color) {
-            BoardBulletList(items: [
-              "Logo/color can be edited from the manufacturer list.",
-              "This page shows every built-in catalog item currently assigned to this manufacturer.",
-              "Custom components you add can also use this manufacturer name."
-            ])
+            BoardBulletList(items: referenceNotes)
           }
 
           Text("Catalog Items")
@@ -10277,6 +10453,24 @@ struct ManufacturerDetailSheet: View {
             EmptyStateCard(theme: theme, title: "No catalog items", subtitle: "Add custom components with this manufacturer name to start filling this section.")
           } else {
             ComponentCatalogView(theme: theme, groups: filteredGroups, manufacturers: [manufacturer])
+          }
+
+          Text("All Manufacturers")
+            .font(.headline)
+
+          if otherManufacturers.isEmpty {
+            EmptyStateCard(theme: theme, title: "No other manufacturers", subtitle: "Add more brands from More › Manufacturers.")
+          } else {
+            ForEach(otherManufacturers) { other in
+              Button {
+                selectedBoardID = nil
+                logoItem = nil
+                focusID = other.id
+              } label: {
+                ManufacturerSummaryRow(theme: theme, manufacturer: other, summary: summary(for: other))
+              }
+              .buttonStyle(.plain)
+            }
           }
         }
         .padding(18)
@@ -10288,6 +10482,170 @@ struct ManufacturerDetailSheet: View {
           Button("Done") { dismiss() }
         }
       }
+      .sheet(item: Binding(
+        get: { selectedBoardID.map(BoardIDSelection.init(id:)) },
+        set: { selectedBoardID = $0?.id }
+      )) { selection in
+        if let store = boardStore, let index = store.wrappedValue.firstIndex(where: { $0.id == selection.id }) {
+          CreatedBoardScreen(
+            theme: theme,
+            board: store[index],
+            boardTypes: boardTypes,
+            manufacturers: allManufacturers,
+            allBoards: store.wrappedValue
+          ) {
+            selectedBoardID = nil
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var header: some View {
+    HStack(spacing: 14) {
+      if let editableBinding {
+        PhotosPicker(selection: $logoItem, matching: .images) {
+          ManufacturerLogoView(manufacturer: manufacturer)
+        }
+        .buttonStyle(.plain)
+        .onChange(of: logoItem) { item in
+          loadLogo(from: item)
+        }
+        VStack(alignment: .leading, spacing: 5) {
+          TextField("Manufacturer", text: editableBinding.name)
+            .font(.largeTitle.bold())
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+          Text(summary(for: manufacturer))
+            .foregroundStyle(.secondary)
+        }
+      } else {
+        ManufacturerLogoView(manufacturer: manufacturer)
+        VStack(alignment: .leading, spacing: 5) {
+          Text(manufacturer.name)
+            .font(.largeTitle.bold())
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+          Text(summary(for: manufacturer))
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var brandEditingRow: some View {
+    HStack(spacing: 10) {
+      Menu {
+        ForEach(AccentPalette.choices) { choice in
+          Button(choice.name) {
+            update { $0.colorHex = choice.id }
+          }
+        }
+      } label: {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(manufacturer.color)
+            .frame(width: 12, height: 12)
+          Text("Logo color")
+            .font(.caption.bold())
+          Image(systemName: "chevron.down")
+            .font(.caption2.bold())
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(theme.surface.opacity(0.72))
+        .clipShape(Capsule())
+      }
+      if manufacturer.imageToken != nil {
+        Button(role: .destructive) {
+          removeLogo()
+        } label: {
+          Label("Remove Logo", systemImage: "trash")
+            .font(.caption.bold())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(theme.surface.opacity(0.72))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color(hex: 0xD66A6A))
+      }
+      Spacer(minLength: 0)
+    }
+  }
+
+  private var referenceNotes: [String] {
+    [
+      "Boards count this brand as the cabinet maker or as the main breaker make.",
+      editableBinding == nil
+        ? "Rename the brand, or set its logo and color, from More › Manufacturers."
+        : "Tap the logo to set a brand image, or rename the manufacturer above.",
+      "Custom components you add can also use this manufacturer name."
+    ]
+  }
+
+  private func update(_ change: (inout ManufacturerItem) -> Void) {
+    guard let editableBinding else { return }
+    var item = editableBinding.wrappedValue
+    change(&item)
+    editableBinding.wrappedValue = item
+  }
+
+  private func summary(for item: ManufacturerItem) -> String {
+    let boardCount = allBoards.filter { ManufacturerUsage.matches(item.name, board: $0) }.count
+    let itemCount = ManufacturerUsage.catalogItemCount(for: item.name)
+    return "\(boardCount) board\(boardCount == 1 ? "" : "s") • \(itemCount) catalog item\(itemCount == 1 ? "" : "s")"
+  }
+
+  private func loadLogo(from item: PhotosPickerItem?) {
+    Task {
+      guard item == logoItem else { return }
+      guard let data = try? await item?.loadTransferable(type: Data.self),
+            let image = (await ImageStore.imported(from: data))?.image else { return }
+      await MainActor.run {
+        if item == logoItem {
+          update { $0.image = image }
+        }
+      }
+    }
+  }
+
+  private func removeLogo() {
+    logoItem = nil
+    ImageStore.shared.delete(manufacturer.imageToken)
+    update { $0.imageToken = nil }
+  }
+}
+
+/// One brand as a tappable row: logo, name, and how much work sits behind it.
+struct ManufacturerSummaryRow: View {
+  let theme: PanelTheme
+  let manufacturer: ManufacturerItem
+  let summary: String
+
+  var body: some View {
+    GlassCard(theme: theme) {
+      HStack(spacing: 12) {
+        ManufacturerLogoView(manufacturer: manufacturer)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(manufacturer.name)
+            .font(.headline)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+          Text(summary)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+        }
+        Spacer(minLength: 8)
+        Image(systemName: "chevron.right")
+          .foregroundStyle(.secondary)
+      }
+      .contentShape(Rectangle())
     }
   }
 }
@@ -10983,11 +11341,17 @@ struct CompanyManagerSheet: View {
                     .foregroundStyle(activeCompany?.id == company.id ? company.color : .secondary)
                 }
                 .buttonStyle(.plain)
-                DeleteIconButton(theme: theme) {
-                  if activeCompany?.id == company.id {
-                    activeCompany = nil
+                if isLinked(company.name) {
+                  Image(systemName: "chevron.right")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                } else {
+                  DeleteIconButton(theme: theme) {
+                    if activeCompany?.id == company.id {
+                      activeCompany = nil
+                    }
+                    companies.removeAll { $0.id == company.id }
                   }
-                  companies.removeAll { $0.id == company.id }
                 }
               }
             }
@@ -11040,6 +11404,12 @@ struct CompanyManagerSheet: View {
     let projectCount = projects.filter { $0.customer.localizedCaseInsensitiveCompare(companyName) == .orderedSame }.count
     let boardCount = boards.filter { $0.company.localizedCaseInsensitiveCompare(companyName) == .orderedSame }.count
     return "\(projectCount) project\(projectCount == 1 ? "" : "s") • \(boardCount) board\(boardCount == 1 ? "" : "s")"
+  }
+
+  /// Same rule as the customer list: a company a board still names is rebuilt
+  /// automatically, so deleting it here would not stick.
+  private func isLinked(_ companyName: String) -> Bool {
+    boards.contains { $0.company.localizedCaseInsensitiveCompare(companyName) == .orderedSame }
   }
 }
 
