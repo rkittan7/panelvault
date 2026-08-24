@@ -11,7 +11,18 @@ const webapp = __dirname;
 test("the website board manufacturer picker includes Tamhash and preserves new AI names", () => {
   const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
   assert.match(browserApp, /BOARD_MANUFACTURERS[\s\S]*"Tamhash"/);
-  assert.match(browserApp, /manufacturer\.select\.append\(new Option\(aiManufacturer/);
+  // The dropdown became a grid of brand logos, so a name the picker has never
+  // carried is kept by setting the field rather than by appending an option.
+  assert.match(browserApp, /manufacturer\.set\(matchedManufacturer \|\| aiManufacturer\)/);
+});
+
+test("the board manufacturer is chosen from a grid of brand logos", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /function manufacturerPickerField\(labelText, initial\)/);
+  assert.match(browserApp, /async function openManufacturerPicker\(selected, onPick\)/);
+  assert.match(browserApp, /manufacturerPickerField\("Board manufacturer", "Generic"\)/);
+  // The board's own page shows the same mark instead of a generic icon.
+  assert.match(browserApp, /brandTile\(board\.manufacturer, "sm"\)/);
 });
 
 test("the board Components tab keeps model variants together with highest ampere first", () => {
