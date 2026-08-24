@@ -10287,8 +10287,11 @@ enum ManufacturerUsage {
   static func matches(_ manufacturerName: String, board: BoardDraft) -> Bool {
     let name = manufacturerName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty else { return false }
+    // The main breaker field holds the brand and the model together, so the
+    // brand is read off the front rather than compared whole.
     return board.manufacturer.localizedCaseInsensitiveCompare(name) == .orderedSame
-      || board.mainBreakerModel.localizedCaseInsensitiveCompare(name) == .orderedSame
+      || MainBreakerIdentity(stored: board.mainBreakerModel).manufacturer
+        .localizedCaseInsensitiveCompare(name) == .orderedSame
   }
 
   static func catalogItemCount(for manufacturerName: String) -> Int {
@@ -13924,7 +13927,7 @@ enum EquipmentTypeCatalog {
 /// models behind each one. Both board forms read from here so the slots offer
 /// real parts instead of free text.
 enum MainBreakerCatalog {
-  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"]
+  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Isolator", "Fuse Switch"]
 
   /// Models the catalog lists for `type`, narrowed to one brand when the board
   /// names one. A brand with nothing catalogued under this type falls back to
@@ -13954,12 +13957,15 @@ enum MainBreakerCatalog {
     }
   }()
 
-  /// Families the catalog files under a name the board form does not offer.
-  /// An isolator or load-break switch is what a board means by a switch
-  /// disconnector, and the catalog types the ABB OT and Schneider Interpact
-  /// that way, so the slot would otherwise miss the two most common main
-  /// switches on site.
-  private static let aliases = ["Switch Disconnector": ["Isolator"]]
+  /// The same devices under both of the names a board gives them. An isolator
+  /// or load-break switch is what a board means by a switch disconnector, and
+  /// the catalog types the ABB OT and Schneider Interpact as isolators while
+  /// typing the Tmax D range as switch-disconnectors. Whichever of the two a
+  /// board names, the slot offers all of them.
+  private static let aliases = [
+    "Switch Disconnector": ["Isolator"],
+    "Isolator": ["Switch Disconnector"],
+  ]
 
   /// A catalog part belongs to a breaker type when its own type carries every
   /// word of that type, or of one of its aliases. That is what lets "Switch
