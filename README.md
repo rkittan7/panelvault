@@ -148,7 +148,7 @@ Swift means the tool counts it with no second edit here.
 
 ## The catalog
 
-All four surfaces browse the same catalog: 199 parts in fifteen categories.
+All four surfaces browse the same catalog: 334 parts in eighteen categories.
 
 `warehouse/Sources/Catalog.swift` is the machine-written form of the app's
 component catalog and is the source `webapp/catalog.json` is generated from:
@@ -159,7 +159,7 @@ python3 tools/gen_web_catalog.py --check   # fail if it is out of date
 ```
 
 That carries each part's `group` and `groupName` across, which is what lets
-PanelVault Cloud show the catalog the way the apps do — a grid of the fifteen
+PanelVault Cloud show the catalog the way the apps do — a grid of the eighteen
 categories, then the parts inside one, with a search that cuts across all of
 them. Selecting a part shows its photo, description and specification, and the
 boss or a manager can start tracking it in the warehouse from there.
