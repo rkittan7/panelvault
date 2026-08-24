@@ -1569,14 +1569,16 @@ async function updateBoardStage(board, stageID) {
   }
 }
 
-function boardProperty(iconName, label, value, onClick) {
+function boardProperty(iconName, label, value, onClick, mark = null) {
   const card = el(onClick ? "button" : "div", `board-property${onClick ? " clickable" : ""}`);
   if (onClick) {
     card.type = "button";
     card.setAttribute("aria-label", `${label}: ${value || "Not set"}. Open details`);
     card.addEventListener("click", onClick);
   }
-  card.append(chipIcon(iconName, "var(--primary)"));
+  // `mark` is for a property that has a picture of its own - a manufacturer is
+  // known by its logo before its name.
+  card.append(mark || chipIcon(iconName, "var(--primary)"));
   const copy = el("div");
   copy.append(el("span", null, label), el("strong", null, value || "Not set"));
   card.append(copy);
@@ -2188,7 +2190,8 @@ function renderBoardDetail() {
       ? () => openWorkerOverview(board.qaAssignedTo, board.qaAssignedName) : null),
     boardProperty("cabinet", "Build", `${board.cabinetCount} cabinet${String(board.cabinetCount) === "1" ? "" : "s"} · ${board.buildFormat}`),
     boardProperty("tag", "Manufacturer", board.manufacturer,
-      board.manufacturer ? () => openManufacturerOverview(board.manufacturer) : null),
+      board.manufacturer ? () => openManufacturerOverview(board.manufacturer) : null,
+      board.manufacturer ? brandTile(board.manufacturer, "sm") : null),
     boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · "),
       () => openBreakerOverview(board)),
     boardProperty("hash", "Customer", board.customer, () => openCustomerOverview(board.customer)),
@@ -3860,6 +3863,104 @@ function mainBreakerModelField(typeSelect) {
   return control;
 }
 
+/** A brand's logo tile: the picture where there is one, its initials where
+ * there is not. Same tile the manufacturer library uses, at whatever size the
+ * caller asks for. */
+function brandTile(name, cls = "") {
+  const tile = el("div", `manufacturer-logo${cls ? ` ${cls}` : ""}`);
+  const url = brandLogoURL(name);
+  if (url) {
+    const image = el("img");
+    image.src = url;
+    image.alt = "";
+    image.loading = "lazy";
+    // A logo listed in the manifest but missing on disk falls back to initials
+    // rather than leaving a broken picture in the grid.
+    image.addEventListener("error", () => {
+      image.remove();
+      tile.append(el("strong", null, String(name || "?").slice(0, 2).toUpperCase()));
+    });
+    tile.append(image);
+  } else {
+    tile.append(el("strong", null, String(name || "?").slice(0, 2).toUpperCase()));
+  }
+  return tile;
+}
+
+/** The manufacturer grid, opened from a field that shows the current choice.
+ * A board's manufacturer is a brand you recognise by its mark long before you
+ * read its name, which a dropdown of words cannot use. */
+async function openManufacturerPicker(selected, onPick) {
+  await ensureCatalog().catch(() => {});
+  const names = uniqueNames([...manufacturerNames(), selected]);
+  openModal((modal, close) => {
+    modal.classList.add("wide");
+    modal.append(el("span", "eyebrow", "Board manufacturer"), el("h3", null, "Choose a manufacturer"));
+    modal.append(el("p", "modal-sub", "Brands from the catalog and from boards already built."));
+
+    const grid = el("div", "brand-grid");
+    const draw = (query = "") => {
+      grid.replaceChildren();
+      const term = query.trim().toLowerCase();
+      const visible = names.filter((name) => !term || name.toLowerCase().includes(term));
+      visible.forEach((name) => {
+        const parts = (catalog || []).filter((part) => nameKey(part.manufacturer) === nameKey(name)).length;
+        const boards = state.boards.filter((board) => boardUsesManufacturer(board, name)).length;
+        const option = el("button", `brand-option${nameKey(name) === nameKey(selected) ? " selected" : ""}`);
+        option.type = "button";
+        option.append(brandTile(name), el("strong", null, name));
+        const note = [parts ? `${parts} part${parts === 1 ? "" : "s"}` : "", boards ? `${boards} board${boards === 1 ? "" : "s"}` : ""]
+          .filter(Boolean).join(" · ");
+        option.append(el("small", null, note || "Not used yet"));
+        option.addEventListener("click", () => { onPick(name); close(); });
+        grid.append(option);
+      });
+      if (!visible.length) grid.append(emptyState("search", "No manufacturer matches that search."));
+    };
+
+    const search = el("input");
+    search.type = "search";
+    search.placeholder = `Search ${names.length} manufacturers`;
+    search.addEventListener("input", () => draw(search.value));
+    modal.append(search, grid);
+
+    const actions = el("div", "actions");
+    const done = el("button", "btn-ghost", "Close");
+    done.addEventListener("click", close);
+    actions.append(done);
+    modal.append(actions);
+    draw();
+  });
+}
+
+/** The manufacturer slot: the chosen brand's logo and name, and the grid
+ * behind it. Reads like the other page fields, and answers `.value` the way a
+ * select would. */
+function manufacturerPickerField(labelText, initial) {
+  const label = el("label", "page-field", labelText);
+  const button = el("button", "brand-field");
+  button.type = "button";
+  const mark = el("span", "brand-field-mark");
+  const name = el("span", "brand-field-name");
+  button.append(mark, name, icon("chevron", 15));
+  label.append(button);
+
+  const control = {
+    label,
+    button,
+    value: "",
+    set(next) {
+      control.value = String(next || "").trim();
+      mark.replaceChildren(brandTile(control.value, "sm"));
+      name.textContent = control.value || "Choose a manufacturer";
+      button.style.setProperty("--brand", brandAccent(control.value));
+    },
+  };
+  button.addEventListener("click", () => openManufacturerPicker(control.value, (picked) => control.set(picked)));
+  control.set(initial);
+  return control;
+}
+
 function pageField(control) {
   control.label.classList.add("page-field");
   return control;
@@ -3959,7 +4060,7 @@ function renderBoardCreate() {
   const customer = pageField(field("Customer name", "search or type customer"));
   const company = pageField(field("Company you are doing it for", "optional company"));
   const subtype = pageField(selectField("Subtype", boardSubtypeOptions(selectedType.name), DEFAULT_BOARD_SUBTYPE));
-  const manufacturer = pageField(selectField("Board manufacturer", BOARD_MANUFACTURERS, "Generic"));
+  const manufacturer = manufacturerPickerField("Board manufacturer", "Generic");
   const cabinets = pageField(selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1"));
   const buildFormat = pageField(selectField("Build format", ["Panels", "Plate"], "Panels"));
   const dateOut = pageField(field("Out date", "", "date"));
@@ -3987,18 +4088,14 @@ function renderBoardCreate() {
       customer.input.value = matchedProject.customer;
       customer.input.disabled = true;
     }
-    const availableManufacturers = [...manufacturer.select.options].map((option) => option.value);
     const manufacturerKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
     const aiManufacturer = String(aiDraft.manufacturer || "").trim();
-    const matchedManufacturer = availableManufacturers.find((value) =>
+    const matchedManufacturer = manufacturerNames().find((value) =>
       manufacturerKey(value) === manufacturerKey(aiManufacturer));
-    if (matchedManufacturer) {
-      manufacturer.select.value = matchedManufacturer;
-    } else if (aiManufacturer) {
-      // Never erase a printed manufacturer merely because it is not in the
-      // built-in picker yet. The server already accepts company-specific names.
-      manufacturer.select.append(new Option(aiManufacturer, aiManufacturer, true, true));
-    }
+    // Never erase a printed manufacturer merely because the picker has never
+    // carried it. The server already accepts company-specific names, and the
+    // field keeps whatever it is given.
+    if (matchedManufacturer || aiManufacturer) manufacturer.set(matchedManufacturer || aiManufacturer);
     cabinets.select.value = String(Math.max(1, Math.min(12, Number(aiDraft.cabinetCount) || 1)));
     const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
     const matchedBreakerType = breakerTypes.find((value) =>
@@ -4065,7 +4162,7 @@ function renderBoardCreate() {
         project: project.select.value,
         type: selectedType.name,
         subtype: subtype.select.value,
-        manufacturer: manufacturer.select.value,
+        manufacturer: manufacturer.value,
         cabinetCount: cabinets.select.value,
         buildFormat: buildFormat.select.value,
         dateOut: dateOut.input.value,

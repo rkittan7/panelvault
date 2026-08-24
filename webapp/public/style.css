@@ -1270,6 +1270,43 @@ img.brand-logo {
   color: var(--ink-3); font-size: 10.5px; font-weight: 700; letter-spacing: .045em; text-transform: uppercase;
 }
 .page-field input, .page-field select { height: 42px; background: var(--wash-1); }
+
+/* The manufacturer slot: the brand you recognise by its mark, and the grid of
+   marks behind it. Sized to sit level with the inputs beside it. */
+.brand-field {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 42px; padding: 0 10px;
+  background: var(--wash-1); border: 1px solid var(--line); border-radius: var(--r-sm);
+  font: inherit; color: var(--ink); text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.brand-field:hover { border-color: var(--line-2); background: var(--raise); }
+.brand-field:focus-visible { outline: none; border-color: var(--primary); }
+.brand-field-mark { display: flex; flex: none; }
+.manufacturer-logo.sm { width: 30px; height: 30px; border-radius: 9px; }
+.manufacturer-logo.sm strong { font-size: 10px; }
+.brand-field-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13.5px; font-weight: 600;
+}
+.brand-field svg { flex: none; color: var(--ink-3); }
+
+.brand-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 8px;
+  max-height: 46vh; overflow: auto; padding: 1px; margin-top: 10px;
+}
+.brand-option {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 13px 8px;
+  background: var(--wash-1); border: 1px solid var(--line); border-radius: 12px;
+  font: inherit; color: var(--ink); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.brand-option:hover { border-color: var(--line-2); background: var(--raise); }
+.brand-option.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.brand-option strong { font-size: 12px; font-weight: 650; }
+.brand-option small { color: var(--ink-3); font-size: 9.5px; font-weight: 600; }
 .page-field input:disabled { color: var(--ink-2); opacity: .8; }
 .page-form-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 0 2px; }
 .page-form-actions button { min-width: 120px; }
