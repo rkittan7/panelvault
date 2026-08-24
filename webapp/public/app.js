@@ -231,8 +231,36 @@ function imageURL(file) {
   return `/catalog-images/${path}${version ? `?v=${encodeURIComponent(version)}` : ""}`;
 }
 
-function partPhotoURL(part) {
-  return imageURL(catalogImages.components[part && (part.sourceID || part.id)]);
+function partPhotoURL(part, pole) {
+  const id = part && (part.sourceID || part.id);
+  if (pole) {
+    // A part photographed per pole keeps one picture per pole under its own id
+    // with the pole appended; anything else falls back to the part's picture.
+    const forPole = imageURL(catalogImages.components[`${id}-${String(pole).toLowerCase()}`]);
+    if (forPole) return forPole;
+  }
+  return imageURL(catalogImages.components[id]);
+}
+
+/** The pole counts a part is sold in, read off the row it already carries:
+ * "3P/4P" is two, "1P-4P" is four, and a part built one way only has none to
+ * choose between. Kept in step with PanelComponent.poleOptions in the app. */
+function polesOffered(part) {
+  const field = String((part && part.poles) || "").toUpperCase().replace(/\s+/g, "");
+  const pole = (text) => (/^[1-4]P$/.test(text) ? text : null);
+  if (field.includes("/")) {
+    const listed = field.split("/").map(pole).filter(Boolean);
+    return listed.length > 1 ? listed : [];
+  }
+  if (field.includes("-")) {
+    const ends = field.split("-").map(pole).filter(Boolean);
+    if (ends.length !== 2) return [];
+    const low = Number(ends[0][0]);
+    const high = Number(ends[1][0]);
+    if (low >= high) return [];
+    return Array.from({ length: high - low + 1 }, (_, step) => `${low + step}P`);
+  }
+  return [];
 }
 
 function brandLogoURL(name) {
@@ -3602,10 +3630,13 @@ function refSection(title, symbol, body) {
 /** InfoLine: label left, value right, on one row. */
 function infoLines(rows) {
   const list = el("div", "info-lines");
-  rows.forEach(([title, value]) => {
+  rows.forEach(([title, value, mark]) => {
     if (!value || value === "—") return;
     const line = el("div", "info-line");
-    line.append(el("span", "info-title", title), el("span", "info-value", value));
+    const shown = el("span", "info-value", value);
+    // Marked so a control above can rewrite it - the pole switch does.
+    if (mark) shown.dataset[mark] = "";
+    line.append(el("span", "info-title", title), shown);
     list.append(line);
   });
   return list;
@@ -3620,7 +3651,9 @@ function openCatalogPartModal(part) {
     tintByBrand(modal, part.manufacturer);
     modal.classList.add("part-sheet");
 
-    const url = partPhotoURL(part);
+    const poles = polesOffered(part);
+    let pole = poles[0] || null;
+    const url = partPhotoURL(part, pole);
     if (url) {
       const figure = el("div", "part-hero");
       const img = el("img");
@@ -3629,6 +3662,33 @@ function openCatalogPartModal(part) {
       img.addEventListener("error", () => figure.remove());
       figure.append(img);
       modal.append(figure);
+
+      if (poles.length > 1) {
+        // One part, one picture per pole - the same switch the board detail
+        // uses for its own tabs, so it reads as the same control.
+        const tabs = el("div", "board-detail-tabs pole-tabs");
+        tabs.setAttribute("role", "tablist");
+        tabs.setAttribute("aria-label", "Pole count");
+        const draw = () => {
+          tabs.replaceChildren();
+          poles.forEach((option) => {
+            const button = el("button", option === pole ? "active" : "", option);
+            button.type = "button";
+            button.setAttribute("role", "tab");
+            button.setAttribute("aria-selected", String(option === pole));
+            button.addEventListener("click", () => {
+              pole = option;
+              img.src = partPhotoURL(part, pole) || url;
+              draw();
+              const line = modal.querySelector("[data-poles-value]");
+              if (line) line.textContent = `${pole} — sold as ${part.poles}`;
+            });
+            tabs.append(button);
+          });
+        };
+        draw();
+        modal.append(tabs);
+      }
     }
 
     // The brand's own mark leads when there is one — a reader recognises the
@@ -3693,7 +3753,7 @@ function openCatalogPartModal(part) {
     modal.append(refSection("Specification", "layers", infoLines([
       ["Type", part.type],
       ["Rating", part.rating],
-      ["Poles / phase", part.poles],
+      ["Poles / phase", poles.length > 1 ? `${pole} — sold as ${part.poles}` : part.poles, "polesValue"],
       ["Serial number", part.serialNumber],
       ["Curve / notes", part.curve],
       ["Category", part.groupName],

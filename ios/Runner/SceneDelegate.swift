@@ -10874,6 +10874,8 @@ struct ComponentDetailSheet: View {
   @State private var selectedItem: PhotosPickerItem?
   @State private var previewImage: ImagePreviewItem?
   @State private var editorImage: ImagePreviewItem?
+  /// Which pole count is being looked at, for a part sold in several.
+  @State private var selectedPole: String
 
   init(
     theme: PanelTheme,
@@ -10889,6 +10891,13 @@ struct ComponentDetailSheet: View {
     self.onSaveImage = onSaveImage
     self.onRemoveImage = onRemoveImage
     _selectedImage = State(initialValue: image)
+    _selectedPole = State(initialValue: component.poleOptions.first ?? "")
+  }
+
+  /// The picture for the pole being looked at: the one taken on this device
+  /// first, then the catalog photo for that pole, then the part's own.
+  private var displayedImage: UIImage? {
+    selectedImage ?? CatalogImageLibrary.componentImage(ids: component.imageLookupIDs(pole: selectedPole))
   }
 
   private var manufacturerColor: Color {
@@ -10901,6 +10910,20 @@ struct ComponentDetailSheet: View {
     case "Siemens": return Color(hex: 0x18D4E8)
     case "Eaton": return Color(hex: 0x5E78FF)
     default: return theme.primary
+    }
+  }
+
+  /// A part sold in more than one pole count is one part with one picture per
+  /// pole, so the poles are switched here rather than split into rows that
+  /// would each need their own stock line.
+  @ViewBuilder
+  private var poleSwitch: some View {
+    let options = component.poleOptions
+    if options.count > 1 {
+      Picker("Poles", selection: $selectedPole) {
+        ForEach(options, id: \.self) { Text($0) }
+      }
+      .pickerStyle(.segmented)
     }
   }
 
@@ -10942,7 +10965,10 @@ struct ComponentDetailSheet: View {
             VStack(alignment: .leading, spacing: 10) {
               InfoLine(title: "Type", value: component.type)
               InfoLine(title: "Rating", value: component.rating)
-              InfoLine(title: "Poles / Phase", value: component.poles)
+              InfoLine(title: "Poles / Phase",
+                       value: component.poleOptions.count > 1 && !selectedPole.isEmpty
+                         ? "\(selectedPole) — sold as \(component.poles)"
+                         : component.poles)
               if !component.serialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 InfoLine(title: "Serial Number", value: component.serialNumber)
               }
@@ -10978,11 +11004,12 @@ struct ComponentDetailSheet: View {
 
   private var componentPhotoSection: some View {
     VStack(alignment: .leading, spacing: 10) {
-      if let selectedImage {
+      poleSwitch
+      if let displayedImage {
         Button {
-          previewImage = ImagePreviewItem(image: selectedImage)
+          previewImage = ImagePreviewItem(image: displayedImage)
         } label: {
-          Image(uiImage: selectedImage)
+          Image(uiImage: displayedImage)
             .resizable()
             .scaledToFit()
             .frame(maxWidth: .infinity)
@@ -10995,7 +11022,7 @@ struct ComponentDetailSheet: View {
 
         HStack(spacing: 14) {
           Button {
-            previewImage = ImagePreviewItem(image: selectedImage)
+            previewImage = ImagePreviewItem(image: displayedImage)
           } label: {
             Label("View", systemImage: "photo.fill")
               .font(.caption.bold())
@@ -11003,7 +11030,7 @@ struct ComponentDetailSheet: View {
           .buttonStyle(.plain)
 
           Button {
-            editorImage = ImagePreviewItem(image: selectedImage)
+            editorImage = ImagePreviewItem(image: displayedImage)
           } label: {
             Label("Edit", systemImage: "crop")
               .font(.caption.bold())
@@ -13393,6 +13420,7 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "abb-s204-4p", manufacturer: "ABB", type: "MCB", model: "S204", rating: "0.5-63A", poles: "4P", curve: "B/C/D Curve", about: "Four-pole MCB breaking three phases plus neutral, used where the neutral must be isolated, such as on generator or changeover circuits."),
       PanelComponent(id: "abb-sn201-1pn", manufacturer: "ABB", type: "MCB", model: "SN201", rating: "0.5-63A", poles: "1P+N", curve: "B/C Curve", about: "One pole plus switched neutral in a single module width, the usual choice for apartment and lighting boards where DIN space is tight."),
       PanelComponent(id: "abb-s300-p", manufacturer: "ABB", type: "MCB", model: "S300 P", rating: "Set A", poles: "1P-4P", curve: "Industrial", about: "Industrial-grade MCB with a higher breaking capacity than domestic ranges. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA device can clear."),
+      PanelComponent(id: "abb-s304-p", manufacturer: "ABB", type: "MCB", model: "S304 P", rating: "Set A", poles: "4P", curve: "Industrial", about: "Four-pole industrial MCB from the S300 P range, tripping all four poles together. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA domestic device can clear."),
       PanelComponent(id: "abb-su200", manufacturer: "ABB", type: "MCB", model: "SU200", rating: "Set A", poles: "1P-4P", curve: "UL/CSA", about: "MCB built to UL and CSA ratings for panels destined for North American markets or for machinery exported there."),
       PanelComponent(id: "schneider-ic60n", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60N", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Standard Acti9 MCB at 6kA breaking capacity, suitable for most commercial final circuits. Pairs with Vigi add-on blocks if earth-leakage protection is needed later."),
       PanelComponent(id: "schneider-ic60h", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60H", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Higher breaking capacity version of the iC60 for boards closer to the transformer where fault levels are greater."),
@@ -13465,7 +13493,7 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "abb-tmax-xt4d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT4D", rating: "IEC 250A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT4 frame, to 250A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt5d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT5D", rating: "IEC 630A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT5 frame, to 630A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt6d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT6D", rating: "IEC 1000A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT6 frame, to 1000A. No trip unit: it will not clear a fault and needs protection upstream."),
-      PanelComponent(id: "abb-tmax-xt7d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D", rating: "IEC 1600A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT7 frame, to 1600A. No trip unit: it will not clear a fault and needs protection upstream."),
+      PanelComponent(id: "abb-tmax-xt7d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D", rating: "IEC 1600A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT7 frame, to 1600A, in three-pole and four-pole versions. No trip unit: it isolates and switches on load but will not clear a fault, so protection sits upstream."),
       PanelComponent(id: "abb-tmax-xt7dm", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D M", rating: "IEC 1600A frame", poles: "3P/4P", curve: "Stored-energy, no protection", about: "Switch-disconnector in the XT7 frame with a stored-energy mechanism. No trip unit: it needs protection upstream."),
       PanelComponent(id: "generic-changeover", manufacturer: "Generic", type: "Changeover Switch", model: "Manual changeover", rating: "Set A", poles: "4P", curve: "I-0-II", about: "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once."),
       PanelComponent(id: "socomec-sirco", manufacturer: "Socomec", type: "Legacy Changeover Switch", model: "SIRCO MOT", rating: "125-3200A", poles: "3P/4P", curve: "Motorised - verify reference", about: "Legacy motorised switching family still found in installed panels. Record the full reference and control voltage; for a new IEC transfer scheme compare the current ATyS r, g and p ranges rather than assuming accessories or ratings carry over."),
@@ -13785,6 +13813,37 @@ struct PanelComponent: Identifiable {
 
   var imageStorageID: String {
     sourceID.isEmpty ? id : sourceID
+  }
+
+  /// The pole counts this part is sold in, read from the `poles` field the
+  /// catalog already carries: "3P/4P" is two of them, "1P-4P" is four, and a
+  /// part built one way only ("3P", "1P+N", "DIN") has none to choose between.
+  /// The picture, the stock line and the order all follow this choice, so it
+  /// belongs on the part rather than in a note about it.
+  var poleOptions: [String] {
+    let field = poles.uppercased().replacingOccurrences(of: " ", with: "")
+    let pole = { (text: String) -> Int? in
+      guard text.count == 2, text.hasSuffix("P"), let count = Int(text.dropLast()) else { return nil }
+      return (1...4).contains(count) ? count : nil
+    }
+    if field.contains("/") {
+      let listed = field.split(separator: "/").compactMap { pole(String($0)) }
+      return listed.count > 1 ? listed.map { "\($0)P" } : []
+    }
+    if field.contains("-") {
+      let ends = field.split(separator: "-").compactMap { pole(String($0)) }
+      guard ends.count == 2, let low = ends.first, let high = ends.last, low < high else { return [] }
+      return (low...high).map { "\($0)P" }
+    }
+    return []
+  }
+
+  /// Image id for one pole of this part. Falls back to the part itself, which
+  /// is what a part photographed only once resolves to.
+  func imageLookupIDs(pole: String?) -> [String] {
+    guard let pole, !pole.isEmpty else { return imageLookupIDs }
+    let suffix = "-" + pole.lowercased()
+    return imageLookupIDs.map { $0 + suffix } + imageLookupIDs
   }
 
   var imageLookupIDs: [String] {
@@ -14317,6 +14376,15 @@ enum CatalogImageLibrary {
 
   static func componentThumbnail(id: String) -> UIImage? {
     thumbnail(at: manifest.components?[id])
+  }
+
+  /// The first of `ids` that has a photo, full size. Used for a pole variant,
+  /// where the list is the pole's own id followed by the part's.
+  static func componentImage(ids: [String]) -> UIImage? {
+    for id in ids {
+      if let image = image(at: manifest.components?[id]) { return image }
+    }
+    return nil
   }
 
   /// The first of `ids` that has a photo. Catalog parts carry both an `id` and

@@ -72,6 +72,18 @@
 "groupName": "MCBs"
 },
 {
+"id": "abb-s304-p",
+"manufacturer": "ABB",
+"type": "MCB",
+"model": "S304 P",
+"rating": "Set A",
+"poles": "4P",
+"curve": "Industrial",
+"about": "Four-pole industrial MCB from the S300 P range, tripping all four poles together. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA domestic device can clear.",
+"group": "mcbs",
+"groupName": "MCBs"
+},
+{
 "id": "abb-su200",
 "manufacturer": "ABB",
 "type": "MCB",
@@ -847,7 +859,7 @@
 "rating": "IEC 1600A frame",
 "poles": "3P/4P",
 "curve": "No automatic protection",
-"about": "Switch-disconnector in the XT7 frame, to 1600A. No trip unit: it will not clear a fault and needs protection upstream.",
+"about": "Switch-disconnector in the XT7 frame, to 1600A, in three-pole and four-pole versions. No trip unit: it isolates and switches on load but will not clear a fault, so protection sits upstream.",
 "group": "switching",
 "groupName": "Switching & Isolation"
 },
