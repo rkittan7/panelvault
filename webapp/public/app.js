@@ -1880,6 +1880,27 @@ function openWorkerOverview(workerID, workerName) {
   });
 }
 
+function compareBoardComponents(left, right) {
+  const manufacturerOrder = String(left?.manufacturer || "").localeCompare(
+    String(right?.manufacturer || ""), undefined, { sensitivity: "base", numeric: true },
+  );
+  if (manufacturerOrder) return manufacturerOrder;
+
+  const leftModel = String(left?.model || left?.description || "");
+  const rightModel = String(right?.model || right?.description || "");
+  const modelOrder = leftModel.localeCompare(rightModel, undefined, { sensitivity: "base", numeric: true });
+  if (modelOrder) return modelOrder;
+
+  const leftAmpere = ampereValue(left?.rating) ?? -1;
+  const rightAmpere = ampereValue(right?.rating) ?? -1;
+  if (leftAmpere !== rightAmpere) return rightAmpere - leftAmpere;
+
+  return [left?.poles, left?.curve, left?.reference].filter(Boolean).join("|").localeCompare(
+    [right?.poles, right?.curve, right?.reference].filter(Boolean).join("|"),
+    undefined, { sensitivity: "base", numeric: true },
+  );
+}
+
 function renderBoardDetail() {
   const view = $("#view-board-detail");
   if (!view) return;
@@ -1978,7 +1999,7 @@ function renderBoardDetail() {
   }
   componentsPanel.append(componentHead);
   const componentList = el("div", "board-component-list");
-  (board.components || []).forEach((component) => {
+  [...(board.components || [])].sort(compareBoardComponents).forEach((component) => {
     const row = el("div", "board-component-row clickable");
     row.tabIndex = 0;
     row.setAttribute("role", "button");
@@ -2023,7 +2044,7 @@ function renderBoardDetail() {
       el("p", null, "These scheme lines were saved, but did not match the catalog exactly."));
     reviewHead.append(reviewCopy, el("span", "component-review-count", String(board.componentDrafts.length)));
     const reviewList = el("div", "board-component-list component-review-list");
-    board.componentDrafts.forEach((draft) => {
+    [...board.componentDrafts].sort(compareBoardComponents).forEach((draft) => {
       const row = el("div", "board-component-row component-draft-row clickable");
       row.tabIndex = 0;
       row.setAttribute("role", "button");

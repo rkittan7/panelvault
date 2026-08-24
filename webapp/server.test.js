@@ -14,6 +14,14 @@ test("the website board manufacturer picker includes Tamhash and preserves new A
   assert.match(browserApp, /manufacturer\.select\.append\(new Option\(aiManufacturer/);
 });
 
+test("the board Components tab keeps model variants together with highest ampere first", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /function compareBoardComponents\(left, right\)/);
+  assert.match(browserApp, /return rightAmpere - leftAmpere/);
+  assert.match(browserApp, /\[\.\.\.\(board\.components \|\| \[\]\)\]\.sort\(compareBoardComponents\)/);
+  assert.match(browserApp, /\[\.\.\.board\.componentDrafts\]\.sort\(compareBoardComponents\)/);
+});
+
 async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {
