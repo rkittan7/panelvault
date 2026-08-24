@@ -11051,14 +11051,70 @@ struct ComponentCatalogView: View {
     )
   }
 
-  /// The drill-in page for one category, listing every part under it.
+  /// One block of a drill-in page: the parts of a category that share a type.
+  private struct CatalogSection: Identifiable {
+    let id: String
+    let title: String
+    let items: [PanelComponent]
+  }
+
+  /// Splits a category into per-type sections, keeping the catalog order.
+  /// Variant types fold into the plain family the category already lists
+  /// ("Legacy ACB" under ACB, "SPD Type 2" under SPD), and leftover one-off
+  /// types collect into a trailing "Other" block instead of each claiming a
+  /// header. A category built from one family stays a single plain list.
+  private func sections(for group: ComponentGroup) -> [CatalogSection] {
+    let types = group.items.map { $0.type.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var order: [String] = []
+    var buckets: [String: [PanelComponent]] = [:]
+    for (item, type) in zip(group.items, types) {
+      let title = familyTitle(for: type, within: types)
+      if buckets[title] == nil { order.append(title) }
+      buckets[title, default: []].append(item)
+    }
+    let singles = order.filter { buckets[$0]?.count == 1 }
+    guard singles.count > 1 else {
+      return order.map { CatalogSection(id: $0, title: $0, items: buckets[$0] ?? []) }
+    }
+    var sections = order
+      .filter { !singles.contains($0) }
+      .map { CatalogSection(id: $0, title: $0, items: buckets[$0] ?? []) }
+    sections.append(CatalogSection(id: "other", title: "Other", items: singles.compactMap { buckets[$0]?.first }))
+    return sections
+  }
+
+  /// The shortest type in the same category whose words all appear in `type`,
+  /// so qualifiers ("Mini", "Legacy", "Type 2") do not split a family apart.
+  /// Falls back to the type itself, and to "Other" when a part has no type.
+  private func familyTitle(for type: String, within types: [String]) -> String {
+    if type.isEmpty { return "Other" }
+    let words = Set(type.lowercased().split { !$0.isLetter && !$0.isNumber })
+    var family: String?
+    for candidate in types where !candidate.isEmpty && candidate != type {
+      let candidateWords = Set(candidate.lowercased().split { !$0.isLetter && !$0.isNumber })
+      guard candidateWords.isSubset(of: words) else { continue }
+      if family == nil || candidate.count < family!.count { family = candidate }
+    }
+    return family ?? type
+  }
+
+  /// The drill-in page for one category, listing every part under it grouped by
+  /// type so mixed categories like "MCCBs & ACBs" read as separate blocks.
   @ViewBuilder
   private func categoryDetail(_ group: ComponentGroup) -> some View {
     let live = visibleGroups.first { $0.id == group.id } ?? group
+    let blocks = sections(for: live)
     ScrollView {
-      VStack(alignment: .leading, spacing: 8) {
-        ForEach(live.items) { item in
-          componentRow(for: item, in: live)
+      VStack(alignment: .leading, spacing: 24) {
+        ForEach(blocks) { block in
+          VStack(alignment: .leading, spacing: 8) {
+            if blocks.count > 1 {
+              CatalogSectionHeader(theme: theme, title: block.title, count: block.items.count)
+            }
+            ForEach(block.items) { item in
+              componentRow(for: item, in: live)
+            }
+          }
         }
         BottomTabClearance()
       }
@@ -11299,6 +11355,32 @@ struct ComponentBoardPickerSheet: View {
   private func iconType(for board: BoardDraft) -> BoardType {
     BoardType.samples.first { $0.name.localizedCaseInsensitiveCompare(board.type) == .orderedSame } ??
       BoardType(id: "component-target", name: board.type, subtitle: "", symbol: "rectangle.3.group.fill", color: board.color)
+  }
+}
+
+/// A titled divider between part types inside a catalog category page.
+struct CatalogSectionHeader: View {
+  let theme: PanelTheme
+  let title: String
+  let count: Int
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 10) {
+      Text(title)
+        .font(.system(size: 12, weight: .bold))
+        .textCase(.uppercase)
+        .kerning(0.6)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: true, vertical: false)
+      Rectangle()
+        .fill(theme.cardBorder)
+        .frame(height: 1)
+      Text("\(count)")
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
+    .padding(.bottom, 2)
   }
 }
 
