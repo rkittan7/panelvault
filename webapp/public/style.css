@@ -1904,6 +1904,38 @@ img.brand-logo {
 }
 .skin select:hover { border-color: var(--line-2); }
 
+/* The manual that travels with a part: the same block on the part sheet and on
+   a board component, so a datasheet looks the same wherever it is met. */
+/* The card is a two-column grid (glyph, copy); the buttons belong on the copy's
+   row, to its right, not stacked under it. */
+.part-manual-card { align-items: center; grid-template-columns: 42px minmax(0, 1fr) auto; }
+.part-manual-card .part-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; align-self: center; }
+@media (max-width: 620px) {
+  .part-manual-card { grid-template-columns: 42px minmax(0, 1fr); }
+  .part-manual-card .part-manual-actions { grid-column: 2; }
+}
+.part-manual-link {
+  display: inline-block; margin-top: 2px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--primary); font-size: 12px; font-weight: 650; text-decoration: none;
+}
+.part-manual-link:hover { text-decoration: underline; }
+.part-manual-flag {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 5px;
+  padding: 2px 7px; border-radius: 99px;
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+  color: var(--positive); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+/* The way out when the scan reads a device the catalog has never carried. */
+.draft-missing-note {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px dashed color-mix(in srgb, var(--primary) 34%, var(--line));
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+  color: var(--ink-2); font-size: 11.5px;
+}
+
 /* ============================================================ roles + costs */
 
 .badge.owner         { background: var(--primary-dim); color: var(--primary); }

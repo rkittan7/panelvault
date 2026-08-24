@@ -40,7 +40,7 @@ const POLE_RATINGS = ["1P", "1P+N", "2P", "3P", "3P+N", "4P", "3PH", "1PH", "DIN
 const BOARD_MANUFACTURERS = [
   "Generic", "Rittal", "ABB", "Yakir", "Tamhash", "HAGER", "Delta",
   "Schneider", "Siemens", "Eaton", "Legrand", "Mean Well", "Phoenix",
-  "Danfoss", "Socomec",
+  "Danfoss", "Socomec", "GIC",
 ];
 
 const $ = (sel) => document.querySelector(sel);
@@ -1667,9 +1667,10 @@ function boardProperty(iconName, label, value, onClick, mark = null) {
 function openComponentSourceCard(board, component, isDraft = false) {
   openModal((modal, close) => {
     modal.classList.add("wide", "component-source-modal");
-    const displayName = isDraft
-      ? component.description || [component.manufacturer, component.model].filter(Boolean).join(" ") || "Extracted component"
-      : [component.manufacturer, component.model].filter(Boolean).join(" ") || "Board component";
+    const displayName = componentTitle(
+      component.manufacturer, component.model, component.rating,
+      isDraft ? (component.description || "Extracted component") : "Board component",
+    );
     const sourceLabel = component.source === "ai" ? "Electrical scheme · AI extraction" : "Added manually";
     const member = (state.members || []).find((person) => person.id === component.addedBy);
 
@@ -1706,6 +1707,8 @@ function openComponentSourceCard(board, component, isDraft = false) {
     sourceCard.append(sourceCopy);
     modal.append(sourceCard);
 
+    if (component.partID) modal.append(partManualCard(component.partID, close));
+
     if (component.sourcePage && (board.attachments || []).some((file) => file.kind === "scheme")) {
       modal.append(el("p", "component-source-note", `Open the board’s Schemes & photos tab and check page ${component.sourcePage} of the attached drawing.`));
     }
@@ -1718,6 +1721,79 @@ function openComponentSourceCard(board, component, isDraft = false) {
   });
 }
 
+/** The manufacturer's manual for a part.
+ *
+ * Kept per part rather than per board component: the datasheet for an isolated
+ * relay output module is the same document whichever board it lands on, so it
+ * is attached once and shows up beside the part everywhere it appears. */
+const partManual = (partID) => (state.partManuals || {})[partID] || null;
+
+const manualURL = (partID) => `/api/part-manual?partID=${encodeURIComponent(partID)}`;
+
+function partManualCard(partID, onChanged) {
+  const manual = partManual(partID);
+  const card = el("section", "component-origin-card part-manual-card");
+  card.append(chipIcon("note", manual ? "var(--positive)" : "var(--ink-3)"));
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "Manual"));
+  if (manual) {
+    const link = el("a", "part-manual-link", manual.name);
+    link.href = manualURL(partID);
+    link.target = "_blank";
+    link.rel = "noopener";
+    copy.append(el("h4", null, "Datasheet on file"), link);
+    copy.append(el("p", null, `${Math.max(1, Math.round(manual.size / 1024)).toLocaleString()} KB · added ${new Date(manual.createdAt).toLocaleDateString()}`));
+  } else {
+    copy.append(el("h4", null, "No manual yet"),
+      el("p", null, "Attach the manufacturer's datasheet and it stays with this part on every board."));
+  }
+  card.append(copy);
+  if (isAdmin()) {
+    const actions = el("div", "part-manual-actions");
+    actions.append(smallBtn(manual ? "Replace" : "Add manual", manual ? "" : "accent", "plus", () => {
+      pickPartManual(partID, onChanged);
+    }));
+    if (manual) {
+      actions.append(smallBtn("Remove", "ghost", "x", async () => {
+        await api("/api/part-manual-delete", { partID });
+        await refresh();
+        if (onChanged) onChanged();
+      }));
+    }
+    card.append(actions);
+  }
+  return card;
+}
+
+/** Opens the file picker, then uploads whatever comes back. */
+function pickPartManual(partID, onChanged) {
+  const input = el("input");
+  input.type = "file";
+  input.accept = "application/pdf,image/jpeg,image/png,image/webp,image/heic";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 6_000_000) {
+      window.alert("Manuals must be 6 MB or smaller.");
+      return;
+    }
+    try {
+      await api("/api/part-manual", {
+        partID,
+        fileName: file.name,
+        mimeType: file.type || "application/pdf",
+        data: await fileAsBase64(file),
+      });
+    } catch (caught) {
+      window.alert(caught.message || "That manual could not be saved.");
+      return;
+    }
+    await refresh();
+    if (onChanged) onChanged();
+  });
+  input.click();
+}
+
 async function openAddBoardComponentModal(board, draft = null) {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
@@ -1726,6 +1802,18 @@ async function openAddBoardComponentModal(board, draft = null) {
     modal.append(el("p", "modal-sub", draft
       ? "Choose the catalog item that matches the line read from the electrical scheme."
       : "Choose the exact model, amp rating, poles, and curve used on this board."));
+    // A scheme regularly names a device the catalog has never carried — an
+    // isolated relay output module, a bespoke interface card. Without this the
+    // line could only be deleted, so the reading was lost rather than recorded.
+    if (draft && isAdmin()) {
+      const missing = el("div", "draft-missing-note");
+      missing.append(el("span", null, "Not in the catalog?"));
+      missing.append(smallBtn("Create it as a part", "accent", "plus", () => {
+        close();
+        openNewPartModal({ draft, board });
+      }));
+      modal.append(missing);
+    }
     const search = field("Find component", "Search model, manufacturer, amp, curve…");
     const choiceLabel = el("label", null, "Component");
     const choice = el("select");
@@ -2343,11 +2431,12 @@ function renderBoardDetail() {
       const row = el("div", "board-component-row clickable");
       row.tabIndex = 0;
       row.setAttribute("role", "button");
-      row.setAttribute("aria-label", `View source details for ${component.manufacturer} ${component.model}`);
+      const componentName = componentTitle(component.manufacturer, component.model, component.rating);
+      row.setAttribute("aria-label", `View source details for ${componentName}`);
       const identity = el("div", "board-component-identity");
       identity.append(partChip({ ...component, id: component.partID }), el("div"));
       const text = identity.lastElementChild;
-      text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
+      text.append(el("strong", null, componentName),
         el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference,
           component.source === "ai" ? "AI scan" : null,
           component.sourcePage ? `Page ${component.sourcePage}` : null]
@@ -2394,7 +2483,7 @@ function renderBoardDetail() {
       const draftIdentity = el("div", "board-component-identity");
       draftIdentity.append(chipIcon("scan", "var(--warning)"), el("div"));
       const text = draftIdentity.lastElementChild;
-      text.append(el("strong", null, draft.description || [draft.manufacturer, draft.model].filter(Boolean).join(" ") || "Extracted component"),
+      text.append(el("strong", null, componentTitle(draft.manufacturer, draft.model, draft.rating, draft.description || "Extracted component")),
         el("span", null, [draft.type, draft.rating, draft.poles, draft.curve, draft.reference,
           draft.sourcePage ? `Page ${draft.sourcePage}` : null].filter(Boolean).join(" · ")));
       row.append(draftIdentity, el("strong", "component-quantity", `× ${draft.quantity || 1}`));
@@ -2773,12 +2862,30 @@ function ampereOptionsFor(part) {
    a stock variant produces — it belongs in the title next to the model. A
    catalog family whose rating is a range or a placeholder is left alone: a
    heading of "S201 0.5-63A" tells a reader nothing they want. */
+/** The amperage on its own, when that is all the rating says.
+ *
+ * A rating reads "16A" on a breaker but "30mA Type A" on an RCD or "C Curve"
+ * on a trip characteristic. Only a bare amperage belongs in a title — the rest
+ * stays in the detail line where there is room to read it. */
+function exactAmperage(rating) {
+  const value = String(rating || "").trim();
+  return /^[\d.]+\s*A$/i.test(value) ? value : "";
+}
+
+/** A component's name for a list row: what it is, then how many amps.
+ *
+ * The amperage is what tells two otherwise identical breakers apart, so it
+ * belongs in the title rather than only in the line underneath. It stays in
+ * that line as well — this adds the amperage, it does not move it. */
+function componentTitle(manufacturer, model, rating, fallback = "") {
+  const name = [manufacturer, model].filter(Boolean).join(" ").trim() || fallback;
+  const amperage = exactAmperage(rating);
+  return [name, amperage].filter(Boolean).join(" · ");
+}
+
 function partTitle(part) {
   if (!part) return "";
-  const name = `${part.manufacturer} ${part.model}`.trim();
-  const rating = String(part.rating || "").trim();
-  const exact = /^[\d.]+\s*A$/i.test(rating);
-  return exact ? `${name} · ${rating}` : name;
+  return componentTitle(part.manufacturer, part.model, part.rating);
 }
 
 function exactChoiceField(labelText, placeholder, values, selected = "") {
@@ -3350,7 +3457,7 @@ function drawCatalog() {
   const open = groups.find((g) => g.id === catalogCategory) || null;
 
   const actions = [];
-  if (isAdmin()) actions.push(smallBtn("New custom part", "ghost", "plus", openNewPartModal));
+  if (isAdmin()) actions.push(smallBtn("New custom part", "ghost", "plus", () => openNewPartModal()));
   view.append(viewHead(open ? open.name : "Catalog", ...actions));
 
   const wrap = el("div", "search-wrap");
@@ -3454,11 +3561,16 @@ function catalogRow(part, stock) {
   row.type = "button";
   row.append(partChip(part));
   const main = el("div", "row-main");
-  main.append(el("div", "row-title", `${part.manufacturer} ${part.model}`));
+  main.append(el("div", "row-title", partTitle(part)));
   const bits = [part.type, part.rating, part.poles, part.curve]
     .filter((bit) => bit && bit !== "—").join(" · ");
   main.append(partSubLine(part, bits));
   main.append(partPills(part));
+  if (partManual(part.id)) {
+    const flag = el("span", "part-manual-flag");
+    flag.append(icon("note", 11), el("span", null, "Manual"));
+    main.append(flag);
+  }
   row.append(main);
 
   const entry = stock.get(part.id);
@@ -3573,6 +3685,11 @@ function openCatalogPartModal(part) {
         el("p", "ref-body", part.about)));
     }
 
+    modal.append(partManualCard(part.id, () => {
+      close();
+      openCatalogPartModal(part);
+    }));
+
     modal.append(refSection("Specification", "layers", infoLines([
       ["Type", part.type],
       ["Rating", part.rating],
@@ -3601,34 +3718,74 @@ function openCatalogPartModal(part) {
   });
 }
 
-function openNewPartModal() {
+/** Create a part the catalog does not carry.
+ *
+ * `draft` is a line the scheme reader could not match: the form opens filled
+ * in from what it read, and once the part exists it is put straight onto the
+ * board that line came from, so the reading is not lost on the way. */
+function openNewPartModal({ draft = null, board = null } = {}) {
+  const fromDraft = Boolean(draft);
   openModal((modal, close) => {
-    modal.append(el("h3", null, "New custom part"));
-    modal.append(el("div", "modal-sub", "For anything the catalog doesn't carry."));
+    modal.append(el("h3", null, fromDraft ? "Create part from the scheme" : "New custom part"));
+    modal.append(el("div", "modal-sub", fromDraft
+      ? "Filled in from the line the scan read. Check it, then it goes on the board and into the catalog."
+      : "For anything the catalog doesn't carry."));
     const model = field("Model", "e.g. Cable tray 200mm");
     const manufacturer = field("Manufacturer", "optional");
     const type = field("Type", "e.g. Cable Tray");
     const rating = field("Rating", "optional");
-    const poles = selectField("Poles / phase", ["", ...POLE_RATINGS], "");
+    const poles = selectField("Poles / phase", ["", ...POLE_RATINGS], draft?.poles || "");
     const curve = field("Curve / trip", "e.g. C Curve or 30mA Type A");
     const serialNumber = field("Serial number", "optional");
-    modal.append(model.label, manufacturer.label, type.label, rating.label, poles.label, curve.label, serialNumber.label);
-    modal.append(modalActions(close, "Add part", async () => {
-      if (!model.input.value.trim() || !type.input.value.trim()) return;
-      const { part } = await api("/api/parts", {
-        model: model.input.value,
-        manufacturer: manufacturer.input.value,
-        type: type.input.value,
-        rating: rating.input.value,
-        poles: poles.select.value,
-        curve: curve.input.value,
-        serialNumber: serialNumber.input.value,
-      });
-      await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
-      catalog = null;
-      close();
-      await refresh();
-      switchView("stock");
+    if (fromDraft) {
+      model.input.value = draft.model || draft.description || "";
+      manufacturer.input.value = draft.manufacturer || "";
+      type.input.value = draft.type || "";
+      rating.input.value = draft.rating || "";
+      curve.input.value = draft.curve || "";
+    }
+    const error = el("div", "form-error hidden");
+    modal.append(model.label, manufacturer.label, type.label, rating.label, poles.label, curve.label, serialNumber.label, error);
+    if (fromDraft && draft.rawText) {
+      modal.append(el("p", "modal-sub", `Read off the drawing: ${draft.rawText}`));
+    }
+    modal.append(modalActions(close, fromDraft ? "Create and add to board" : "Add part", async () => {
+      if (!model.input.value.trim() || !type.input.value.trim()) {
+        error.textContent = "Model and type are required.";
+        error.classList.remove("hidden");
+        return;
+      }
+      error.classList.add("hidden");
+      try {
+        const { part } = await api("/api/parts", {
+          model: model.input.value,
+          manufacturer: manufacturer.input.value,
+          type: type.input.value,
+          rating: rating.input.value,
+          poles: poles.select.value,
+          curve: curve.input.value,
+          serialNumber: serialNumber.input.value,
+        });
+        await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
+        catalog = null;
+        if (fromDraft && board) {
+          await api("/api/board-components", {
+            boardID: board.id,
+            action: "add",
+            partID: part.id,
+            rating: rating.input.value,
+            quantity: draft.quantity || 1,
+            reference: draft.reference || "",
+            draftID: draft.id,
+          });
+        }
+        close();
+        await refresh();
+        switchView(fromDraft && board ? "board-detail" : "stock");
+      } catch (caught) {
+        error.textContent = caught.message || "That part could not be created.";
+        error.classList.remove("hidden");
+      }
     }));
   });
 }

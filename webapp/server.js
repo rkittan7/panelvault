@@ -78,6 +78,10 @@ function normalizeCompanies() {
     // Customers and companies typed straight into the archive, for the ones
     // that have no project or board naming them yet.
     company.contacts ||= [];
+    // { [partID]: attachment } — the manufacturer's manual for a part. Keyed by
+    // part rather than stored on it, because the built-in catalog is shared and
+    // read-only: a company's manuals have to live on the company.
+    company.partManuals ||= {};
     company.partSettings ||= {};
     company.projects ||= [];
     company.boards ||= [];
@@ -1179,6 +1183,7 @@ async function createCompanyAccount({ companyName, name, email, password }) {
     customParts: [],
     partSettings: {},
     contacts: [],
+    partManuals: {},
     projects: [],
     boards: [],
     workspaceVersion: 0,
@@ -1492,6 +1497,7 @@ const routes = {
       },
       roleLabels: ROLE_LABELS,
       contacts: company.contacts,
+      partManuals: company.partManuals,
       stock: stockEntries(company, withCosts),
       movements: [...company.movements]
         .sort((a, b) => b.date.localeCompare(a.date))
@@ -2631,6 +2637,87 @@ const routes = {
     res.end(bytes);
   },
 
+  /** Keep a part's manual with the part.
+   *
+   * One per part, replacing whatever was there — a datasheet has a current
+   * revision, not a history, and a list of near-identical PDFs would be worse
+   * than one that is right. Works for a built-in catalog part as much as a
+   * custom one, since the manual hangs off the company, not the part record.
+   */
+  "POST /api/part-manual": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add manuals.");
+    const { partID, fileName, mimeType, data } = await readBody(req);
+    const part = partFor(company, String(partID || "").trim());
+    if (!part) return fail(res, 404, "That part is not in the catalog.");
+    if (!ATTACHMENT_MIME_TYPES.has(mimeType)) return fail(res, 400, "Upload a PDF or supported image.");
+    if (!/^[a-z0-9+/]*={0,2}$/i.test(String(data || ""))) return fail(res, 400, "The uploaded file is invalid.");
+    let bytes;
+    try {
+      bytes = Buffer.from(String(data || ""), "base64");
+    } catch {
+      return fail(res, 400, "The uploaded file is invalid.");
+    }
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Manuals must be 6 MB or smaller.");
+
+    const manualID = id("manual");
+    const objectPath = `${company.code}/manuals/${part.id}/${manualID}-${safeAttachmentName(fileName)}`;
+    const manual = {
+      id: manualID,
+      partID: part.id,
+      name: String(fileName || "manual").trim().slice(0, 140),
+      mimeType,
+      size: bytes.length,
+      objectPath,
+      createdAt: new Date().toISOString(),
+      uploadedBy: user.id,
+    };
+    await storage.uploadAttachment(objectPath, bytes, mimeType);
+    const previous = company.partManuals[part.id];
+    try {
+      company.partManuals[part.id] = manual;
+      await save();
+    } catch (error) {
+      await storage.deleteAttachment(objectPath).catch(() => {});
+      throw error;
+    }
+    // Only once the replacement is safely recorded.
+    if (previous?.objectPath) {
+      await storage.deleteAttachment(previous.objectPath).catch((error) => {
+        console.error(`PanelVault manual cleanup failed: ${error.message}`);
+      });
+    }
+    sendJSON(res, 200, { ok: true, manual });
+  },
+
+  "GET /api/part-manual": async (req, res, session) => {
+    const partID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("partID");
+    const manual = session.company.partManuals[String(partID || "")];
+    if (!manual) return fail(res, 404, "No manual for that part.");
+    const bytes = await storage.downloadAttachment(manual.objectPath);
+    res.writeHead(200, {
+      "Content-Type": manual.mimeType,
+      "Content-Length": bytes.length,
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(manual.name)}`,
+      "Cache-Control": "private, max-age=300",
+    });
+    res.end(bytes);
+  },
+
+  "POST /api/part-manual-delete": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can remove manuals.");
+    const { partID } = await readBody(req);
+    const manual = company.partManuals[String(partID || "")];
+    if (!manual) return fail(res, 404, "No manual for that part.");
+    delete company.partManuals[manual.partID];
+    await save();
+    await storage.deleteAttachment(manual.objectPath).catch((error) => {
+      console.error(`PanelVault manual cleanup failed: ${error.message}`);
+    });
+    sendJSON(res, 200, { ok: true, partID: manual.partID });
+  },
+
   "POST /api/board-attachment-delete": async (req, res, session) => {
     const { company, user } = session;
     const { boardID, attachmentID } = await readBody(req);
@@ -2795,7 +2882,9 @@ const READ_ONLY_POST_ROUTES = new Set([
 ]);
 
 /** POST routes allowed to carry a base64 document. */
-const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme", "POST /api/board-attachment"]);
+const LARGE_BODY_ROUTES = new Set([
+  "POST /api/ai/board-scheme", "POST /api/board-attachment", "POST /api/part-manual",
+]);
 
 const OPEN_ROUTES = new Set([
   "GET /api/health",
