@@ -33,6 +33,7 @@ function geminiErrorMessage(result) {
 
 /** Inline document parts are base64, which is 4 characters per 3 bytes. */
 const MAX_DOCUMENT_BASE64 = 11_000_000; // ~8 MB of file
+const DOCUMENT_READ_TIMEOUT_MS = 150_000;
 
 /** An AutoCAD export is a PDF; the image types are for a photo of a printout. */
 const SUPPORTED_DOCUMENT_TYPES = new Set([
@@ -148,27 +149,47 @@ function createGeminiClient({
           parts: [
             {
               inline_data: { mime_type: mimeType, data },
+              // Google's recommended PDF setting: enough resolution for dense
+              // document text without paying the latency of high-resolution
+              // image tokenisation on every page.
+              mediaResolution: { level: "MEDIA_RESOLUTION_MEDIUM" },
             },
             { text: prompt },
           ],
         }],
         generationConfig: {
           responseMimeType: "application/json",
+          // Diagram extraction needs care, but not the model's default deep
+          // reasoning. Low materially reduces time-to-first-output while the
+          // explicit extraction rules continue to enforce the review contract.
+          thinkingConfig: { thinkingLevel: "low" },
         },
       };
       if (systemInstruction) {
         body.systemInstruction = { parts: [{ text: systemInstruction }] };
       }
 
-      const response = await fetchImpl(
-        `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(120_000),
+      let response;
+      try {
+        response = await fetchImpl(
+          `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(DOCUMENT_READ_TIMEOUT_MS),
+          }
+        );
+      } catch (cause) {
+        if (cause?.name === "TimeoutError" || cause?.name === "AbortError") {
+          const error = new Error(
+            "The diagram took too long to read. Try a PDF containing only this board's pages, or export it as a smaller vector PDF and scan again."
+          );
+          error.statusCode = 504;
+          throw error;
         }
-      );
+        throw cause;
+      }
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
         const error = new Error(geminiErrorMessage(result));
@@ -199,6 +220,7 @@ function createGeminiClient({
 module.exports = {
   createGeminiClient,
   DEFAULT_MODEL,
+  DOCUMENT_READ_TIMEOUT_MS,
   MAX_DOCUMENT_BASE64,
   resolveModel,
   SUPPORTED_DOCUMENT_TYPES,
