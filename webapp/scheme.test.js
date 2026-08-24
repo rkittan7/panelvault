@@ -310,11 +310,15 @@ test("printed ABB notation resolves conservatively to its catalog family", () =>
   const extendedCatalog = [
     ...CATALOG,
     { id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB" },
-    { id: "abb-f200", manufacturer: "ABB", model: "F200", type: "RCCB" },
+    { id: "abb-f202", manufacturer: "ABB", model: "F202", type: "RCCB" },
+    { id: "abb-f204", manufacturer: "ABB", model: "F204", type: "RCCB" },
   ];
   assert.ok(modelKeys("SACE Tmax XT1").includes("xt1"));
   assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "XT1D" }).id, "abb-tmax-xt1");
-  assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "F204A" }).id, "abb-f200");
+  // F200 is two rows now: the printed pole count picks the family, and the
+  // four-pole drawing must not land on the two-pole part.
+  assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "F204A" }).id, "abb-f204");
+  assert.equal(matchCatalogPart(extendedCatalog, { manufacturer: "ABB", model: "F202A" }).id, "abb-f202");
   assert.equal(matchCatalogPart(CATALOG, { manufacturer: "ABB", model: "S201M" }).id, "abb-s201-1p");
 });
 

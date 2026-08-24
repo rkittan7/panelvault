@@ -228,14 +228,26 @@
 "groupName": "RCBOs & RCDs"
 },
 {
-"id": "abb-f200",
+"id": "abb-f202",
 "manufacturer": "ABB",
 "type": "RCD/RCCB",
-"model": "F200",
+"model": "F202",
 "rating": "25-125A",
-"poles": "2P/4P",
+"poles": "2P",
 "curve": "30-500mA, Type AC/A",
-"about": "Residual current circuit breaker protecting a group of circuits against earth leakage. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section.",
+"about": "Two-pole residual current circuit breaker for a single-phase group of circuits, breaking line and neutral together. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section.",
+"group": "rcbo",
+"groupName": "RCBOs & RCDs"
+},
+{
+"id": "abb-f204",
+"manufacturer": "ABB",
+"type": "RCD/RCCB",
+"model": "F204",
+"rating": "25-125A",
+"poles": "4P",
+"curve": "30-500mA, Type AC/A",
+"about": "Four-pole residual current circuit breaker for a three-phase group of circuits, breaking the three phases and the neutral together. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section.",
 "group": "rcbo",
 "groupName": "RCBOs & RCDs"
 },

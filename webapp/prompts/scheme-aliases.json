@@ -7,7 +7,8 @@
     "XT2": { "family": "abb-tmax-xt2", "axes": ["class", "poles", "rating"] },
     "XT3": { "family": "abb-tmax-xt3", "axes": ["class", "poles", "rating"] },
     "XT4": { "family": "abb-tmax-xt4", "axes": ["class", "poles", "rating"] },
-    "F200": { "family": "abb-f200", "axes": ["poles", "rating", "sensitivity", "type"] },
+    "F202": { "family": "abb-f202", "axes": ["rating", "sensitivity", "type"] },
+    "F204": { "family": "abb-f204", "axes": ["rating", "sensitivity", "type"] },
     "S201": { "family": "abb-s201-1p", "axes": ["rating", "curve"] },
     "S202": { "family": "abb-s202-2p", "axes": ["rating", "curve"] },
     "S203": { "family": "abb-s203-3p", "axes": ["rating", "curve"] },
@@ -32,8 +33,8 @@
     "XT1C": { "series": "XT1", "class": "C" },
     "XT1D": { "series": "XT1", "class": "D" },
     "XT1N": { "series": "XT1", "class": "N" },
-    "F202A": { "series": "F200", "poles": "2P", "type": "A" },
-    "F204A": { "series": "F200", "poles": "4P", "type": "A" }
+    "F202A": { "series": "F202", "type": "A" },
+    "F204A": { "series": "F204", "type": "A" }
   },
 
   "//stockKey": "How a resolved component becomes a partID. Axes in the order listed under series, uppercased, joined with |. Example: abb-tmax-xt1|D|3P|100A. Family id alone is never a stock key.",

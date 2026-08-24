@@ -258,7 +258,9 @@ function modelKeys(value) {
   if (/^s20[1-4]m$/.test(withoutRangeWords)) keys.add(withoutRangeWords.slice(0, -1));
   const tmaxVariant = withoutRangeWords.match(/^(xt[1-7])[cdn]$/);
   if (tmaxVariant) keys.add(tmaxVariant[1]);
-  if (/^f20[1-4]a$/.test(withoutRangeWords)) keys.add("f200");
+  // F202A / F204A print the residual-current type as a suffix; the pole count
+  // in front of it is what names the catalog family.
+  if (/^f20[1-4]a$/.test(withoutRangeWords)) keys.add(withoutRangeWords.slice(0, -1));
   return [...keys].filter((key) => key.length >= 3);
 }
 
