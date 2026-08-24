@@ -4997,9 +4997,13 @@ struct NewBoardView: View {
       boardManufacturer = matched
     }
     if !board.mainBreakerModel.isEmpty {
-      mainBreakerModel = manufacturerNames.first {
-        board.mainBreakerModel.localizedCaseInsensitiveContains($0)
-      } ?? board.mainBreakerModel
+      // Keep whatever the drawing named in full: the form's manufacturer and
+      // model slots read the two halves back out of this one field, so a
+      // reading of "ABB SACE Tmax XT7" no longer has to shed its model.
+      mainBreakerModel = MainBreakerIdentity(
+        stored: board.mainBreakerModel,
+        manufacturers: manufacturerNames
+      ).stored
     }
     if !board.mainBreakerAmpere.isEmpty {
       mainBreakerAmpere = board.mainBreakerAmpere
@@ -5567,9 +5571,12 @@ struct MainBreakerStepView: View {
           }
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Choose the breaker details") {
-            CreationMenuInput(theme: theme, title: "Breaker type", symbol: "bolt.fill", value: mainBreakerType, options: ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"], selection: $mainBreakerType)
-            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: mainBreakerModel, manufacturers: manufacturers) {
+            CreationMenuInput(theme: theme, title: "Breaker type", symbol: "bolt.fill", value: mainBreakerType, options: MainBreakerCatalog.types, selection: typeBinding)
+            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: identity.manufacturer, manufacturers: manufacturers) {
               pickerSheet = .manufacturer
+            }
+            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: identity.model) {
+              pickerSheet = .model
             }
             CreationPickerInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: mainBreakerAmpere) {
               pickerSheet = .ampere
@@ -5604,8 +5611,18 @@ struct MainBreakerStepView: View {
     .sheet(item: $pickerSheet) { sheet in
       switch sheet {
       case .manufacturer:
-        ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: mainBreakerModel) {
-          mainBreakerModel = $0
+        ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: identity.manufacturer) {
+          setManufacturer($0)
+        }
+      case .model:
+        CreationOptionPickerSheet(
+          theme: theme,
+          title: "\(mainBreakerType) model",
+          symbol: "tag.fill",
+          options: MainBreakerCatalog.models(for: mainBreakerType, manufacturer: identity.manufacturer),
+          selected: identity.model
+        ) {
+          setModel($0)
         }
       case .ampere:
         CreationOptionPickerSheet(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", options: AmpereRating.all, selected: mainBreakerAmpere) {
@@ -5614,10 +5631,44 @@ struct MainBreakerStepView: View {
       }
     }
   }
+
+  /// Manufacturer and model are stored joined in `mainBreakerModel`; the slots
+  /// edit the halves and write the joined value straight back.
+  private var identity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: mainBreakerModel, manufacturers: manufacturerNames)
+  }
+
+  private var typeBinding: Binding<String> {
+    Binding {
+      mainBreakerType
+    } set: { newValue in
+      var updated = identity
+      mainBreakerType = newValue
+      // A model names one family of device, so it cannot outlive the type.
+      updated.model = ""
+      mainBreakerModel = updated.stored
+    }
+  }
+
+  private func setManufacturer(_ name: String) {
+    var updated = identity
+    if !MainBreakerCatalog.lists(model: updated.model, type: mainBreakerType, manufacturer: name) {
+      updated.model = ""
+    }
+    updated.manufacturer = name
+    mainBreakerModel = updated.stored
+  }
+
+  private func setModel(_ model: String) {
+    var updated = identity
+    updated.model = model
+    mainBreakerModel = updated.stored
+  }
 }
 
 enum MainBreakerPickerSheet: String, Identifiable {
   case manufacturer
+  case model
   case ampere
 
   var id: String { rawValue }
@@ -6287,9 +6338,12 @@ struct BoardEditSheet: View {
           }
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill") {
-            CreationMenuInput(theme: theme, title: "Main breaker", symbol: "bolt.fill", value: board.mainBreakerType, options: ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"], selection: $board.mainBreakerType)
-            ManufacturerPickerInput(theme: theme, title: "Model or family", value: board.mainBreakerModel, manufacturers: manufacturers) {
+            CreationMenuInput(theme: theme, title: "Main breaker", symbol: "bolt.fill", value: board.mainBreakerType, options: MainBreakerCatalog.types, selection: mainBreakerTypeBinding)
+            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: mainBreakerIdentity.manufacturer, manufacturers: manufacturers) {
               pickerSheet = .mainBreakerManufacturer
+            }
+            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: mainBreakerIdentity.model) {
+              pickerSheet = .mainBreakerModel
             }
             CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: board.mainBreakerAmpere, options: AmpereRating.all, selection: ampereBinding)
           }
@@ -6329,12 +6383,53 @@ struct BoardEditSheet: View {
             board.manufacturer = $0
           }
         case .mainBreakerManufacturer:
-          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: board.mainBreakerModel) {
-            board.mainBreakerModel = $0
+          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: mainBreakerIdentity.manufacturer) {
+            setMainBreakerManufacturer($0)
+          }
+        case .mainBreakerModel:
+          CreationOptionPickerSheet(
+            theme: theme,
+            title: "\(board.mainBreakerType) model",
+            symbol: "tag.fill",
+            options: MainBreakerCatalog.models(for: board.mainBreakerType, manufacturer: mainBreakerIdentity.manufacturer),
+            selected: mainBreakerIdentity.model
+          ) {
+            setMainBreakerModel($0)
           }
         }
       }
     }
+  }
+
+  /// See [MainBreakerIdentity]: one stored field, two slots on the form.
+  private var mainBreakerIdentity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: board.mainBreakerModel, manufacturers: manufacturers.map(\.name))
+  }
+
+  private var mainBreakerTypeBinding: Binding<String> {
+    Binding {
+      board.mainBreakerType
+    } set: { newValue in
+      var updated = mainBreakerIdentity
+      board.mainBreakerType = newValue
+      updated.model = ""
+      board.mainBreakerModel = updated.stored
+    }
+  }
+
+  private func setMainBreakerManufacturer(_ name: String) {
+    var updated = mainBreakerIdentity
+    if !MainBreakerCatalog.lists(model: updated.model, type: board.mainBreakerType, manufacturer: name) {
+      updated.model = ""
+    }
+    updated.manufacturer = name
+    board.mainBreakerModel = updated.stored
+  }
+
+  private func setMainBreakerModel(_ model: String) {
+    var updated = mainBreakerIdentity
+    updated.model = model
+    board.mainBreakerModel = updated.stored
   }
 
   private var ampereBinding: Binding<String> {
@@ -6427,6 +6522,7 @@ enum BoardEditPickerSheet: String, Identifiable {
   case subtype
   case manufacturer
   case mainBreakerManufacturer
+  case mainBreakerModel
 
   var id: String { rawValue }
 }
@@ -13452,6 +13548,109 @@ enum EquipmentTypeCatalog {
     "Indicator Light", "Fan", "Thermostat", "Door Interlock", "Cable Gland",
     "DIN Rail", "Trunking", "Copper Bar", "Earth Bar", "Neutral Bar"
   ]
+}
+
+/// The device families a board can carry as its main incomer, and the catalog
+/// models behind each one. Both board forms read from here so the slots offer
+/// real parts instead of free text.
+enum MainBreakerCatalog {
+  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"]
+
+  /// Models the catalog lists for `type`, narrowed to one brand when the board
+  /// names one. A brand with nothing catalogued under this type falls back to
+  /// the full list rather than an empty picker.
+  static func models(for type: String, manufacturer: String = "") -> [String] {
+    let brand = manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !brand.isEmpty else { return entries(for: type, brand: "") }
+    let matching = entries(for: type, brand: brand)
+    return matching.isEmpty ? entries(for: type, brand: "") : matching
+  }
+
+  /// Whether the catalog puts `model` under exactly this type and brand. Used
+  /// to decide if a chosen model survives a change of manufacturer.
+  static func lists(model: String, type: String, manufacturer: String) -> Bool {
+    let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    return entries(for: type, brand: manufacturer)
+      .contains { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+  }
+
+  /// Every brand the part catalog uses, so a stored "ABB SACE Tmax XT1D" still
+  /// splits correctly on a device whose manufacturer list has been edited.
+  static let brands: [String] = {
+    var seen: Set<String> = []
+    return ComponentGroup.samples.flatMap(\.items).compactMap { part in
+      seen.insert(part.manufacturer.lowercased()).inserted ? part.manufacturer : nil
+    }
+  }()
+
+  /// Families the catalog files under a name the board form does not offer.
+  /// An isolator or load-break switch is what a board means by a switch
+  /// disconnector, and the catalog types the ABB OT and Schneider Interpact
+  /// that way, so the slot would otherwise miss the two most common main
+  /// switches on site.
+  private static let aliases = ["Switch Disconnector": ["Isolator"]]
+
+  /// A catalog part belongs to a breaker type when its own type carries every
+  /// word of that type, or of one of its aliases. That is what lets "Switch
+  /// Disconnector" reach the catalog's "Switch-Disconnector" parts, and "ACB"
+  /// reach "Legacy ACB", without matching MCB against MCCB.
+  private static func entries(for type: String, brand: String) -> [String] {
+    let wanted = ([type] + (aliases[type] ?? [])).map(words(in:)).filter { !$0.isEmpty }
+    guard !wanted.isEmpty else { return [] }
+    let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)
+    var seen: Set<String> = []
+    return ComponentGroup.samples.flatMap(\.items).compactMap { part -> String? in
+      let partWords = words(in: part.type)
+      guard wanted.contains(where: { $0.isSubset(of: partWords) }) else { return nil }
+      if !trimmedBrand.isEmpty,
+         part.manufacturer.localizedCaseInsensitiveCompare(trimmedBrand) != .orderedSame {
+        return nil
+      }
+      let model = part.model.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !model.isEmpty, seen.insert(model.lowercased()).inserted else { return nil }
+      return model
+    }
+  }
+
+  private static func words(in text: String) -> Set<String> {
+    Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+  }
+}
+
+/// The two halves of a board's `mainBreakerModel`. That one field stores the
+/// most specific description the user gave — a manufacturer on its own ("ABB")
+/// or a manufacturer and a model ("ABB SACE Tmax XT1D") — and splitting it back
+/// out lets the board forms edit each half in its own slot without a second
+/// stored field, which is also how the manager website reads it.
+struct MainBreakerIdentity {
+  var manufacturer = ""
+  var model = ""
+
+  init(stored: String, manufacturers: [String] = []) {
+    let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    let lowered = trimmed.lowercased()
+    // Longest name first, so a two-word brand is not read as its first word.
+    let brand = (manufacturers + MainBreakerCatalog.brands)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .sorted { $0.count > $1.count }
+      .first { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + " ") }
+    guard let brand else {
+      model = trimmed
+      return
+    }
+    manufacturer = brand
+    model = String(trimmed.dropFirst(brand.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  var stored: String {
+    [manufacturer, model]
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
+  }
 }
 
 enum AmpereRating {
