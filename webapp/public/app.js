@@ -66,6 +66,8 @@ const ICON_PATHS = {
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l2.5 2.5L16.5 9"/>',
   x: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+  back: '<path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/>',
+  trash: '<path d="M4 7h16"/><path d="M9 3h6l1 4H8z"/><path d="M7 7l1 14h8l1-14"/><path d="M10 11v6"/><path d="M14 11v6"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   link: '<path d="M10 14a4 4 0 0 0 6 .5l3-3a4 4 0 0 0-5.5-5.5l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-6-.5l-3 3a4 4 0 0 0 5.5 5.5l1.5-1.5"/>',
   note: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h4"/><path d="M9 12h6"/><path d="M9 16h6"/>',
@@ -1318,12 +1320,16 @@ function renderBoards() {
 
   const statusFilters = el("div", "board-status-filters");
   statusFilters.append(el("span", null, "Status"));
-  ["All", "In Progress", "Finished"].forEach((status) => {
+  [
+    ["All", "board"],
+    ["In Progress", "pulse"],
+    ["Finished", "check"],
+  ].forEach(([status, iconName]) => {
     const count = status === "All" ? typeFiltered.length
       : status === "Finished" ? finishedCount : activeCount;
     const button = el("button", boardArchiveFilters.status === status ? "active" : "");
     button.type = "button";
-    button.append(document.createTextNode(status), el("span", null, String(count)));
+    button.append(icon(iconName, 13), document.createTextNode(status), el("span", null, String(count)));
     button.addEventListener("click", () => {
       boardArchiveFilters.status = status;
       renderBoards();
@@ -1365,7 +1371,7 @@ function renderBoards() {
 
     const rowActions = el("div", "row-actions");
     if (isAdmin()) {
-      rowActions.append(smallBtn("Assign", "", null, (event) => {
+      rowActions.append(smallBtn("Assign", "", "team", (event) => {
         event.stopPropagation();
         openAssignModal(b);
       }));
@@ -2139,7 +2145,7 @@ function renderBoardDetail() {
   view.replaceChildren();
   const board = state.boards.find((item) => item.id === selectedBoardID);
   if (!board) {
-    view.append(smallBtn("← Back to boards", "", null, () => switchView("boards")));
+    view.append(smallBtn("Back to boards", "", "back", () => switchView("boards")));
     view.append(emptyState("board", "This board is no longer available."));
     return;
   }
@@ -2147,7 +2153,7 @@ function renderBoardDetail() {
 
   const top = el("div", "board-detail-top");
   const identity = el("div", "board-detail-identity");
-  identity.append(smallBtn("← Boards", "", null, () => switchView("boards")));
+  identity.append(smallBtn("Boards", "", "back", () => switchView("boards")));
   identity.append(el("div", "eyebrow", [board.type, board.subtype].filter(Boolean).join(" · ")));
   identity.append(el("h2", null, board.name));
   identity.append(el("p", "mono", board.number));
@@ -2158,10 +2164,10 @@ function renderBoardDetail() {
   actions.append(saveState);
   actions.append(statusBadge(board.status));
   if (state.me.can?.signOffQA && board.completion >= 100 && board.qaStatus !== "approved") {
-    actions.append(smallBtn("Review QA", "accent", null, () => openQAModal(board)));
+    actions.append(smallBtn("Review QA", "accent", "shield", () => openQAModal(board)));
   }
-  if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", null, () => openAssignModal(board)));
-  if (isAdmin()) actions.append(smallBtn("Delete board", "danger", null, () => openDeleteBoardModal(board)));
+  if (isAdmin()) actions.append(smallBtn(board.assignedTo ? "Reassign" : "Assign board", "accent", "team", () => openAssignModal(board)));
+  if (isAdmin()) actions.append(smallBtn("Delete board", "danger", "trash", () => openDeleteBoardModal(board)));
   top.append(identity, actions);
   view.append(top);
 
@@ -2171,12 +2177,12 @@ function renderBoardDetail() {
   const tabs = el("div", "board-detail-tabs");
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Board details");
-  const addTab = (tabID, label, count) => {
+  const addTab = (tabID, label, iconName, count) => {
     const button = el("button", selectedBoardTab === tabID ? "active" : "");
     button.type = "button";
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(selectedBoardTab === tabID));
-    button.append(document.createTextNode(label));
+    button.append(icon(iconName, 14), document.createTextNode(label));
     if (count != null) button.append(el("span", null, String(count)));
     button.addEventListener("click", () => {
       selectedBoardTab = tabID;
@@ -2184,9 +2190,9 @@ function renderBoardDetail() {
     });
     tabs.append(button);
   };
-  addTab("overview", "Overview");
-  addTab("components", "Components", componentCount);
-  addTab("files", "Schemes & photos", fileCount);
+  addTab("overview", "Overview", "board");
+  addTab("components", "Components", "box", componentCount);
+  addTab("files", "Schemes & photos", "note", fileCount);
   view.append(tabs);
 
   const progressCard = el("section", "board-progress-card");
@@ -2307,7 +2313,7 @@ function renderBoardDetail() {
       if (canEditBoard) {
         const rowActions = el("div", "component-draft-actions");
         rowActions.append(
-          smallBtn("Match", "accent", null, (event) => { event.stopPropagation(); openAddBoardComponentModal(board, draft); }),
+          smallBtn("Match", "accent", "search", (event) => { event.stopPropagation(); openAddBoardComponentModal(board, draft); }),
           smallBtn("Remove", "ghost", "x", (event) => { event.stopPropagation(); removeBoardComponentDraft(board, draft.id); }),
         );
         row.append(rowActions);
@@ -3397,8 +3403,20 @@ function openCatalogPartModal(part) {
     }
     const text = el("div", "part-title-text");
     text.append(el("div", "part-title", part.model));
-    const brand = el("div", "part-brand");
-    brand.append(icon("tag", 13), el("span", null, part.manufacturer));
+    const brand = el("button", "part-brand");
+    brand.type = "button";
+    brand.setAttribute("aria-label", `View manufacturer: ${part.manufacturer}`);
+    brand.append(
+      icon("tag", 13),
+      el("span", null, part.manufacturer),
+      icon("chevron", 11),
+    );
+    // Replace the component sheet with the existing manufacturer overview so
+    // the user can move between records without stacking modal layers.
+    brand.addEventListener("click", () => {
+      close();
+      openManufacturerOverview(part.manufacturer);
+    });
     text.append(brand);
     head.append(text);
     modal.append(head);
