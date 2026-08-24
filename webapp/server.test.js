@@ -37,6 +37,20 @@ test("matching a board component includes an exact amperage selector", () => {
   assert.match(browserApp, /rating: rating\.value/);
 });
 
+test("the desktop dashboard aligns Production stages with Awaiting QA", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  const browserCSS = fs.readFileSync(path.join(webapp, "public", "style.css"), "utf8");
+  assert.match(browserCSS, /\.dashboard-top-grid[^}]*grid-template-columns:\s*repeat\(8, minmax\(0, 1fr\)\)/);
+  assert.match(browserCSS, /\.dashboard-work-grid[^}]*grid-template-columns:\s*repeat\(8, minmax\(0, 1fr\)\)/);
+  assert.match(browserCSS, /\.dashboard-projects-panel,[\s\S]*\.dashboard-stages-panel[^}]*grid-column:\s*span 3/);
+  assert.match(browserCSS, /\.attention-panel[^}]*grid-column:\s*span 2/);
+  assert.match(browserCSS, /\.production-board-panel[^}]*grid-column:\s*1 \/ span 6/);
+  assert.match(browserCSS, /\.dashboard-side-stack[^}]*grid-column:\s*7 \/ span 2/);
+  assert.match(browserApp, /projectsPanel\.classList\.add\("dashboard-projects-panel"\)/);
+  assert.match(browserApp, /boardsPanel\.classList\.add\("dashboard-stages-panel"\)/);
+  assert.match(browserApp, /activity\.classList\.add\("dashboard-activity-panel"\)/);
+});
+
 async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {

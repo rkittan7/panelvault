@@ -873,6 +873,7 @@ function renderDashboard() {
     attentionPanel.body.append(el("div", "manager-clear", "No overdue projects, unassigned boards or low-stock parts."));
   }
   const projectsPanel = panel("Open projects", `${activeProjects.length} active`, smallBtn("View all", "", null, () => switchView("projects")));
+  projectsPanel.classList.add("dashboard-projects-panel");
   projectsPanel.body.classList.add("project-snapshot");
   if (!state.projects.length) {
     projectsPanel.body.append(emptyState("folder", isAdmin() ? "Create your first project to organize its boards and customer." : "No projects yet."));
@@ -906,6 +907,7 @@ function renderDashboard() {
     count: state.boards.filter((board) => board.currentStage?.id === id).length,
   }));
   const boardsPanel = panel("Production stages", `${state.boards.length} total`, smallBtn("Open boards", "", null, () => switchView("boards")));
+  boardsPanel.classList.add("dashboard-stages-panel");
   const stageChart = el("div", "stage-chart");
   const donut = el("div", "stage-donut");
   const donutTotal = el("div", "stage-donut-total");
@@ -951,6 +953,7 @@ function renderDashboard() {
   }
 
   const activity = panel("Recent activity", state.movements.length ? `${state.movements.length} recent events` : "");
+  activity.classList.add("dashboard-activity-panel");
   activity.body.classList.add("flush");
   if (!state.movements.length) {
     activity.body.append(el("div", "manager-clear compact", "No warehouse activity yet."));
