@@ -1657,7 +1657,7 @@ function boardProperty(iconName, label, value, onClick, mark = null) {
   // `mark` is for a property that has a picture of its own - a manufacturer is
   // known by its logo before its name.
   card.append(mark || chipIcon(iconName, "var(--primary)"));
-  const copy = el("div");
+  const copy = el("div", "board-property-copy");
   copy.append(el("span", null, label), el("strong", null, value || "Not set"));
   card.append(copy);
   if (onClick) card.append(icon("chevron", 15));
@@ -2262,7 +2262,8 @@ function renderBoardDetail() {
   top.append(identity, actions);
   view.append(top);
 
-  if (!["overview", "components", "files"].includes(selectedBoardTab)) selectedBoardTab = "overview";
+  if (!["overview", "breaker", "components", "files"].includes(selectedBoardTab)) selectedBoardTab = "overview";
+  const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
   const componentCount = (board.components || []).length + (board.componentDrafts || []).length;
   const fileCount = (board.attachments || []).length;
   const tabs = el("div", "board-detail-tabs");
@@ -2282,6 +2283,7 @@ function renderBoardDetail() {
     tabs.append(button);
   };
   addTab("overview", "Overview", "board");
+  addTab("breaker", "Main Breaker", "boltShield");
   addTab("components", "Components", "box", componentCount);
   addTab("files", "Schemes & photos", "note", fileCount);
   view.append(tabs);
@@ -2316,6 +2318,7 @@ function renderBoardDetail() {
     boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
   );
   if (selectedBoardTab === "overview") view.append(properties);
+  if (selectedBoardTab === "breaker") view.append(renderBoardMainBreakerTab(board, canEditBoard));
 
   const work = el("div", "board-detail-grid");
   const componentsPanel = el("section", "panel board-components-panel");
@@ -2324,7 +2327,6 @@ function renderBoardDetail() {
   componentCopy.append(el("span", "eyebrow", "Board specification"), el("h3", null, "Components"),
     el("p", null, "The exact parts fitted to this board, shared with the phone app."));
   componentHead.append(componentCopy);
-  const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
   if (canEditBoard) componentHead.append(smallBtn("Add component", "accent", "plus", () => openAddBoardComponentModal(board)));
   if (isAdmin() && (board.components || []).some((component) => (component.stock?.available || 0) > 0)) {
     componentHead.append(smallBtn("Issue available stock", "", "arrowOut", () => issueBoardStock(board)));
@@ -4016,6 +4018,7 @@ const MAIN_BREAKER_TYPES = ["Main Breaker", "MCB", "RCBO", "MCCB", "ACB", "Chang
  * range as switch-disconnectors; whichever name a board uses, the model slot
  * offers all of them. */
 const MAIN_BREAKER_TYPE_ALIASES = {
+  "Changeover Switch": ["Automatic Transfer Switch"],
   "Switch Disconnector": ["Isolator"],
   "Isolator": ["Switch Disconnector"],
 };
@@ -4181,10 +4184,10 @@ function selectedMainBreakerPart(type, storedModel) {
 /** One visual slot for the selected incomer. Clicking the slot opens the three
  * underlying fields, keeping the board form compact while still allowing a
  * custom device that is not in the catalog. */
-function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
+function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl, options = {}) {
   const slot = el("button", "main-breaker-slot");
   slot.type = "button";
-  slot.setAttribute("aria-label", "Edit selected main breaker");
+  slot.setAttribute("aria-label", `${options.readOnly ? "View" : "Edit"} selected main breaker`);
 
   const render = () => {
     const type = typeControl.select.value;
@@ -4213,7 +4216,7 @@ function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
       el("span", "main-breaker-slot-spec", [type, ampere].filter(Boolean).join(" · ")),
     );
     const edit = el("span", "main-breaker-slot-edit");
-    edit.append(icon("sliders", 15), document.createTextNode(" Edit"));
+    edit.append(icon(options.readOnly ? "chevron" : "sliders", 15), document.createTextNode(options.readOnly ? " View" : " Edit"));
     slot.append(visual, copy, edit);
   };
 
@@ -4227,21 +4230,155 @@ function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
     const grid = el("div", "page-form-grid main-breaker-editor-grid");
     grid.append(typeControl.label, modelControl.label, ampereControl.label);
     modal.append(grid);
+    const error = el("div", "form-error hidden");
+    modal.append(error);
     const actions = el("div", "actions");
-    const done = el("button", "btn-primary", "Done");
+    const done = el("button", "btn-primary", options.onSave ? "Save main breaker" : "Done");
     done.type = "button";
-    done.addEventListener("click", () => { render(); close(); });
+    done.addEventListener("click", async () => {
+      render();
+      if (!options.onSave) return close();
+      done.disabled = true;
+      error.classList.add("hidden");
+      try {
+        await options.onSave({
+          mainBreakerType: typeControl.select.value,
+          mainBreakerModel: modelControl.input.value.trim(),
+          mainBreakerAmpere: ampereControl.input.value.trim(),
+        });
+        close();
+      } catch (caught) {
+        error.textContent = caught.message || "Could not update the main breaker.";
+        error.classList.remove("hidden");
+        done.disabled = false;
+      }
+    });
     actions.append(done);
     modal.append(actions);
   });
 
-  slot.addEventListener("click", openEditor);
+  slot.addEventListener("click", options.readOnly
+    ? () => options.onView?.()
+    : openEditor);
   typeControl.select.addEventListener("change", render);
   modelControl.input.addEventListener("input", render);
   ampereControl.input.addEventListener("input", render);
   ensureCatalog().then(render).catch(render);
   render();
+  slot.refresh = render;
+  slot.openEditor = openEditor;
   return slot;
+}
+
+function canonicalMainBreakerType(partType) {
+  const words = typeWords(partType);
+  const types = MAIN_BREAKER_TYPES.filter((type) => type !== "Main Breaker");
+  const matches = (name) => {
+    const wanted = typeWords(name);
+    return wanted.size && [...wanted].every((word) => words.has(word));
+  };
+  return types.find(matches)
+    || types.find((type) => (MAIN_BREAKER_TYPE_ALIASES[type] || []).some(matches))
+    || null;
+}
+
+function mainBreakerCatalogParts() {
+  const seen = new Set();
+  return (catalog || []).map((part) => ({ part, type: canonicalMainBreakerType(part.type) }))
+    .filter(({ part, type }) => {
+      const key = [part.manufacturer, part.model, part.rating, part.poles].join("|").toLowerCase();
+      if (!type || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => [left.part.manufacturer, left.part.model, left.part.rating].join(" ")
+      .localeCompare([right.part.manufacturer, right.part.model, right.part.rating].join(" "), undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function renderBoardMainBreakerTab(board, canEditBoard) {
+  const panel = el("section", "panel board-main-breaker-panel");
+  const head = el("div", "panel-head");
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "Board incomer"), el("h3", null, "Main Breaker"),
+    el("p", null, canEditBoard
+      ? "Select the actual catalog device fitted to this board, or click the slot to enter a custom model."
+      : "The actual incoming device fitted to this board."));
+  head.append(copy);
+  panel.append(head);
+
+  const typeControl = pageField(selectField("Main breaker type", MAIN_BREAKER_TYPES, board.mainBreakerType || "Main Breaker"));
+  if (board.mainBreakerType && !MAIN_BREAKER_TYPES.includes(board.mainBreakerType)) {
+    typeControl.select.append(new Option(board.mainBreakerType, board.mainBreakerType));
+    typeControl.select.value = board.mainBreakerType;
+  }
+  const modelControl = pageField(mainBreakerModelField(typeControl.select));
+  modelControl.input.value = board.mainBreakerModel || "";
+  const ampereControl = pageField(field("Main breaker ampere", "e.g. 630A"));
+  ampereControl.input.value = board.mainBreakerAmpere || board.ampere || "";
+
+  const slot = mainBreakerSelectionSlot(typeControl, modelControl, ampereControl, {
+    readOnly: !canEditBoard,
+    onView: () => openBreakerOverview(board),
+    onSave: async (values) => {
+      const result = await api("/api/board-update", { boardID: board.id, ...values });
+      Object.assign(board, result.board);
+      const shared = state.boards.find((item) => item.id === board.id);
+      if (shared && shared !== board) Object.assign(shared, result.board);
+      renderBoardDetail();
+      renderBoards();
+      renderDashboard();
+    },
+  });
+  panel.append(slot);
+
+  if (!canEditBoard) return panel;
+
+  const catalogHead = el("div", "main-breaker-catalog-head");
+  const catalogCopy = el("div");
+  catalogCopy.append(el("h4", null, "Choose from catalog"), el("p", null, "Click a device to select it, then confirm or edit its installed ampere."));
+  const searchControl = field("Search breakers", "Manufacturer, model, type or rating");
+  searchControl.label.classList.add("main-breaker-search");
+  catalogHead.append(catalogCopy, searchControl.label);
+  const choices = el("div", "main-breaker-choice-grid");
+  panel.append(catalogHead, choices);
+
+  const renderChoices = () => {
+    choices.replaceChildren();
+    const query = searchControl.input.value.trim().toLowerCase();
+    const parts = mainBreakerCatalogParts().filter(({ part, type }) =>
+      !query || [part.manufacturer, part.model, part.type, type, part.rating, part.poles]
+        .filter(Boolean).join(" ").toLowerCase().includes(query));
+    if (!parts.length) {
+      choices.append(emptyState("search", query ? "No main-breaker catalog devices match this search." : "No main-breaker devices are available in the catalog."));
+      return;
+    }
+    const selected = selectedMainBreakerPart(typeControl.select.value, modelControl.input.value);
+    parts.forEach(({ part, type }) => {
+      const choice = el("button", `main-breaker-choice${selected?.id === part.id ? " selected" : ""}`);
+      choice.type = "button";
+      choice.append(partChip(part));
+      const detail = el("span", "main-breaker-choice-copy");
+      detail.append(el("strong", null, [part.manufacturer, part.model].filter(Boolean).join(" ")),
+        el("span", null, [type, part.rating, part.poles].filter(Boolean).join(" · ")));
+      choice.append(detail, icon("chevron", 15));
+      choice.addEventListener("click", () => {
+        typeControl.select.value = type;
+        typeControl.select.dispatchEvent(new Event("change"));
+        modelControl.input.value = [part.manufacturer, part.model].filter(Boolean).join(" ");
+        modelControl.input.dispatchEvent(new Event("input"));
+        if (!ampereControl.input.value && /^\d+\s*A$/i.test(part.rating || "")) {
+          ampereControl.input.value = part.rating.replace(/\s+/g, "");
+          ampereControl.input.dispatchEvent(new Event("input"));
+        }
+        slot.openEditor();
+      });
+      choices.append(choice);
+    });
+  };
+  searchControl.input.addEventListener("input", renderChoices);
+  ensureCatalog().then(renderChoices).catch(renderChoices);
+  renderChoices();
+  return panel;
 }
 
 function pageField(control) {

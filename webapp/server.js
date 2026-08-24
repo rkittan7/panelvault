@@ -2391,9 +2391,10 @@ const routes = {
 
   "POST /api/board-update": async (req, res, session) => {
     const { company, user } = session;
-    const { boardID, status, assignedTo, qaAssignedTo } = await readBody(req);
+    const { boardID, status, assignedTo, qaAssignedTo, mainBreakerType, mainBreakerModel, mainBreakerAmpere } = await readBody(req);
     const board = company.boards.find((b) => b.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
+    const breakerChanged = mainBreakerType !== undefined || mainBreakerModel !== undefined || mainBreakerAmpere !== undefined;
 
     if (status !== undefined) {
       return fail(res, 400, "Board status is automatic from assignment and checklist progress.");
@@ -2410,6 +2411,9 @@ const routes = {
         return fail(res, 400, "Unknown QA reviewer.");
       }
     }
+    if (breakerChanged && !canUpdateBoard(user, board)) {
+      return fail(res, 403, "Only the assigned builder or a manager can update this board's main breaker.");
+    }
     const previous = {
       checklistSignature: checklistSignature(board),
       qaAssignedTo: board.qaAssignedTo,
@@ -2418,9 +2422,27 @@ const routes = {
       board.assignedTo = assignedTo || null;
     }
     if (qaAssignedTo !== undefined) board.qaAssignedTo = qaAssignedTo || null;
+    if (breakerChanged) {
+      const type = String(mainBreakerType ?? board.mainBreakerType ?? "Main Breaker").trim().slice(0, 100);
+      const model = String(mainBreakerModel ?? board.mainBreakerModel ?? "").trim().slice(0, 180);
+      const ampere = String(mainBreakerAmpere ?? board.mainBreakerAmpere ?? board.ampere ?? "").trim().toUpperCase().slice(0, 40);
+      board.mainBreakerType = type || "Main Breaker";
+      board.mainBreakerModel = model;
+      board.mainBreakerAmpere = ampere;
+      if (ampere) board.ampere = ampere;
+    }
     reconcileBoardQA(company, board, previous);
     touchWorkspaceEntity(company, "board", board);
-    recordAudit(company, user, "board.assignment_updated", "board", board.id, { assignedTo, qaAssignedTo });
+    if (assignedTo !== undefined || qaAssignedTo !== undefined) {
+      recordAudit(company, user, "board.assignment_updated", "board", board.id, { assignedTo, qaAssignedTo });
+    }
+    if (breakerChanged) {
+      recordAudit(company, user, "board.main_breaker_updated", "board", board.id, {
+        mainBreakerType: board.mainBreakerType,
+        mainBreakerModel: board.mainBreakerModel,
+        mainBreakerAmpere: board.mainBreakerAmpere,
+      });
+    }
     await save();
     const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
     sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });

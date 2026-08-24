@@ -21,6 +21,9 @@ test("new and edited boards show one clickable main-breaker device slot", () => 
   assert.match(browserApp, /function mainBreakerSelectionSlot\(/);
   assert.match(browserApp, /section\("Main breaker"[\s\S]*mainBreakerSlot\)/);
   assert.match(browserApp, /Select the actual main breaker/);
+  assert.match(browserApp, /addTab\("breaker", "Main Breaker"/);
+  assert.match(browserApp, /function renderBoardMainBreakerTab\(board, canEditBoard\)/);
+  assert.match(browserApp, /main-breaker-choice/);
   assert.match(managerApp, /struct MainBreakerSelectionSlot: View/);
   assert.match(managerApp, /struct MainBreakerEditorSheet: View/);
   assert.match(managerApp, /BoardEditPickerSheet[\s\S]*case mainBreaker/);
@@ -338,6 +341,21 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.components[0].curve, "C");
     assert.equal(createdBoard.body.board.componentDrafts.length, 1);
     assert.equal(createdBoard.body.board.componentDrafts[0].description, "Siemens 5SY C10");
+
+    const changedBreaker = await json(server.baseURL, "/api/board-update", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id,
+        mainBreakerType: "Changeover Switch",
+        mainBreakerModel: "Socomec ATyS r",
+        mainBreakerAmpere: "1600A",
+      }),
+    });
+    assert.equal(changedBreaker.response.status, 200);
+    assert.equal(changedBreaker.body.board.mainBreakerType, "Changeover Switch");
+    assert.equal(changedBreaker.body.board.mainBreakerModel, "Socomec ATyS r");
+    assert.equal(changedBreaker.body.board.mainBreakerAmpere, "1600A");
+    assert.equal(changedBreaker.body.board.ampere, "1600A");
 
     const assigned = await json(server.baseURL, "/api/board-update", {
       method: "POST", headers,
