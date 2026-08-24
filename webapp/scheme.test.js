@@ -22,6 +22,10 @@ const CATALOG = [
   { id: "schneider-ic60n", manufacturer: "Schneider", model: "Acti9 iC60N", type: "MCB" },
   { id: "siemens-5sy", manufacturer: "Siemens", model: "SENTRON 5SY", type: "MCB" },
   { id: "eaton-faz", manufacturer: "Eaton", model: "FAZ", type: "MCB" },
+  { id: "allen-bradley-800f-push-button", manufacturer: "Allen-Bradley", model: "800F push button", type: "Push Button", rating: "22.5mm" },
+  { id: "allen-bradley-800f-selector", manufacturer: "Allen-Bradley", model: "800F selector switch", type: "Selector Switch", rating: "22.5mm" },
+  { id: "allen-bradley-800f-pilot-light", manufacturer: "Allen-Bradley", model: "800F pilot light", type: "Pilot Light", rating: "22.5mm" },
+  { id: "allen-bradley-802t-door-switch", manufacturer: "Allen-Bradley", model: "802T standard limit switch", type: "Door Switch", rating: "NEMA 4/13" },
 ];
 
 test("a part named exactly as the catalog spells it matches", () => {
@@ -45,15 +49,34 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /FIRL 6A \+ N/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /main incomer once in components/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /door elevations, control\s+station layouts and operator-device schedules/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /Allen-Bradley may be printed as AB, A-B/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /כיתאו אליקטריק/);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("pageBoards"));
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /extract only pages mapped to this exact board number/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /MANDATORY TARGET BOARD: "3918.24-12-1"/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /dedicated door-device pass/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /closest supported PanelVault type/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
+});
+
+test("Allen-Bradley door operators match by bulletin, device type, and common brand aliases", () => {
+  const pushButton = matchCatalogPart(CATALOG, {
+    manufacturer: "A-B", model: "800F-X10", type: "push-button switch",
+  });
+  const lamp = matchCatalogPart(CATALOG, {
+    manufacturer: "Rockwell Automation", model: "800F-P16", type: "lamp",
+  });
+  const doorSwitch = matchCatalogPart(CATALOG, {
+    manufacturer: "Allen Bradley", model: "802T-A1T", type: "limit switch",
+  });
+
+  assert.equal(pushButton?.id, "allen-bradley-800f-push-button");
+  assert.equal(lamp?.id, "allen-bradley-800f-pilot-light");
+  assert.equal(doorSwitch?.id, "allen-bradley-802t-door-switch");
 });
 
 test("the filename target excludes components belonging to a previous board", () => {
