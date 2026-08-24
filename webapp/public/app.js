@@ -334,11 +334,12 @@ function colorForType(type) {
 
 // ---------------------------------------------------------------- api
 
-async function api(path, body) {
+async function api(path, body, { signal } = {}) {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Something went wrong.");
@@ -2713,18 +2714,71 @@ function catalogGroups() {
   return groups.sort((a, b) => (a.id === "custom" ? -1 : b.id === "custom" ? 1 : 0));
 }
 
+const typeWords = (text) => new Set(String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+
+/** A category's parts split into blocks by type, the way the phone app splits
+ * them: "MCCBs & ACBs" reads as MCCBs, then ACBs, rather than one run of
+ * twenty-four rows.
+ *
+ * A variant type folds into the plainest type the same category already lists —
+ * the shortest one whose words all appear in it — so "Legacy ACB" sits under
+ * ACB and "SPD Type 2" under SPD instead of each claiming a heading. Types left
+ * holding a single part collect into a trailing "Other", which is what stops
+ * Terminals & Wiring turning six one-part types into six headings. */
+function partTypeSections(parts) {
+  const types = parts.map((part) => String(part.type || "").trim());
+  const family = (type) => {
+    if (!type) return "Other";
+    const words = typeWords(type);
+    let best = null;
+    for (const candidate of types) {
+      if (!candidate || candidate === type) continue;
+      if (![...typeWords(candidate)].every((word) => words.has(word))) continue;
+      if (!best || candidate.length < best.length) best = candidate;
+    }
+    return best || type;
+  };
+
+  const order = [];
+  const buckets = new Map();
+  parts.forEach((part, index) => {
+    const title = family(types[index]);
+    if (!buckets.has(title)) { order.push(title); buckets.set(title, []); }
+    buckets.get(title).push(part);
+  });
+
+  const singles = order.filter((title) => buckets.get(title).length === 1);
+  if (singles.length < 2) return order.map((title) => ({ title, parts: buckets.get(title) }));
+  return [
+    ...order.filter((title) => !singles.includes(title)).map((title) => ({ title, parts: buckets.get(title) })),
+    { title: "Other", parts: singles.map((title) => buckets.get(title)[0]) },
+  ];
+}
+
+/** The rule between one type and the next inside a category. */
+function partSectionHead(title, count) {
+  const head = el("div", "part-section-head");
+  head.append(el("span", "part-section-title", title), el("span", "part-section-rule"), el("span", "part-section-count", String(count)));
+  return head;
+}
+
 function matchesQuery(part, q) {
   if (!q) return true;
   return `${part.manufacturer} ${part.model} ${part.type} ${part.rating} ${part.poles} ${part.curve} ${part.serialNumber || ""}`
     .toLowerCase().includes(q);
 }
 
+/** The parts list, fetched once. The board form wants it as much as the
+ * Catalog view does, so the fetch does not belong to either of them. */
+async function ensureCatalog() {
+  if (!catalog) catalog = (await api("/api/catalog")).parts;
+  return catalog;
+}
+
 async function renderCatalog() {
   const view = $("#view-catalog");
-  if (!catalog) {
-    view.replaceChildren(viewHead("Catalog"), emptyState("box", "Loading the catalog…"));
-    catalog = (await api("/api/catalog")).parts;
-  }
+  if (!catalog) view.replaceChildren(viewHead("Catalog"), emptyState("box", "Loading the catalog…"));
+  await ensureCatalog();
   drawCatalog();
 }
 
@@ -2890,7 +2944,11 @@ function drawCatalog() {
     back.addEventListener("click", () => { catalogCategory = null; drawCatalog(); });
     view.append(back);
     const list = el("div", "list");
-    open.parts.forEach((p) => list.append(catalogRow(p, stock)));
+    const sections = partTypeSections(open.parts);
+    sections.forEach((section) => {
+      if (sections.length > 1) list.append(partSectionHead(section.title, section.parts.length));
+      section.parts.forEach((p) => list.append(catalogRow(p, stock)));
+    });
     view.append(list);
     return;
   }
@@ -3231,13 +3289,32 @@ function fileAsBase64(file) {
   });
 }
 
+/** What the AI reader will accept. Anything bigger is refused before the
+    upload, so a drawing is never sent only to bounce off the body limit. */
+const SCHEME_READ_LIMIT = 8_000_000;
+/** What the board can keep afterwards — the server refuses attachments above
+    this (MAX_ATTACHMENT_BYTES in server.js). The two limits differ, so the
+    panel says so at the moment a file is picked rather than dropping the
+    drawing without a word once the board exists. */
+const SCHEME_ATTACH_LIMIT = 6_000_000;
+const SCHEME_MIME_TYPES = [
+  "application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+];
+const SCHEME_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
+
+function isSchemeFile(file) {
+  const name = (file.name || "").toLowerCase();
+  return SCHEME_MIME_TYPES.includes(file.type)
+    || SCHEME_EXTENSIONS.some((extension) => name.endsWith(extension));
+}
+
 function schemeIntakePanel(kind, onComplete) {
   const panel = el("section", "scheme-intake-panel");
   const head = el("div", "scheme-intake-head");
   head.append(chipIcon("scan", "var(--primary)"));
   const copy = el("div");
   copy.append(el("span", "eyebrow", "AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
-    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 8 MB. Nothing is created until you review and confirm it."));
+    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 8 MB. Drag one in or choose a file. Nothing is created until you review and confirm it."));
   head.append(copy);
   panel.append(head);
 
@@ -3247,22 +3324,64 @@ function schemeIntakePanel(kind, onComplete) {
   input.className = "hidden";
   const drop = el("button", "scheme-upload-zone");
   drop.type = "button";
-  drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "PDF or supported image"));
+  drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "or drop a PDF or image here"));
   const status = el("div", "scheme-file-status", "No file selected");
+  const notice = el("div", "scheme-size-notice hidden");
   const error = el("div", "form-error hidden");
+
+  const progress = el("div", "scheme-progress hidden");
+  const progressCopy = el("div", "scheme-progress-copy");
+  const progressTitle = el("strong", null, "Reading the drawing");
+  progressCopy.append(progressTitle, el("small", null, "A full multi-page scheme can take up to two minutes. Keep this page open."));
+  const elapsed = el("span", "scheme-elapsed", "0s");
+  progress.append(el("span", "scheme-spinner"), progressCopy, elapsed);
+
   const actions = el("div", "page-form-actions");
+  const cancel = el("button", "btn-ghost hidden", "Cancel");
+  cancel.type = "button";
   const scan = el("button", "btn-primary", "Read scheme with AI");
   scan.type = "button";
   scan.disabled = true;
+
   let selectedFile = null;
-  drop.addEventListener("click", () => input.click());
-  input.addEventListener("change", () => {
-    const file = input.files?.[0];
-    error.classList.add("hidden");
+  let controller = null;
+  let ticker = null;
+
+  /** True while a read is in flight — the panel refuses everything else then,
+      so a second file cannot start a second Gemini call over the first. */
+  const reading = () => Boolean(controller);
+
+  const setReading = (on) => {
+    drop.disabled = on;
+    drop.classList.toggle("reading", on);
+    scan.disabled = on || !selectedFile;
+    scan.textContent = on ? "Reading…" : "Read scheme with AI";
+    cancel.classList.toggle("hidden", !on);
+    progress.classList.toggle("hidden", !on);
+  };
+
+  const stopReading = () => {
+    clearInterval(ticker);
+    ticker = null;
+    controller = null;
+    setReading(false);
+  };
+
+  const showError = (message) => {
+    error.textContent = message;
+    error.classList.remove("hidden");
+  };
+
+  const acceptFile = (file) => {
     if (!file) return;
-    if (file.size > 8_000_000) {
-      error.textContent = "The scheme must be 8 MB or smaller.";
-      error.classList.remove("hidden");
+    error.classList.add("hidden");
+    notice.classList.add("hidden");
+    if (!isSchemeFile(file)) {
+      showError("Attach a PDF, PNG, JPG, WebP or HEIC drawing.");
+      return;
+    }
+    if (file.size > SCHEME_READ_LIMIT) {
+      showError("The scheme must be 8 MB or smaller.");
       input.value = "";
       selectedFile = null;
       scan.disabled = true;
@@ -3270,35 +3389,75 @@ function schemeIntakePanel(kind, onComplete) {
     }
     selectedFile = file;
     status.textContent = `${file.name} · ${Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB`;
+    if (file.size > SCHEME_ATTACH_LIMIT) {
+      notice.textContent = "Over 6 MB: PanelVault will read this drawing, but it is too big to keep on the board afterwards. Export a lighter PDF to store it as well.";
+      notice.classList.remove("hidden");
+    }
     drop.classList.add("selected");
     scan.disabled = false;
+  };
+
+  drop.addEventListener("click", () => {
+    if (!reading()) input.click();
   });
+  input.addEventListener("change", () => acceptFile(input.files?.[0]));
+
+  ["dragenter", "dragover"].forEach((type) => drop.addEventListener(type, (event) => {
+    event.preventDefault();
+    if (!reading()) drop.classList.add("dragging");
+  }));
+  ["dragleave", "dragend"].forEach((type) => drop.addEventListener(type, () => drop.classList.remove("dragging")));
+  drop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    drop.classList.remove("dragging");
+    if (reading()) return;
+    // A dropped file never went through the picker, so `accept` did not filter
+    // it — acceptFile checks the type itself.
+    acceptFile(event.dataTransfer?.files?.[0]);
+  });
+
+  cancel.addEventListener("click", () => controller?.abort());
+
   scan.addEventListener("click", async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || reading()) return;
     error.classList.add("hidden");
-    scan.disabled = true;
-    scan.textContent = "Reading drawing…";
-    drop.classList.add("reading");
+    controller = new AbortController();
+    const startedAt = Date.now();
+    elapsed.textContent = "0s";
+    ticker = setInterval(() => {
+      elapsed.textContent = `${Math.round((Date.now() - startedAt) / 1000)}s`;
+    }, 1000);
+    setReading(true);
+
+    let result;
+    let upload;
     try {
-      const data = await fileAsBase64(selectedFile);
-      const upload = {
+      upload = {
         fileName: selectedFile.name,
         mimeType: selectedFile.type || "application/pdf",
-        data,
+        data: await fileAsBase64(selectedFile),
         size: selectedFile.size,
       };
-      const reading = await api("/api/ai/board-scheme", upload);
-      await onComplete(reading, upload);
+      result = await api("/api/ai/board-scheme", upload, { signal: controller.signal });
     } catch (caught) {
-      error.textContent = caught.message || "PanelVault could not read this scheme.";
-      error.classList.remove("hidden");
-      scan.disabled = false;
-      scan.textContent = "Read scheme with AI";
-      drop.classList.remove("reading");
+      const aborted = caught.name === "AbortError";
+      stopReading();
+      if (!aborted) showError(caught.message || "PanelVault could not read this scheme.");
+      return;
+    }
+
+    clearInterval(ticker);
+    ticker = null;
+    try {
+      await onComplete(result, upload);
+    } catch (caught) {
+      stopReading();
+      showError(caught.message || "PanelVault could not read this scheme.");
     }
   });
-  actions.append(scan);
-  panel.append(input, drop, status, error, actions);
+
+  actions.append(cancel, scan);
+  panel.append(input, drop, status, notice, progress, error, actions);
   return panel;
 }
 
@@ -3386,6 +3545,59 @@ function schemeReviewCard(reading, context) {
     review.append(el("p", "scheme-review-note", `Check the drawing: ${reading.warnings.join(" · ")}`));
   }
   return review;
+}
+
+/** The device families a board can carry at its head. The same list the phone
+ * app offers, so a board reads the same wherever it was created. "Main Breaker"
+ * leads as the unspecified option. */
+const MAIN_BREAKER_TYPES = ["Main Breaker", "MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch"];
+
+/** The catalog files the ABB OT and the Schneider Interpact as isolators, and
+ * those are the two main switches most boards are built around. */
+const MAIN_BREAKER_TYPE_ALIASES = { "Switch Disconnector": ["Isolator"] };
+
+/** Catalog models that can sit at the head of a board of this type.
+ *
+ * A part counts when its own type carries every word of the chosen one, which
+ * reaches the catalog's hyphenated "Switch-Disconnector" from "Switch
+ * Disconnector" and "Legacy ACB" from "ACB", while MCB still never matches
+ * MCCB. The value is brand and model together, which is what the field stores
+ * and what the phone app writes into it. */
+function mainBreakerModels(type) {
+  const wanted = [type, ...(MAIN_BREAKER_TYPE_ALIASES[type] || [])]
+    .map(typeWords).filter((set) => set.size);
+  if (!wanted.length) return [];
+  const seen = new Set();
+  const models = [];
+  for (const part of catalog || []) {
+    const words = typeWords(part.type);
+    if (!wanted.some((set) => [...set].every((word) => words.has(word)))) continue;
+    const value = [part.manufacturer, part.model].filter(Boolean).join(" ").trim();
+    if (!value || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    models.push({ value, note: [part.type, part.rating].filter((bit) => bit && bit !== "—").join(" · ") });
+  }
+  return models;
+}
+
+/** The model slot: the catalog's parts for the chosen breaker type, offered as
+ * suggestions. A list rather than a dropdown, because a drawing sometimes names
+ * a device the catalog has never carried and this field has always taken it. */
+function mainBreakerModelField(typeSelect) {
+  const control = field("Main breaker model", "e.g. ABB SACE Tmax XT7");
+  const list = el("datalist");
+  list.id = "main-breaker-models";
+  control.input.setAttribute("list", list.id);
+  control.label.append(list);
+  const fill = () => {
+    list.replaceChildren();
+    mainBreakerModels(typeSelect.value).forEach(({ value, note }) => list.append(new Option(note, value)));
+  };
+  typeSelect.addEventListener("change", fill);
+  fill();
+  // The catalog is usually still on its way in when the form is drawn.
+  ensureCatalog().then(fill).catch(() => {});
+  return control;
 }
 
 function pageField(control) {
@@ -3493,8 +3705,8 @@ function renderBoardCreate() {
   const dateOut = pageField(field("Out date", "", "date"));
   dateOut.input.valueAsDate = new Date();
   const dueDate = pageField(field("Due date/time", "optional", "datetime-local"));
-  const mainBreakerType = pageField(selectField("Main breaker type", ["Main Breaker", "MCB", "MCCB", "ACB", "Isolator", "Fuse Switch"], "Main Breaker"));
-  const mainBreakerModel = pageField(field("Main breaker model", "e.g. Tmax XT7"));
+  const mainBreakerType = pageField(selectField("Main breaker type", MAIN_BREAKER_TYPES, "Main Breaker"));
+  const mainBreakerModel = pageField(mainBreakerModelField(mainBreakerType.select));
   const mainBreakerAmpere = pageField(field("Main breaker ampere", "630A"));
   mainBreakerAmpere.input.value = "630A";
   const assign = el("label", "page-field", "Give the board to");
@@ -3531,7 +3743,14 @@ function renderBoardCreate() {
     const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
     const matchedBreakerType = breakerTypes.find((value) =>
       value.toLowerCase() === String(aiDraft.mainBreakerType || "").trim().toLowerCase());
-    if (matchedBreakerType) mainBreakerType.select.value = matchedBreakerType;
+    if (matchedBreakerType) {
+      mainBreakerType.select.value = matchedBreakerType;
+    } else if (String(aiDraft.mainBreakerType || "").trim()) {
+      // Same rule as the manufacturer above: never drop what the drawing
+      // printed merely because the picker has no entry for it.
+      const printed = aiDraft.mainBreakerType.trim();
+      mainBreakerType.select.append(new Option(printed, printed, true, true));
+    }
     mainBreakerModel.input.value = aiDraft.mainBreakerModel || "";
     mainBreakerAmpere.input.value = aiDraft.mainBreakerAmpere || "630A";
   }
@@ -3600,7 +3819,7 @@ function renderBoardCreate() {
         componentDrafts: boardSchemeReading?.unmatched || [],
       });
       const followups = [];
-      if (boardSchemeUpload && boardSchemeUpload.size <= 6_000_000) {
+      if (boardSchemeUpload && boardSchemeUpload.size <= SCHEME_ATTACH_LIMIT) {
         followups.push(api("/api/board-attachment", {
           boardID: board.id,
           kind: "scheme",

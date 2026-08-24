@@ -886,6 +886,20 @@ img.brand-logo {
 
 .cat-note { font-size: 11.5px; color: var(--ink-3); font-weight: 600; margin-top: 10px; }
 
+/* The rule between one part type and the next inside a category. The first one
+   sits flush with the list above it; the rest carry the gap that separates the
+   block before them. */
+.part-section-head {
+  display: flex; align-items: center; gap: 10px;
+  margin: 16px 2px 2px;
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.part-section-head:first-child { margin-top: 4px; }
+.part-section-rule { flex: 1; height: 1px; background: var(--line); }
+.part-section-count { letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
 .back-link {
   display: inline-flex; align-items: center; gap: 4px;
   margin-top: 12px;
@@ -1161,7 +1175,34 @@ img.brand-logo {
 .scheme-upload-zone > svg { color: var(--primary); }
 .scheme-upload-zone strong { color: var(--ink); font-size: 14px; }
 .scheme-upload-zone span { color: var(--ink-3); font-size: 11px; }
+.scheme-upload-zone.dragging { border-style: solid; border-color: var(--primary); background: var(--primary-dim); transform: scale(1.005); }
+.scheme-upload-zone:disabled { cursor: default; }
 .scheme-file-status { margin-top: 9px; color: var(--ink-3); font-size: 11px; text-align: center; }
+.scheme-size-notice {
+  margin-top: 9px; padding: 9px 11px; border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line));
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--ink-2); font-size: 11px; line-height: 1.45;
+}
+/* Gemini gets two minutes on a multi-page A1 drawing. Without a spinner and a
+   running count the page simply looks hung for that whole time. */
+.scheme-progress {
+  display: flex; align-items: center; gap: 11px;
+  margin-top: 11px; padding: 12px 13px; border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+}
+.scheme-progress-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.scheme-progress-copy strong { font-size: 12.5px; }
+.scheme-progress-copy small { color: var(--ink-3); font-size: 10.5px; }
+.scheme-elapsed { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.scheme-spinner {
+  width: 17px; height: 17px; flex-shrink: 0; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  border-top-color: var(--primary);
+  animation: schemeSpin .7s linear infinite;
+}
+@keyframes schemeSpin { to { transform: rotate(360deg); } }
 @keyframes schemeReadPulse { to { border-color: var(--secondary); background: color-mix(in srgb, var(--secondary) 8%, var(--panel)); } }
 
 .scheme-review-card {
