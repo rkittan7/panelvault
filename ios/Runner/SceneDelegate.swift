@@ -458,39 +458,18 @@ struct PanelVaultAppView: View {
     do {
       let result: PanelCloudWorkspace
       if cloudAccountCanAdminister {
-        do {
-          result = try await PanelCloudClient().uploadWorkspace(
-            account: account,
-            expectedVersion: cloudWorkspaceVersion,
-            projects: localProjects,
-            boards: localBoards
-          )
-        } catch {
-          // Optimistic versioning prevents a stale phone from overwriting a web
-          // edit. Pull the new version and replay this local edit once.
-          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
-          result = try await PanelCloudClient().uploadWorkspace(
-            account: account,
-            expectedVersion: latest.version,
-            projects: localProjects,
-            boards: localBoards
-          )
-        }
+        result = try await PanelCloudClient().uploadWorkspace(
+          account: account,
+          expectedVersion: cloudWorkspaceVersion,
+          projects: localProjects,
+          boards: localBoards
+        )
       } else {
-        do {
-          result = try await PanelCloudClient().uploadBoardProgress(
-            account: account,
-            expectedVersion: cloudWorkspaceVersion,
-            boards: localBoards
-          )
-        } catch {
-          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
-          result = try await PanelCloudClient().uploadBoardProgress(
-            account: account,
-            expectedVersion: latest.version,
-            boards: localBoards
-          )
-        }
+        result = try await PanelCloudClient().uploadBoardProgress(
+          account: account,
+          expectedVersion: cloudWorkspaceVersion,
+          boards: localBoards
+        )
       }
       guard cloudAccount?.token == account.token else { return }
       if cloudWorkspaceSignature == localSignature {
@@ -506,7 +485,13 @@ struct PanelVaultAppView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
       }
     } catch {
-      // Leave the dirty flag set; the next foreground/poll or local edit retries.
+      // Never turn a conflict into "download the new version, then resend my
+      // old complete snapshot". That sequence can erase another client's
+      // newer work. Preserve this phone's local snapshot and suspend automatic
+      // workspace uploads until a fresh bootstrap/account reconnect; new
+      // clients use the record-level /api/sync/workspace-change outbox.
+      cloudWorkspaceDirty = true
+      cloudWorkspaceReady = false
     }
   }
 
@@ -5634,7 +5619,7 @@ struct MainBreakerStepView: View {
   let manufacturerNames: [String]
   let manufacturers: [ManufacturerItem]
   let create: () -> Void
-  @State private var pickerSheet: MainBreakerPickerSheet?
+  @State private var editorOpen = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -5645,16 +5630,16 @@ struct MainBreakerStepView: View {
               .frame(height: 72)
           }
 
-          CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Choose the breaker details") {
-            CreationMenuInput(theme: theme, title: "Breaker type", symbol: "bolt.fill", value: mainBreakerType, options: MainBreakerCatalog.types, selection: typeBinding)
-            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: identity.manufacturer, manufacturers: manufacturers) {
-              pickerSheet = .manufacturer
-            }
-            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: identity.model) {
-              pickerSheet = .model
-            }
-            CreationPickerInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: mainBreakerAmpere) {
-              pickerSheet = .ampere
+          CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Tap the selected device to change it") {
+            MainBreakerSelectionSlot(
+              theme: theme,
+              type: mainBreakerType,
+              storedModel: mainBreakerModel,
+              ampere: mainBreakerAmpere,
+              manufacturerNames: manufacturerNames,
+              manufacturers: manufacturers
+            ) {
+              editorOpen = true
             }
           }
           BottomTabClearance(height: 24)
@@ -5683,70 +5668,180 @@ struct MainBreakerStepView: View {
     .background(theme.background.ignoresSafeArea())
     .navigationTitle("Main Breaker")
     .navigationBarTitleDisplayMode(.inline)
-    .sheet(item: $pickerSheet) { sheet in
-      switch sheet {
-      case .manufacturer:
-        ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: identity.manufacturer) {
-          setManufacturer($0)
+    .sheet(isPresented: $editorOpen) {
+      MainBreakerEditorSheet(
+        theme: theme,
+        type: $mainBreakerType,
+        storedModel: $mainBreakerModel,
+        ampere: $mainBreakerAmpere,
+        manufacturerNames: manufacturerNames,
+        manufacturers: manufacturers
+      )
+    }
+  }
+}
+
+struct MainBreakerSelectionSlot: View {
+  let theme: PanelTheme
+  let type: String
+  let storedModel: String
+  let ampere: String
+  let manufacturerNames: [String]
+  let manufacturers: [ManufacturerItem]
+  let action: () -> Void
+
+  private var identity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: storedModel, manufacturers: manufacturerNames)
+  }
+
+  private var selectedPart: PanelComponent? {
+    MainBreakerCatalog.part(for: type, model: identity.model, manufacturer: identity.manufacturer)
+  }
+
+  private var accent: Color {
+    syncedManufacturer(named: identity.manufacturer, in: manufacturers)?.color ?? theme.primary
+  }
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 14) {
+        Group {
+          if let part = selectedPart,
+             let image = CatalogImageLibrary.componentThumbnail(id: part.id) {
+            TransparentImageBubble(image: image, width: 68, height: 68, glowColor: accent)
+          } else {
+            Image(systemName: "bolt.shield.fill")
+              .font(.system(size: 25, weight: .bold))
+              .foregroundStyle(accent)
+              .frame(width: 68, height: 68)
+              .background(accent.opacity(0.12))
+              .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+          }
         }
-      case .model:
-        CreationOptionPickerSheet(
-          theme: theme,
-          title: "\(mainBreakerType) model",
-          symbol: "tag.fill",
-          options: MainBreakerCatalog.models(for: mainBreakerType, manufacturer: identity.manufacturer),
-          selected: identity.model
-        ) {
-          setModel($0)
+
+        VStack(alignment: .leading, spacing: 5) {
+          Text(identity.model.isEmpty ? "MAIN BREAKER SLOT" : "SELECTED MAIN BREAKER")
+            .font(.system(size: 9, weight: .black))
+            .tracking(0.7)
+            .foregroundStyle(accent)
+          Text(storedModel.isEmpty || identity.model.isEmpty ? "Choose a catalog breaker" : storedModel)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+          Text([type, ampere].filter { !$0.isEmpty }.joined(separator: " · "))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
         }
-      case .ampere:
-        CreationOptionPickerSheet(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", options: AmpereRating.all, selected: mainBreakerAmpere) {
-          mainBreakerAmpere = $0
+        Spacer(minLength: 8)
+        VStack(spacing: 5) {
+          Image(systemName: "slider.horizontal.3")
+          Text("Edit")
+            .font(.caption2.bold())
+        }
+        .foregroundStyle(accent)
+      }
+      .padding(14)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(accent.opacity(0.07))
+      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+          .stroke(accent.opacity(0.24), lineWidth: 1)
+      )
+    }
+    .buttonStyle(PanelPressButtonStyle())
+    .accessibilityLabel("Edit selected main breaker, \(storedModel), \(type), \(ampere)")
+  }
+}
+
+struct MainBreakerEditorSheet: View {
+  let theme: PanelTheme
+  @Binding var type: String
+  @Binding var storedModel: String
+  @Binding var ampere: String
+  let manufacturerNames: [String]
+  let manufacturers: [ManufacturerItem]
+  @Environment(\.dismiss) private var dismiss
+
+  private var identity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: storedModel, manufacturers: manufacturerNames)
+  }
+
+  private var availableManufacturers: [String] {
+    Array(Set(manufacturers.map(\.name) + manufacturerNames + MainBreakerCatalog.brands))
+      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .sorted()
+  }
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          MainBreakerSelectionSlot(
+            theme: theme,
+            type: type,
+            storedModel: storedModel,
+            ampere: ampere,
+            manufacturerNames: manufacturerNames,
+            manufacturers: manufacturers,
+            action: {}
+          )
+          .allowsHitTesting(false)
+
+          CreationFormSection(theme: theme, title: "Breaker Details", symbol: "bolt.shield.fill", subtitle: "Select the installed incomer") {
+            CreationMenuInput(theme: theme, title: "Type", symbol: "bolt.fill", value: type, options: MainBreakerCatalog.types, selection: typeBinding)
+            CreationMenuInput(theme: theme, title: "Manufacturer", symbol: "building.2.fill", value: identity.manufacturer, options: availableManufacturers, selection: manufacturerBinding)
+            CreationMenuInput(theme: theme, title: "Model", symbol: "tag.fill", value: identity.model, options: MainBreakerCatalog.models(for: type, manufacturer: identity.manufacturer), selection: modelBinding)
+            CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: ampere, options: AmpereRating.all, selection: $ampere)
+          }
+        }
+        .padding(18)
+      }
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Edit Main Breaker")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }
+            .fontWeight(.bold)
         }
       }
     }
   }
 
-  /// Manufacturer and model are stored joined in `mainBreakerModel`; the slots
-  /// edit the halves and write the joined value straight back.
-  private var identity: MainBreakerIdentity {
-    MainBreakerIdentity(stored: mainBreakerModel, manufacturers: manufacturerNames)
-  }
-
   private var typeBinding: Binding<String> {
     Binding {
-      mainBreakerType
+      type
     } set: { newValue in
       var updated = identity
-      mainBreakerType = newValue
-      // A model names one family of device, so it cannot outlive the type.
+      type = newValue
       updated.model = ""
-      mainBreakerModel = updated.stored
+      storedModel = updated.stored
     }
   }
 
-  private func setManufacturer(_ name: String) {
-    var updated = identity
-    if !MainBreakerCatalog.lists(model: updated.model, type: mainBreakerType, manufacturer: name) {
-      updated.model = ""
+  private var manufacturerBinding: Binding<String> {
+    Binding {
+      identity.manufacturer
+    } set: { name in
+      var updated = identity
+      if !MainBreakerCatalog.lists(model: updated.model, type: type, manufacturer: name) {
+        updated.model = ""
+      }
+      updated.manufacturer = name
+      storedModel = updated.stored
     }
-    updated.manufacturer = name
-    mainBreakerModel = updated.stored
   }
 
-  private func setModel(_ model: String) {
-    var updated = identity
-    updated.model = model
-    mainBreakerModel = updated.stored
+  private var modelBinding: Binding<String> {
+    Binding {
+      identity.model
+    } set: { model in
+      var updated = identity
+      updated.model = model
+      storedModel = updated.stored
+    }
   }
-}
-
-enum MainBreakerPickerSheet: String, Identifiable {
-  case manufacturer
-  case model
-  case ampere
-
-  var id: String { rawValue }
 }
 
 struct NewBoardStepIndicator: View {
@@ -6460,14 +6555,16 @@ struct BoardEditSheet: View {
           }
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill") {
-            CreationMenuInput(theme: theme, title: "Main breaker", symbol: "bolt.fill", value: board.mainBreakerType, options: MainBreakerCatalog.types, selection: mainBreakerTypeBinding)
-            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: mainBreakerIdentity.manufacturer, manufacturers: manufacturers) {
-              pickerSheet = .mainBreakerManufacturer
+            MainBreakerSelectionSlot(
+              theme: theme,
+              type: board.mainBreakerType,
+              storedModel: board.mainBreakerModel,
+              ampere: board.mainBreakerAmpere,
+              manufacturerNames: manufacturerNames,
+              manufacturers: manufacturers
+            ) {
+              pickerSheet = .mainBreaker
             }
-            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: mainBreakerIdentity.model) {
-              pickerSheet = .mainBreakerModel
-            }
-            CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: board.mainBreakerAmpere, options: AmpereRating.all, selection: ampereBinding)
           }
 
           if let onDelete {
@@ -6504,54 +6601,18 @@ struct BoardEditSheet: View {
           ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: board.manufacturer) {
             board.manufacturer = $0
           }
-        case .mainBreakerManufacturer:
-          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: mainBreakerIdentity.manufacturer) {
-            setMainBreakerManufacturer($0)
-          }
-        case .mainBreakerModel:
-          CreationOptionPickerSheet(
+        case .mainBreaker:
+          MainBreakerEditorSheet(
             theme: theme,
-            title: "\(board.mainBreakerType) model",
-            symbol: "tag.fill",
-            options: MainBreakerCatalog.models(for: board.mainBreakerType, manufacturer: mainBreakerIdentity.manufacturer),
-            selected: mainBreakerIdentity.model
-          ) {
-            setMainBreakerModel($0)
-          }
+            type: $board.mainBreakerType,
+            storedModel: $board.mainBreakerModel,
+            ampere: ampereBinding,
+            manufacturerNames: manufacturerNames,
+            manufacturers: manufacturers
+          )
         }
       }
     }
-  }
-
-  /// See [MainBreakerIdentity]: one stored field, two slots on the form.
-  private var mainBreakerIdentity: MainBreakerIdentity {
-    MainBreakerIdentity(stored: board.mainBreakerModel, manufacturers: manufacturers.map(\.name))
-  }
-
-  private var mainBreakerTypeBinding: Binding<String> {
-    Binding {
-      board.mainBreakerType
-    } set: { newValue in
-      var updated = mainBreakerIdentity
-      board.mainBreakerType = newValue
-      updated.model = ""
-      board.mainBreakerModel = updated.stored
-    }
-  }
-
-  private func setMainBreakerManufacturer(_ name: String) {
-    var updated = mainBreakerIdentity
-    if !MainBreakerCatalog.lists(model: updated.model, type: board.mainBreakerType, manufacturer: name) {
-      updated.model = ""
-    }
-    updated.manufacturer = name
-    board.mainBreakerModel = updated.stored
-  }
-
-  private func setMainBreakerModel(_ model: String) {
-    var updated = mainBreakerIdentity
-    updated.model = model
-    board.mainBreakerModel = updated.stored
   }
 
   private var ampereBinding: Binding<String> {
@@ -6643,8 +6704,7 @@ enum BoardEditPickerSheet: String, Identifiable {
   case boardType
   case subtype
   case manufacturer
-  case mainBreakerManufacturer
-  case mainBreakerModel
+  case mainBreaker
 
   var id: String { rawValue }
 }
@@ -13974,7 +14034,7 @@ enum EquipmentTypeCatalog {
 /// models behind each one. Both board forms read from here so the slots offer
 /// real parts instead of free text.
 enum MainBreakerCatalog {
-  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Isolator", "Fuse Switch"]
+  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Changeover Switch", "Switch Disconnector", "Isolator", "Fuse Switch"]
 
   /// Models the catalog lists for `type`, narrowed to one brand when the board
   /// names one. A brand with nothing catalogued under this type falls back to
@@ -13993,6 +14053,21 @@ enum MainBreakerCatalog {
     guard !trimmed.isEmpty else { return false }
     return entries(for: type, brand: manufacturer)
       .contains { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+  }
+
+  /// The real catalog device represented by a main-breaker slot, used to show
+  /// its bundled product photo rather than a generic text-only field.
+  static func part(for type: String, model: String, manufacturer: String) -> PanelComponent? {
+    let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedModel.isEmpty else { return nil }
+    let trimmedBrand = manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+    let wanted = ([type] + (aliases[type] ?? [])).map(words(in:)).filter { !$0.isEmpty }
+    return ComponentGroup.samples.flatMap(\.items).first { part in
+      let partWords = words(in: part.type)
+      guard wanted.isEmpty || wanted.contains(where: { $0.isSubset(of: partWords) }) else { return false }
+      guard part.model.localizedCaseInsensitiveCompare(trimmedModel) == .orderedSame else { return false }
+      return trimmedBrand.isEmpty || part.manufacturer.localizedCaseInsensitiveCompare(trimmedBrand) == .orderedSame
+    }
   }
 
   /// Every brand the part catalog uses, so a stored "ABB SACE Tmax XT1D" still

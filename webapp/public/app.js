@@ -2,6 +2,12 @@ import { renderMovementChart } from "/chart.js";
 
 // PanelVault Cloud frontend — vanilla JS, no build step.
 
+// index.html starts a short watchdog before loading this module. Reaching this
+// line proves that the browser parsed the bundle, so a stale startup warning
+// must never cover the working sign-in screen while the session request runs.
+if (window.panelVaultStartupTimer) clearTimeout(window.panelVaultStartupTimer);
+document.querySelector("#startup-error")?.classList.add("hidden");
+
 let state = null; // last /api/state payload
 let catalog = null; // lazy-loaded parts list
 let currentView = "dashboard";
@@ -373,6 +379,10 @@ function showAuth() {
   // Invite links look like /#join/COMPANY/INVITE. Land straight on the filled-in
   // join form: someone following an invite has already made both choices.
   const parts = location.hash.split("/");
+  if (parts[0] === "#reset" && parts[1]) {
+    openPasswordResetModal(parts[1]);
+    return;
+  }
   if (parts[0] === "#join" && parts.length >= 3) {
     switchAuthTab("signup");
     setSignupMode("join");
@@ -446,6 +456,54 @@ submitAuth("#form-signin", () => "/api/login");
 submitAuth("#form-signup", () => (signupMode === "join" ? "/api/join" : "/api/company"));
 
 setSignupMode("join");
+
+$("#forgot-password").addEventListener("click", () => {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, "Reset password"));
+    modal.append(el("p", "modal-sub", "Enter the company code and email attached to your account."));
+    const company = field("Company code", "K7M2XQ");
+    const email = field("Email", "you@company.com", "email");
+    const status = el("p", "hint");
+    modal.append(company.label, email.label, status);
+    modal.append(modalActions(close, "Send reset link", async () => {
+      try {
+        await api("/api/password-recovery/request", {
+          companyCode: company.input.value,
+          email: email.input.value,
+        });
+        status.textContent = "If that account exists, a reset link has been sent.";
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }));
+  });
+});
+
+function openPasswordResetModal(token) {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, "Choose a new password"));
+    const password = field("New password", "At least 8 characters", "password");
+    const confirmation = field("Confirm password", "Repeat the new password", "password");
+    const status = el("p", "hint");
+    modal.append(password.label, confirmation.label, status);
+    modal.append(modalActions(close, "Save password", async () => {
+      if (password.input.value !== confirmation.input.value) {
+        status.textContent = "The passwords do not match.";
+        return;
+      }
+      try {
+        await api("/api/password-recovery/reset", { token, password: password.input.value });
+        location.hash = "";
+        close();
+        const box = $("#auth-error");
+        box.textContent = "Password updated. Sign in with your new password.";
+        box.classList.remove("hidden");
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }));
+  });
+}
 
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", {});
@@ -545,6 +603,11 @@ async function boot() {
   // manifest loaded only on the authenticated path would be empty there.
   await loadCatalogImages();
   try {
+    const session = await api("/api/session");
+    if (!session.authenticated) {
+      showAuth();
+      return;
+    }
     await refresh();
     $("#auth").classList.add("hidden");
     $("#main").classList.remove("hidden");
@@ -1092,7 +1155,8 @@ function renderDeliveries() {
   const list = el("div", "list");
   view.append(list);
   state.deliveries.forEach((d) => {
-    const row = el("div", "row click");
+    const row = el("button", "row click interactive-row");
+    row.type = "button";
     row.append(chipIcon(d.source === "scan" ? "scan" : "note",
       d.source === "scan" ? "var(--primary)" : "var(--secondary)"));
     const main = el("div", "row-main");
@@ -1340,6 +1404,8 @@ function renderBoards() {
 
   const boardRow = (b, isMine) => {
     const row = el("div", "row click board-list-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
     row.append(chipIcon("board", isMine ? "var(--primary)" : "var(--secondary)"));
     const main = el("div", "row-main");
     const title = [b.number, b.name].filter(Boolean).join(" — ");
@@ -1378,6 +1444,12 @@ function renderBoards() {
     }
     if (rowActions.childElementCount) row.append(rowActions);
     row.addEventListener("click", () => openBoardDetail(b.id));
+    row.addEventListener("keydown", (event) => {
+      if (event.target === row && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        openBoardDetail(b.id);
+      }
+    });
     return row;
   };
 
@@ -1945,6 +2017,7 @@ async function openManufacturerOverview(name) {
   await ensureCatalog().catch(() => {});
   const boards = state.boards.filter((board) => boardUsesManufacturer(board, brand));
   const parts = (catalog || []).filter((part) => nameKey(part.manufacturer) === nameKey(brand));
+  const built = boards.filter((board) => nameKey(board.manufacturer) === nameKey(brand)).length;
   const completed = boards.filter((board) => board.status === "Completed").length;
   openModal((modal, close) => {
     modal.classList.add("wide", "board-drilldown-modal");
@@ -1954,10 +2027,11 @@ async function openManufacturerOverview(name) {
       `${parts.length} catalog part${parts.length === 1 ? "" : "s"}`,
       `${boards.length} board${boards.length === 1 ? "" : "s"}`,
     ].join(" · ")));
-    const metrics = el("div", "drilldown-metrics");
+    const metrics = el("div", "drilldown-metrics four");
     metrics.append(
       drilldownMetric("Catalog parts", parts.length),
-      drilldownMetric("Active boards", boards.length - completed, "var(--secondary)"),
+      drilldownMetric("Cabinets built", built, "var(--secondary)"),
+      drilldownMetric("On main breaker", boards.length - built, "var(--warning)"),
       drilldownMetric("Finished", completed, "var(--positive)"),
     );
     modal.append(metrics);
@@ -1966,9 +2040,26 @@ async function openManufacturerOverview(name) {
       modal.append(el("div", "section-label", "In the catalog"));
       const tags = el("div", "drilldown-tags");
       // A brand can carry sixty parts; the catalog view is where they all live.
-      parts.slice(0, 12).forEach((part) => tags.append(el("span", null, part.model)));
+      parts.slice(0, 12).forEach((part) => {
+        const tag = el("button", null, part.model);
+        tag.type = "button";
+        tag.addEventListener("click", () => {
+          close();
+          openCatalogPartModal(part);
+        });
+        tags.append(tag);
+      });
       if (parts.length > 12) tags.append(el("span", null, `+${parts.length - 12} more`));
       modal.append(tags);
+      const allParts = smallBtn(`See all ${parts.length} in Catalog`, "", null, () => {
+        close();
+        catalogCategory = null;
+        catalogQuery = brand;
+        switchView("catalog");
+      });
+      const actions = el("div", "page-form-actions");
+      actions.append(allParts);
+      modal.append(actions);
     }
 
     modal.append(el("div", "section-label", "Boards"));
@@ -2454,16 +2545,65 @@ async function createInvite(role) {
 
 function openModal(build) {
   const root = $("#modal-root");
+  const previousFocus = document.activeElement;
   const backdrop = el("div", "modal-backdrop");
   const modal = el("div", "modal");
-  const close = () => root.replaceChildren();
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+
+  const onKeydown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...modal.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    )].filter((node) => !node.hidden && node.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      modal.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  const close = () => {
+    document.removeEventListener("keydown", onKeydown);
+    root.replaceChildren();
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+  };
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) close();
   });
   build(modal, close);
+  const title = modal.querySelector("h1, h2, h3");
+  if (title) {
+    title.id ||= `modal-title-${crypto.randomUUID()}`;
+    modal.setAttribute("aria-labelledby", title.id);
+  } else {
+    modal.setAttribute("aria-label", "PanelVault dialog");
+  }
+  const closeButton = el("button", "modal-close");
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Close dialog");
+  closeButton.title = "Close";
+  closeButton.append(icon("x", 16));
+  closeButton.addEventListener("click", close);
+  modal.prepend(closeButton);
   backdrop.append(modal);
   root.replaceChildren(backdrop);
-  modal.querySelector("input")?.focus();
+  document.addEventListener("keydown", onKeydown);
+  const firstControl = modal.querySelector("[autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not(.modal-close):not([disabled])");
+  (firstControl || closeButton).focus();
 }
 
 function modalActions(close, submitLabel, onSubmit) {
@@ -2751,7 +2891,8 @@ async function openPartPicker() {
         .filter((p) => !q || `${p.manufacturer} ${p.model} ${p.type} ${p.rating || ""} ${p.poles || ""} ${p.curve || ""} ${p.serialNumber || ""}`.toLowerCase().includes(q))
         .slice(0, 40)
         .forEach((p) => {
-          const row = el("div", "row click");
+          const row = el("button", "row click interactive-row");
+          row.type = "button";
           row.append(partChip(p));
           const main = el("div", "row-main");
           main.append(el("div", "row-title", partTitle(p)));
@@ -3307,7 +3448,8 @@ function partPills(part) {
 }
 
 function catalogRow(part, stock) {
-  const row = tintByBrand(el("div", "row click brand-row"), part.manufacturer);
+  const row = tintByBrand(el("button", "row click brand-row interactive-row"), part.manufacturer);
+  row.type = "button";
   row.append(partChip(part));
   const main = el("div", "row-main");
   main.append(el("div", "row-title", `${part.manufacturer} ${part.model}`));
@@ -3867,7 +4009,7 @@ function schemeReviewCard(reading, context) {
 /** The device families a board can carry at its head. The same list the phone
  * app offers, so a board reads the same wherever it was created. "Main Breaker"
  * leads as the unspecified option. */
-const MAIN_BREAKER_TYPES = ["Main Breaker", "MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Isolator", "Fuse Switch"];
+const MAIN_BREAKER_TYPES = ["Main Breaker", "MCB", "RCBO", "MCCB", "ACB", "Changeover Switch", "Switch Disconnector", "Isolator", "Fuse Switch"];
 
 /** The same devices under both of the names a board gives them. The catalog
  * types the ABB OT and the Schneider Interpact as isolators and the Tmax D
@@ -4018,6 +4160,88 @@ function manufacturerPickerField(labelText, initial) {
   button.addEventListener("click", () => openManufacturerPicker(control.value, (picked) => control.set(picked)));
   control.set(initial);
   return control;
+}
+
+/** The catalog part represented by the values stored on a board draft. The web
+ * picker stores "manufacturer + model" together, while an OCR draft may carry
+ * only the printed model, so accept either spelling. */
+function selectedMainBreakerPart(type, storedModel) {
+  const modelKey = String(storedModel || "").trim().toLowerCase();
+  if (!modelKey) return null;
+  const wanted = [type, ...(MAIN_BREAKER_TYPE_ALIASES[type] || [])]
+    .map(typeWords).filter((set) => set.size);
+  return (catalog || []).find((part) => {
+    const words = typeWords(part.type);
+    if (wanted.length && !wanted.some((set) => [...set].every((word) => words.has(word)))) return false;
+    const fullName = [part.manufacturer, part.model].filter(Boolean).join(" ").trim().toLowerCase();
+    return fullName === modelKey || String(part.model || "").trim().toLowerCase() === modelKey;
+  }) || null;
+}
+
+/** One visual slot for the selected incomer. Clicking the slot opens the three
+ * underlying fields, keeping the board form compact while still allowing a
+ * custom device that is not in the catalog. */
+function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
+  const slot = el("button", "main-breaker-slot");
+  slot.type = "button";
+  slot.setAttribute("aria-label", "Edit selected main breaker");
+
+  const render = () => {
+    const type = typeControl.select.value;
+    const model = modelControl.input.value.trim();
+    const ampere = ampereControl.input.value.trim();
+    const part = selectedMainBreakerPart(type, model);
+    slot.replaceChildren();
+    tintByBrand(slot, part?.manufacturer || model.split(/\s+/)[0]);
+
+    const visual = el("span", "main-breaker-slot-visual");
+    const url = partPhotoURL(part);
+    if (url) {
+      const image = el("img");
+      image.src = url;
+      image.alt = `${part.manufacturer} ${part.model}`.trim();
+      image.addEventListener("error", () => visual.replaceChildren(icon("bolt", 26)));
+      visual.append(image);
+    } else {
+      visual.append(icon("bolt", 26));
+    }
+
+    const copy = el("span", "main-breaker-slot-copy");
+    copy.append(
+      el("span", "eyebrow", model ? "Selected main breaker" : "Main breaker slot"),
+      el("strong", null, model || "Choose a catalog breaker"),
+      el("span", "main-breaker-slot-spec", [type, ampere].filter(Boolean).join(" · ")),
+    );
+    const edit = el("span", "main-breaker-slot-edit");
+    edit.append(icon("sliders", 15), document.createTextNode(" Edit"));
+    slot.append(visual, copy, edit);
+  };
+
+  const openEditor = () => openModal((modal, close) => {
+    modal.classList.add("wide", "main-breaker-editor");
+    modal.append(
+      el("span", "eyebrow", "Board incomer"),
+      el("h3", null, "Select the actual main breaker"),
+      el("p", "modal-sub", "Choose its device type, catalog model and installed current. The slot updates when you finish."),
+    );
+    const grid = el("div", "page-form-grid main-breaker-editor-grid");
+    grid.append(typeControl.label, modelControl.label, ampereControl.label);
+    modal.append(grid);
+    const actions = el("div", "actions");
+    const done = el("button", "btn-primary", "Done");
+    done.type = "button";
+    done.addEventListener("click", () => { render(); close(); });
+    actions.append(done);
+    modal.append(actions);
+  });
+
+  slot.addEventListener("click", openEditor);
+  typeControl.select.addEventListener("change", render);
+  modelControl.input.addEventListener("input", render);
+  ampereControl.input.addEventListener("input", render);
+  ensureCatalog().then(render).catch(render);
+  render();
+  return slot;
 }
 
 function pageField(control) {
@@ -4171,6 +4395,8 @@ function renderBoardCreate() {
     mainBreakerAmpere.input.value = aiDraft.mainBreakerAmpere || "630A";
   }
 
+  const mainBreakerSlot = mainBreakerSelectionSlot(mainBreakerType, mainBreakerModel, mainBreakerAmpere);
+
   project.select.addEventListener("change", () => {
     const selectedProject = state.projects.find((item) => item.name === project.select.value);
     customer.input.value = selectedProject?.customer || "";
@@ -4190,7 +4416,7 @@ function renderBoardCreate() {
     section("Identity", "Name it and connect it to the right customer and project.", number, group, name, project, customer, company),
     section("Build specification", "These fields appear on the board record and in the app.", subtype, manufacturer, cabinets, buildFormat),
     section("Schedule & ownership", "The builder completes production. QA is a separate approval stage.", dateOut, dueDate, assign, qaAssign),
-    section("Main breaker", "Record the protection device at the head of the board.", mainBreakerType, mainBreakerModel, mainBreakerAmpere),
+    section("Main breaker", "The selected device is shown as one slot. Click it to change or edit.", mainBreakerSlot),
   );
   const error = el("div", "form-error hidden");
   const actions = el("div", "page-form-actions");

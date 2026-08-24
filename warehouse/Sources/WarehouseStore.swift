@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 
 /// Owns the movement log and part settings, persists them as JSON files in
 /// Application Support, and serves derived stock state to the views.
@@ -31,13 +32,26 @@ final class WarehouseStore: ObservableObject {
   }
 
   private let queue = DispatchQueue(label: "warehouse.persistence", qos: .utility)
+  private let networkQueue = DispatchQueue(label: "warehouse.network-path", qos: .utility)
+  private let pathMonitor = NWPathMonitor()
   private let cloud = WarehouseCloudClient()
   private var syncMetadata = WarehouseSyncMetadata()
+  private var retryTask: Task<Void, Never>?
+  private var retryAttempt = 0
 
   init() {
     account = WarehouseAccountKeychain.load()
     load()
     syncPhase = account == nil ? .signedOut : .idle
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      guard path.status == .satisfied else { return }
+      Task { @MainActor [weak self] in
+        self?.retryTask?.cancel()
+        self?.retryAttempt = 0
+        self?.triggerSync()
+      }
+    }
+    pathMonitor.start(queue: networkQueue)
     if account != nil { triggerSync() }
   }
 
@@ -290,6 +304,9 @@ final class WarehouseStore: ObservableObject {
   }
 
   func signOut() {
+    retryTask?.cancel()
+    retryTask = nil
+    retryAttempt = 0
     account = nil
     WarehouseAccountKeychain.save(nil)
     syncPhase = .signedOut
@@ -370,9 +387,29 @@ final class WarehouseStore: ObservableObject {
         }
         persistSyncMetadata()
       }
+      retryTask?.cancel()
+      retryTask = nil
+      retryAttempt = 0
       syncPhase = .idle
     } catch {
       syncPhase = .failed(error.localizedDescription)
+      scheduleRetry()
+    }
+  }
+
+  /// Failed work remains on disk. Retry slowly enough that a phone with no
+  /// signal cannot hammer Cloud, but cap the delay so reconnecting in the
+  /// workshop recovers without a manual tap. NWPathMonitor resets the delay as
+  /// soon as an available path returns.
+  private func scheduleRetry() {
+    guard account != nil else { return }
+    retryTask?.cancel()
+    let delay = min(300, 2 << min(retryAttempt, 7))
+    retryAttempt = min(retryAttempt + 1, 8)
+    retryTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+      guard !Task.isCancelled else { return }
+      await self?.sync()
     }
   }
 

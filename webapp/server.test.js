@@ -8,6 +8,24 @@ const test = require("node:test");
 
 const webapp = __dirname;
 
+test("changeover switches can be selected as the main breaker on web and iOS", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  const managerApp = fs.readFileSync(path.join(webapp, "..", "ios", "Runner", "SceneDelegate.swift"), "utf8");
+  assert.match(browserApp, /MAIN_BREAKER_TYPES\s*=\s*\[[^\]]*"Changeover Switch"/);
+  assert.match(managerApp, /MainBreakerCatalog[\s\S]*static let types\s*=\s*\[[^\]]*"Changeover Switch"/);
+});
+
+test("new and edited boards show one clickable main-breaker device slot", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  const managerApp = fs.readFileSync(path.join(webapp, "..", "ios", "Runner", "SceneDelegate.swift"), "utf8");
+  assert.match(browserApp, /function mainBreakerSelectionSlot\(/);
+  assert.match(browserApp, /section\("Main breaker"[\s\S]*mainBreakerSlot\)/);
+  assert.match(browserApp, /Select the actual main breaker/);
+  assert.match(managerApp, /struct MainBreakerSelectionSlot: View/);
+  assert.match(managerApp, /struct MainBreakerEditorSheet: View/);
+  assert.match(managerApp, /BoardEditPickerSheet[\s\S]*case mainBreaker/);
+});
+
 test("the website board manufacturer picker includes Tamhash and preserves new AI names", () => {
   const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
   assert.match(browserApp, /BOARD_MANUFACTURERS[\s\S]*"Tamhash"/);
@@ -492,6 +510,143 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(phoneProgress.body.boards[0].personalChecklistItems[0].title, "Phone QA");
   } finally {
     server.stop();
+  }
+});
+
+test("workspace changes merge different records, reject same-record conflicts, and deduplicate retries", async () => {
+  const server = await startServer();
+  try {
+    const registered = await json(server.baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Revision Panels", name: "Owner", password: "secret12" }),
+    });
+    const headers = { Authorization: `Bearer ${registered.body.token}` };
+    const first = await json(server.baseURL, "/api/projects", {
+      method: "POST", headers,
+      body: JSON.stringify({ name: "Tower A", customer: "Acme" }),
+    });
+    const second = await json(server.baseURL, "/api/projects", {
+      method: "POST", headers,
+      body: JSON.stringify({ name: "Tower B", customer: "Beta" }),
+    });
+    assert.equal(first.body.project.revision, 1);
+    assert.equal(second.body.project.revision, 1);
+
+    const changeA = {
+      changeID: "change-project-a-0001",
+      entityType: "project",
+      entityID: first.body.project.id,
+      operation: "upsert",
+      baseRevision: 1,
+      payload: { ...first.body.project, site: "Tel Aviv" },
+    };
+    const appliedA = await json(server.baseURL, "/api/sync/workspace-change", {
+      method: "POST", headers, body: JSON.stringify(changeA),
+    });
+    assert.equal(appliedA.response.status, 200);
+    assert.equal(appliedA.body.record.revision, 2);
+
+    // This started from the same bootstrap, but targets another record, so a
+    // global workspace version change must not block it.
+    const appliedB = await json(server.baseURL, "/api/sync/workspace-change", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        changeID: "change-project-b-0001",
+        entityType: "project",
+        entityID: second.body.project.id,
+        operation: "upsert",
+        baseRevision: 1,
+        payload: { ...second.body.project, site: "Haifa" },
+      }),
+    });
+    assert.equal(appliedB.response.status, 200);
+    assert.equal(appliedB.body.record.revision, 2);
+
+    const retried = await json(server.baseURL, "/api/sync/workspace-change", {
+      method: "POST", headers, body: JSON.stringify(changeA),
+    });
+    assert.equal(retried.response.status, 200);
+    assert.equal(retried.body.duplicate, true);
+    assert.equal(retried.body.record.revision, 2);
+
+    const conflicted = await json(server.baseURL, "/api/sync/workspace-change", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        ...changeA,
+        changeID: "change-project-a-stale",
+        payload: { ...first.body.project, site: "Jerusalem" },
+      }),
+    });
+    assert.equal(conflicted.response.status, 409);
+    assert.equal(conflicted.body.currentRecord.site, "Tel Aviv");
+    assert.equal(conflicted.body.currentRecord.revision, 2);
+
+    const stream = await json(server.baseURL, "/api/sync/workspace-changes?after=0", { headers });
+    assert.equal(stream.response.status, 200);
+    assert.ok(stream.body.changes.some((change) => change.changeID === changeA.changeID));
+    assert.ok(stream.body.changes.some((change) => change.changeID === "change-project-b-0001"));
+  } finally {
+    server.stop();
+  }
+});
+
+test("email password recovery is single-use and revokes existing sessions", async () => {
+  const messages = [];
+  const mailer = http.createServer((request, response) => {
+    let raw = "";
+    request.on("data", (chunk) => { raw += chunk; });
+    request.on("end", () => {
+      messages.push({ authorization: request.headers.authorization, body: JSON.parse(raw) });
+      response.writeHead(204);
+      response.end();
+    });
+  });
+  await new Promise((resolve) => mailer.listen(0, "127.0.0.1", resolve));
+  const mailerPort = mailer.address().port;
+  const server = await startServer({
+    PUBLIC_BASE_URL: "https://cloud.panel-vault.com",
+    PASSWORD_RESET_WEBHOOK_URL: `http://127.0.0.1:${mailerPort}/reset`,
+    PASSWORD_RESET_WEBHOOK_SECRET: "test-mail-secret",
+  });
+  try {
+    const registered = await json(server.baseURL, "/api/mobile/company", {
+      method: "POST",
+      body: JSON.stringify({
+        companyName: "Recovery Panels", name: "Owner", email: "owner@example.com", password: "secret12",
+      }),
+    });
+    const oldHeaders = { Authorization: `Bearer ${registered.body.token}` };
+    const requested = await json(server.baseURL, "/api/password-recovery/request", {
+      method: "POST",
+      body: JSON.stringify({ companyCode: registered.body.company.code, email: "owner@example.com" }),
+    });
+    assert.equal(requested.response.status, 200);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].authorization, "Bearer test-mail-secret");
+    const token = new URL(messages[0].body.resetURL).hash.split("/")[1];
+    assert.ok(token.length >= 32);
+
+    const reset = await json(server.baseURL, "/api/password-recovery/reset", {
+      method: "POST", body: JSON.stringify({ token, password: "new-secret-12" }),
+    });
+    assert.equal(reset.response.status, 200);
+    const reused = await json(server.baseURL, "/api/password-recovery/reset", {
+      method: "POST", body: JSON.stringify({ token, password: "third-secret-12" }),
+    });
+    assert.equal(reused.response.status, 400);
+
+    const oldSession = await json(server.baseURL, "/api/state", { headers: oldHeaders });
+    assert.equal(oldSession.response.status, 401);
+    const signedIn = await json(server.baseURL, "/api/mobile/login", {
+      method: "POST",
+      body: JSON.stringify({
+        companyCode: registered.body.company.code, name: "Owner", password: "new-secret-12",
+      }),
+    });
+    assert.equal(signedIn.response.status, 200);
+  } finally {
+    server.stop();
+    await new Promise((resolve) => mailer.close(resolve));
   }
 });
 

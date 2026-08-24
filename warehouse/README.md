@@ -56,7 +56,8 @@ the flow in Simulator using the keyboard button.
 
 ## Not built yet
 
-- Delivery batch metadata and scanned page/PDF upload
+- Scanned page/PDF upload (delivery metadata, OCR lines, movement links,
+  worker, device, and retry-safe Cloud synchronization are implemented)
 - Continuous network-path monitoring and exponential retry backoff
 - App Group data sharing with PanelVault on-device
 - Purchase orders and delivery reconciliation

@@ -47,8 +47,9 @@ Confirming also records the delivery itself — note number, supplier, page
 count, and every line the camera read, including the ones the worker chose not
 to receive. That batch uploads alongside the movements, and the Deliveries page
 in PanelVault Cloud shows the paperwork behind any receipt. The scanned page
-images stay on the phone until PanelVault Cloud has object storage; the website
-reports the page count so it is clear what it does not yet hold.
+images still stay on the phone until the delivery uploader is connected to the
+private object store already used by board PDFs and photos; the website reports
+the page count so it is clear what it does not yet hold.
 
 ## Creating a board from the AutoCAD scheme
 

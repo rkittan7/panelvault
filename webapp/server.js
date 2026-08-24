@@ -84,20 +84,37 @@ function normalizeCompanies() {
     company.barcodeMappings ||= [];
     company.deliveries ||= [];
     company.notifications ||= [];
+    company.auditLog = Array.isArray(company.auditLog) ? company.auditLog : [];
+    company.passwordResetTokens = Array.isArray(company.passwordResetTokens) ? company.passwordResetTokens : [];
     company.workspaceVersion = Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0;
+    company.workspaceChanges = Array.isArray(company.workspaceChanges) ? company.workspaceChanges : [];
+    company.nextWorkspaceChangeSequence = Math.max(
+      1,
+      Math.trunc(Number(company.nextWorkspaceChangeSequence)) || 1,
+      ...company.workspaceChanges.map((change) => (Number(change.sequence) || 0) + 1),
+    );
     // The role set gained Staff Manager and QA, and "worker" was renamed to
     // "staff". Migrate on load so existing sessions keep their access.
     for (const user of company.users || []) {
       if (user.role === "worker") user.role = "staff";
+      user.sessionVersion = Math.max(0, Math.trunc(Number(user.sessionVersion)) || 0);
     }
     for (const invite of company.invites || []) {
       if (invite.role === "worker") invite.role = "staff";
     }
     for (const board of company.boards) {
+      board.revision = Math.max(1, Math.trunc(Number(board.revision)) || 1);
+      board.updatedAt ||= board.createdAt || new Date(0).toISOString();
       board.cabinetChecklists = normalizedBoardChecklists(board);
       board.components = Array.isArray(board.components) ? board.components : [];
       board.componentDrafts = Array.isArray(board.componentDrafts) ? board.componentDrafts : [];
       board.attachments = Array.isArray(board.attachments) ? board.attachments : [];
+      for (const attachment of board.attachments) {
+        attachment.storageKey ||= attachment.objectPath;
+        attachment.objectPath ||= attachment.storageKey;
+        attachment.updatedAt ||= attachment.createdAt;
+        attachment.checksum ||= null;
+      }
       board.qaAssignedTo ||= null;
       board.qaStatus = ["pending", "ready", "changes_requested", "approved"].includes(board.qaStatus)
         ? board.qaStatus
@@ -106,6 +123,10 @@ function normalizeCompanies() {
       board.qaReadyVersion = Number.isInteger(board.qaReadyVersion) ? board.qaReadyVersion : 0;
       board.productionStage = normalizedProductionStage(board);
       board.status = boardStatus(board);
+    }
+    for (const project of company.projects) {
+      project.revision = Math.max(1, Math.trunc(Number(project.revision)) || 1);
+      project.updatedAt ||= project.createdAt || new Date(0).toISOString();
     }
   }
 }
@@ -205,7 +226,9 @@ function hashPassword(password, salt) {
 }
 
 function signSession(companyCode, userID, expires) {
-  const payload = `${companyCode}.${userID}.${expires}`;
+  const user = db.companies[companyCode]?.users.find((item) => item.id === userID);
+  const sessionVersion = Math.max(0, Math.trunc(Number(user?.sessionVersion)) || 0);
+  const payload = `${companyCode}.${userID}.${expires}.${sessionVersion}`;
   const mac = crypto.createHmac("sha256", SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}.${mac}`).toString("base64url");
 }
@@ -220,16 +243,23 @@ function createSession(companyCode, userID) {
 
 function verifySession(token) {
   try {
-    const [companyCode, userID, expires, mac] = Buffer.from(token, "base64url")
+    const parts = Buffer.from(token, "base64url")
       .toString()
       .split(".");
-    const payload = `${companyCode}.${userID}.${expires}`;
+    const legacy = parts.length === 4;
+    const [companyCode, userID, expires] = parts;
+    const sessionVersion = legacy ? 0 : Number(parts[3]);
+    const mac = legacy ? parts[3] : parts[4];
+    const payload = legacy
+      ? `${companyCode}.${userID}.${expires}`
+      : `${companyCode}.${userID}.${expires}.${sessionVersion}`;
     const expected = crypto.createHmac("sha256", SECRET).update(payload).digest("hex");
     if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
     if (Number(expires) < Date.now()) return null;
     const company = db.companies[companyCode];
     const user = company?.users.find((u) => u.id === userID && u.active);
     if (!user) return null;
+    if (sessionVersion !== (Math.max(0, Math.trunc(Number(user.sessionVersion)) || 0))) return null;
     return { company, user };
   } catch {
     return null;
@@ -337,6 +367,47 @@ const ATTACHMENT_MIME_TYPES = new Set([
 function bumpWorkspace(company) {
   company.workspaceVersion = (Number.isInteger(company.workspaceVersion) ? company.workspaceVersion : 0) + 1;
   return company.workspaceVersion;
+}
+
+function appendWorkspaceChange(company, entityType, entity, operation = "upsert", changeID = id("change")) {
+  company.workspaceChanges ||= [];
+  company.nextWorkspaceChangeSequence = Math.max(1, Math.trunc(Number(company.nextWorkspaceChangeSequence)) || 1);
+  const change = {
+    changeID,
+    sequence: company.nextWorkspaceChangeSequence++,
+    entityType,
+    entityID: entity.id,
+    operation,
+    revision: operation === "delete" ? entity.revision : Math.max(1, Math.trunc(Number(entity.revision)) || 1),
+    payload: operation === "delete" ? null : structuredClone(entity),
+    appliedAt: new Date().toISOString(),
+  };
+  company.workspaceChanges.push(change);
+  if (company.workspaceChanges.length > 5000) company.workspaceChanges.splice(0, company.workspaceChanges.length - 5000);
+  return change;
+}
+
+function touchWorkspaceEntity(company, entityType, entity, changeID) {
+  entity.revision = Math.max(0, Math.trunc(Number(entity.revision)) || 0) + 1;
+  entity.updatedAt = new Date().toISOString();
+  const change = appendWorkspaceChange(company, entityType, entity, "upsert", changeID);
+  bumpWorkspace(company);
+  return change;
+}
+
+function recordAudit(company, user, action, entityType, entityID, details = {}) {
+  company.auditLog ||= [];
+  company.auditLog.push({
+    id: id("audit"),
+    action,
+    entityType,
+    entityID: entityID || null,
+    actorID: user?.id || null,
+    actorName: user?.name || "System",
+    details,
+    createdAt: new Date().toISOString(),
+  });
+  if (company.auditLog.length > 10_000) company.auditLog.splice(0, company.auditLog.length - 10_000);
 }
 
 // Matches ChecklistTemplate in the iPhone app. The weights are the actual
@@ -551,6 +622,7 @@ function normalizeCloudProject(incoming, existing) {
     dueDate: cloudDate(incoming.dueDate, "A project", null),
     createdAt: existing?.createdAt || cloudDate(incoming.createdAt, "A project", new Date().toISOString()),
     updatedAt: new Date().toISOString(),
+    revision: Math.max(0, Math.trunc(Number(existing?.revision)) || 0) + 1,
   };
 }
 
@@ -624,6 +696,7 @@ function normalizeCloudBoard(incoming, existing, projects) {
     cabinetChecklists: Array.isArray(incoming.cabinetChecklists) ? incoming.cabinetChecklists : [],
     createdAt: existing?.createdAt || cloudDate(incoming.createdAt, "A board", new Date().toISOString()),
     updatedAt: new Date().toISOString(),
+    revision: Math.max(0, Math.trunc(Number(existing?.revision)) || 0) + 1,
   };
   board.cabinetChecklists = normalizedBoardChecklists(board);
   board.productionStage = normalizedProductionStage(board);
@@ -950,6 +1023,31 @@ function fail(res, status, message) {
   sendJSON(res, status, { error: message });
 }
 
+function applySecurityHeaders(req, res) {
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join("; "));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  const forwardedProtocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  if (process.env.NODE_ENV === "production" || forwardedProtocol === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+}
+
 function readBody(req) {
   // A megabyte is generous for the JSON every other route sends; the routes
   // that carry a base64 document raise it for themselves in the dispatcher.
@@ -1016,6 +1114,15 @@ function accountError(message, statusCode = 400) {
   return error;
 }
 
+function normalizedEmail(value, { required = false } = {}) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!email && !required) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    throw accountError("Enter a valid email address.");
+  }
+  return email;
+}
+
 /** What this user is allowed to do, in one place.
  *
  * The website's `/api/state` and the phones' sign-in both read from here, so
@@ -1041,7 +1148,7 @@ function mobileAuthBody(company, user) {
   };
 }
 
-async function createCompanyAccount({ companyName, name, password }) {
+async function createCompanyAccount({ companyName, name, email, password }) {
   if (!companyName?.trim() || !name?.trim() || (password || "").length < 6) {
     throw accountError("Company, your name, and a password of 6+ characters are required.");
   }
@@ -1054,9 +1161,11 @@ async function createCompanyAccount({ companyName, name, password }) {
   const owner = {
     id: id("user"),
     name: name.trim(),
+    email: normalizedEmail(email),
     role: "owner",
     salt,
     passHash: hashPassword(password, salt),
+    sessionVersion: 0,
     active: true,
     createdAt: new Date().toISOString(),
   };
@@ -1073,10 +1182,15 @@ async function createCompanyAccount({ companyName, name, password }) {
     projects: [],
     boards: [],
     workspaceVersion: 0,
+    workspaceChanges: [],
+    nextWorkspaceChangeSequence: 1,
     barcodeMappings: [],
     deliveries: [],
     notifications: [],
+    auditLog: [],
+    passwordResetTokens: [],
   };
+  recordAudit(company, owner, "account.company_created", "company", code, { companyName: company.name });
   db.companies[code] = company;
   await save();
   return { company, user: owner };
@@ -1102,7 +1216,7 @@ function inviteCodeTaken(code) {
   );
 }
 
-async function joinCompanyAccount({ companyCode, inviteCode, name, password }) {
+async function joinCompanyAccount({ companyCode, inviteCode, name, email, password }) {
   const code = (companyCode || "").trim().toUpperCase();
   // The website asks for the invite code on its own — one code to type instead
   // of two. A company code is still honoured when sent, so the iPhone apps and
@@ -1125,19 +1239,57 @@ async function joinCompanyAccount({ companyCode, inviteCode, name, password }) {
   if (company.users.some((item) => item.name.toLowerCase() === name.trim().toLowerCase())) {
     throw accountError("Someone with that name already exists — add a last initial.");
   }
+  const cleanEmail = normalizedEmail(email);
+  if (cleanEmail && company.users.some((item) => item.email === cleanEmail)) {
+    throw accountError("That email already belongs to a company account.");
+  }
   const salt = crypto.randomBytes(16).toString("hex");
   const user = {
     id: id("user"),
     name: name.trim(),
+    email: cleanEmail,
     role: invite.role,
     salt,
     passHash: hashPassword(password, salt),
+    sessionVersion: 0,
     active: true,
     createdAt: new Date().toISOString(),
   };
   company.users.push(user);
+  recordAudit(company, user, "account.joined", "user", user.id, { role: user.role });
   await save();
   return { company, user };
+}
+
+async function sendPasswordRecoveryEmail(email, resetURL) {
+  const webhookURL = String(process.env.PASSWORD_RESET_WEBHOOK_URL || "").trim();
+  if (!webhookURL) throw new Error("PASSWORD_RESET_WEBHOOK_URL is not configured.");
+  const parsed = new URL(webhookURL);
+  const loopback = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+    throw new Error("PASSWORD_RESET_WEBHOOK_URL must use HTTPS (HTTP is allowed only for loopback tests).");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(parsed, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${String(process.env.PASSWORD_RESET_WEBHOOK_SECRET || "")}`,
+      },
+      body: JSON.stringify({
+        to: email,
+        template: "panelvault-password-reset",
+        resetURL,
+        expiresInMinutes: 30,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`password email webhook returned ${response.status}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------- API
@@ -1222,6 +1374,94 @@ const routes = {
 
   "POST /api/logout": async (req, res) => {
     sendJSON(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
+  },
+
+  "POST /api/account-email": async (req, res, session) => {
+    const { company, user } = session;
+    const { email } = await readBody(req);
+    const cleanEmail = normalizedEmail(email, { required: true });
+    if (company.users.some((item) => item.id !== user.id && item.email === cleanEmail)) {
+      return fail(res, 409, "That email already belongs to a company account.");
+    }
+    user.email = cleanEmail;
+    recordAudit(company, user, "account.email_updated", "user", user.id, {});
+    await save();
+    sendJSON(res, 200, { ok: true, email: cleanEmail });
+  },
+
+  "POST /api/password-recovery/request": async (req, res) => {
+    const { companyCode, email } = await readBody(req);
+    const company = db.companies[String(companyCode || "").trim().toUpperCase()];
+    let cleanEmail;
+    try {
+      cleanEmail = normalizedEmail(email, { required: true });
+    } catch {
+      // The response is intentionally identical so this endpoint cannot be
+      // used to enumerate company accounts.
+      return sendJSON(res, 200, { ok: true });
+    }
+    const user = company?.users.find((item) => item.active && item.email === cleanEmail);
+    if (!company || !user) return sendJSON(res, 200, { ok: true });
+
+    const rawToken = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const reset = {
+      id: id("password-reset"),
+      tokenHash,
+      userID: user.id,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+      usedAt: null,
+    };
+    company.passwordResetTokens = (company.passwordResetTokens || [])
+      .filter((item) => !item.usedAt && new Date(item.expiresAt).getTime() > Date.now());
+    company.passwordResetTokens.push(reset);
+    await save();
+
+    const publicBaseURL = String(process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+    try {
+      if (!publicBaseURL.startsWith("https://")) throw new Error("PUBLIC_BASE_URL must use HTTPS.");
+      await sendPasswordRecoveryEmail(cleanEmail, `${publicBaseURL}/#reset/${rawToken}`);
+      recordAudit(company, user, "account.password_reset_requested", "user", user.id, {});
+      await save();
+    } catch (error) {
+      company.passwordResetTokens = company.passwordResetTokens.filter((item) => item.id !== reset.id);
+      await save();
+      console.error(`PanelVault password recovery email failed: ${error.message}`);
+    }
+    sendJSON(res, 200, { ok: true });
+  },
+
+  "POST /api/password-recovery/reset": async (req, res) => {
+    const { token, password } = await readBody(req);
+    if ((password || "").length < 8) return fail(res, 400, "Use a password of at least 8 characters.");
+    const tokenHash = crypto.createHash("sha256").update(String(token || "")).digest("hex");
+    let match = null;
+    for (const company of Object.values(db.companies)) {
+      const reset = (company.passwordResetTokens || []).find((item) => item.tokenHash === tokenHash);
+      if (reset) { match = { company, reset }; break; }
+    }
+    if (!match || match.reset.usedAt || new Date(match.reset.expiresAt).getTime() <= Date.now()) {
+      return fail(res, 400, "This password reset link is invalid or expired.");
+    }
+    const user = match.company.users.find((item) => item.id === match.reset.userID && item.active);
+    if (!user) return fail(res, 400, "This password reset link is invalid or expired.");
+    const salt = crypto.randomBytes(16).toString("hex");
+    user.salt = salt;
+    user.passHash = hashPassword(password, salt);
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    match.reset.usedAt = new Date().toISOString();
+    recordAudit(match.company, user, "account.password_reset_completed", "user", user.id, {});
+    await save();
+    sendJSON(res, 200, { ok: true });
+  },
+
+  // A fresh browser needs to discover that it is signed out without making a
+  // deliberately unauthorized request. Browsers report failed fetches as
+  // console errors, which used to make a healthy sign-in page indistinguish-
+  // able from a broken bundle in the release smoke test.
+  "GET /api/session": async (req, res) => {
+    sendJSON(res, 200, { authenticated: Boolean(sessionFrom(req)) });
   },
 
   /** Worker or manager joins through an invite link. */
@@ -1330,7 +1570,7 @@ const routes = {
     if (!Number.isFinite(qty) || qty === 0 || Math.abs(qty) > 100000) {
       return fail(res, 400, "Bad quantity.");
     }
-    appendMovement(company, {
+    const movement = appendMovement(company, {
       id: id("mv"),
       partID,
       kind,
@@ -1338,6 +1578,9 @@ const routes = {
       reference: (reference || "").trim(),
       date: new Date().toISOString(),
       userID: user.id,
+    });
+    recordAudit(company, user, "stock.movement_created", "movement", movement.id, {
+      partID, kind, quantity: movement.quantity,
     });
     await save();
     sendJSON(res, 200, { ok: true });
@@ -1396,7 +1639,13 @@ const routes = {
       acceptedIDs.push(movement.id);
     }
 
-    if (acceptedIDs.length) await save();
+    if (acceptedIDs.length) {
+      recordAudit(company, user, "stock.movements_synced", "movement_batch", acceptedIDs[0], {
+        count: acceptedIDs.length,
+        movementIDs: acceptedIDs.slice(0, 100),
+      });
+      await save();
+    }
     sendJSON(res, 200, {
       acceptedIDs,
       duplicateIDs,
@@ -1706,6 +1955,11 @@ const routes = {
       location: (location || "").trim(),
       unitCostMinor,
     };
+    recordAudit(company, user, "stock.settings_updated", "part", partID, {
+      minimumLevel: company.partSettings[partID].minimumLevel,
+      location: company.partSettings[partID].location,
+      priceChanged: unitCost !== undefined,
+    });
     await save();
     sendJSON(res, 200, { ok: true });
   },
@@ -1714,6 +1968,143 @@ const routes = {
 
   "GET /api/sync/workspace": async (req, res, session) => {
     sendJSON(res, 200, workspacePayload(session.company));
+  },
+
+  /** Incremental, idempotent workspace synchronization.
+   *
+   * Full workspace downloads remain the bootstrap contract. Every later edit
+   * can use this record-level stream, so two phones changing different boards
+   * never conflict and a retried changeID can never be applied twice.
+   */
+  "GET /api/sync/workspace-changes": async (req, res, session) => {
+    const { company } = session;
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const after = Math.max(0, Math.trunc(Number(url.searchParams.get("after"))) || 0);
+    const changes = (company.workspaceChanges || [])
+      .filter((change) => change.sequence > after)
+      .sort((left, right) => left.sequence - right.sequence)
+      .slice(0, 500);
+    const latestSequence = Math.max(0, (company.nextWorkspaceChangeSequence || 1) - 1);
+    sendJSON(res, 200, {
+      changes,
+      latestSequence,
+      hasMore: changes.length === 500 && changes.at(-1).sequence < latestSequence,
+    });
+  },
+
+  "POST /api/sync/workspace-change": async (req, res, session) => {
+    const { company, user } = session;
+    const incoming = await readBody(req);
+    const changeID = String(incoming.changeID || "").trim();
+    const entityType = incoming.entityType;
+    const entityID = cloudID(incoming.entityID, "A workspace change entity");
+    const operation = incoming.operation;
+    const baseRevision = Math.trunc(Number(incoming.baseRevision));
+    if (!/^[A-Za-z0-9_-]{8,140}$/.test(changeID)) return fail(res, 400, "A workspace change has an invalid changeID.");
+    if (!['project', 'board'].includes(entityType)) return fail(res, 400, "Choose project or board.");
+    if (!['upsert', 'delete'].includes(operation)) return fail(res, 400, "Choose upsert or delete.");
+    if (!Number.isInteger(baseRevision) || baseRevision < 0) return fail(res, 400, "baseRevision must be a non-negative integer.");
+
+    const duplicate = (company.workspaceChanges || []).find((change) => change.changeID === changeID);
+    if (duplicate) {
+      const collection = duplicate.entityType === "project" ? company.projects : company.boards;
+      return sendJSON(res, 200, {
+        duplicate: true,
+        change: duplicate,
+        record: collection.find((item) => item.id === duplicate.entityID) || null,
+        version: company.workspaceVersion,
+      });
+    }
+
+    const collectionName = entityType === "project" ? "projects" : "boards";
+    const collection = company[collectionName];
+    const index = collection.findIndex((item) => item.id === entityID);
+    const current = index >= 0 ? collection[index] : null;
+    const currentRevision = current ? Math.max(1, Math.trunc(Number(current.revision)) || 1) : 0;
+    if (currentRevision !== baseRevision) {
+      return sendJSON(res, 409, {
+        error: "This record changed elsewhere. Review the current server record before choosing which version to keep.",
+        currentRecord: current,
+      });
+    }
+
+    if (entityType === "project" && !isAdmin(user)) {
+      return fail(res, 403, "Only a manager can change projects.");
+    }
+    if (entityType === "board" && current && !canUpdateBoard(user, current)) {
+      return fail(res, 403, "Only the assigned builder or a manager can change this board.");
+    }
+    if (operation === "delete") {
+      if (!isAdmin(user)) return fail(res, 403, "Only a manager can delete workspace records.");
+      if (!current) return fail(res, 404, "The record was not found.");
+      if (entityType === "project" && company.boards.some((board) => board.project === current.name)) {
+        return fail(res, 409, "Move or delete this project's boards before deleting the project.");
+      }
+      collection.splice(index, 1);
+      const tombstone = { id: entityID, revision: currentRevision + 1 };
+      const change = appendWorkspaceChange(company, entityType, tombstone, "delete", changeID);
+      bumpWorkspace(company);
+      recordAudit(company, user, `workspace.${entityType}_deleted`, entityType, entityID, { changeID });
+      await save();
+      return sendJSON(res, 200, { duplicate: false, change, record: null, version: company.workspaceVersion });
+    }
+
+    const payload = incoming.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return fail(res, 400, "An upsert change needs an object payload.");
+    }
+    if (payload.id !== undefined && String(payload.id) !== entityID) {
+      return fail(res, 400, "The payload id must match entityID.");
+    }
+
+    let record;
+    if (entityType === "project") {
+      record = normalizeCloudProject({ ...payload, id: entityID }, current);
+      const duplicateName = company.projects.some((item) => item.id !== entityID
+        && item.name.toLowerCase() === record.name.toLowerCase());
+      if (duplicateName) return fail(res, 409, "A project with that name already exists.");
+    } else if (!isAdmin(user)) {
+      if (!current) return fail(res, 403, "Only a manager can create a board.");
+      const candidate = {
+        ...current,
+        cabinetChecklists: Array.isArray(payload.cabinetChecklists) ? payload.cabinetChecklists : current.cabinetChecklists,
+      };
+      const personalChecklistItems = Array.isArray(payload.personalChecklistItems)
+        ? payload.personalChecklistItems.slice(0, 100).map((item) => ({
+            id: cloudID(item.id, "A personal checklist item"),
+            title: String(item.title || "").trim().slice(0, 200),
+            isDone: item.isDone === true,
+          })).filter((item) => item.title)
+        : current.personalChecklistItems || [];
+      record = {
+        ...current,
+        cabinetChecklists: normalizedBoardChecklists(candidate),
+        personalChecklistItems,
+      };
+      if (payload.productionStage !== undefined) {
+        if (!MANAGER_STAGE_IDS.has(payload.productionStage)) return fail(res, 400, "Unknown board stage.");
+        record.productionStage = payload.productionStage;
+      }
+      reconcileBoardQA(company, record, {
+        checklistSignature: checklistSignature(current),
+        qaAssignedTo: current.qaAssignedTo,
+      });
+      record.revision = currentRevision + 1;
+      record.updatedAt = new Date().toISOString();
+    } else {
+      record = normalizeCloudBoard({ ...payload, id: entityID }, current, company.projects);
+    }
+
+    if (index < 0) collection.push(record);
+    else collection[index] = record;
+    const change = appendWorkspaceChange(company, entityType, record, "upsert", changeID);
+    bumpWorkspace(company);
+    recordAudit(company, user, `workspace.${entityType}_upserted`, entityType, entityID, {
+      changeID,
+      revision: record.revision,
+    });
+    await save();
+    sendJSON(res, 200, { duplicate: false, change, record, version: company.workspaceVersion });
   },
 
   "POST /api/sync/workspace": async (req, res, session) => {
@@ -1756,6 +2147,8 @@ const routes = {
     }
     company.projects = syncedProjects;
     company.boards = syncedBoards;
+    for (const project of syncedProjects) appendWorkspaceChange(company, "project", project);
+    for (const board of syncedBoards) appendWorkspaceChange(company, "board", board);
     bumpWorkspace(company);
     await save();
     sendJSON(res, 200, workspacePayload(company));
@@ -1807,9 +2200,8 @@ const routes = {
       update.board.cabinetChecklists = update.cabinetChecklists;
       update.board.personalChecklistItems = update.personalChecklistItems;
       reconcileBoardQA(company, update.board, update.previous);
-      update.board.updatedAt = new Date().toISOString();
+      touchWorkspaceEntity(company, "board", update.board);
     }
-    if (updates.length) bumpWorkspace(company);
     await save();
     sendJSON(res, 200, workspacePayload(company));
   },
@@ -1839,9 +2231,12 @@ const routes = {
       dueDate: parsedDueDate?.toISOString() || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      revision: 1,
     };
     company.projects.push(project);
+    appendWorkspaceChange(company, "project", project);
     bumpWorkspace(company);
+    recordAudit(company, user, "project.created", "project", project.id, { name: project.name });
     await save();
     sendJSON(res, 200, { project });
   },
@@ -1983,10 +2378,13 @@ const routes = {
       status: assignedTo ? "In Progress" : "Design",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      revision: 1,
     };
     company.boards.push(board);
     issueAvailableBoardStock(company, board, user);
+    appendWorkspaceChange(company, "board", board);
     bumpWorkspace(company);
+    recordAudit(company, user, "board.created", "board", board.id, { number: board.number, name: board.name });
     await save();
     sendJSON(res, 200, { board: { ...board, ...boardProgressPayload(board) } });
   },
@@ -2021,8 +2419,8 @@ const routes = {
     }
     if (qaAssignedTo !== undefined) board.qaAssignedTo = qaAssignedTo || null;
     reconcileBoardQA(company, board, previous);
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, "board.assignment_updated", "board", board.id, { assignedTo, qaAssignedTo });
     await save();
     const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
     sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
@@ -2049,8 +2447,8 @@ const routes = {
     else return fail(res, 400, "Checked must be true or false.");
     lists[index] = [...selected];
     board.cabinetChecklists = lists;
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, "board.checklist_updated", "board", board.id, { cabinetIndex: index, itemID, checked });
     await save();
     sendJSON(res, 200, { ok: true, ...boardProgressPayload(board) });
   },
@@ -2086,8 +2484,8 @@ const routes = {
       board.qaReadyAt = null;
     }
     board.status = boardStatus(board);
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, "board.stage_updated", "board", board.id, { stageID });
     await save();
     const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
     sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
@@ -2139,8 +2537,8 @@ const routes = {
     } else {
       return fail(res, 400, "Choose add, remove, or removeDraft.");
     }
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, "board.components_updated", "board", board.id, { action, componentID, draftID, partID });
     await save();
     sendJSON(res, 200, { ok: true, board: workspacePayload(company).boards.find((item) => item.id === board.id) });
   },
@@ -2175,15 +2573,18 @@ const routes = {
       name: String(fileName || "attachment").trim().slice(0, 140),
       mimeType,
       size: bytes.length,
+      checksum: crypto.createHash("sha256").update(bytes).digest("hex"),
+      storageKey: objectPath,
       objectPath,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       uploadedBy: user.id,
     };
     await storage.uploadAttachment(objectPath, bytes, mimeType);
     try {
       board.attachments = [...(board.attachments || []), attachment];
-      board.updatedAt = new Date().toISOString();
-      bumpWorkspace(company);
+      touchWorkspaceEntity(company, "board", board);
+      recordAudit(company, user, "board.attachment_uploaded", "board", board.id, { attachmentID, kind, mimeType, size: bytes.length });
       await save();
     } catch (error) {
       await storage.deleteAttachment(objectPath).catch(() => {});
@@ -2217,8 +2618,8 @@ const routes = {
     const attachment = (board.attachments || []).find((item) => item.id === attachmentID);
     if (!attachment) return fail(res, 404, "Attachment not found.");
     board.attachments = board.attachments.filter((item) => item.id !== attachmentID);
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, "board.attachment_deleted", "board", board.id, { attachmentID });
     await save();
     await storage.deleteAttachment(attachment.objectPath).catch((error) => {
       console.error(`PanelVault attachment cleanup failed: ${error.message}`);
@@ -2238,7 +2639,9 @@ const routes = {
     const board = company.boards.find((item) => item.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
     company.boards = company.boards.filter((item) => item.id !== boardID);
+    appendWorkspaceChange(company, "board", { id: boardID, revision: (board.revision || 1) + 1 }, "delete");
     bumpWorkspace(company);
+    recordAudit(company, user, "board.deleted", "board", boardID, { number: board.number, name: board.name });
     await save();
     for (const attachment of board.attachments || []) {
       await storage.deleteAttachment(attachment.objectPath).catch((error) => {
@@ -2277,8 +2680,8 @@ const routes = {
       board.productionStage = "finishing";
     }
     board.status = boardStatus(board);
-    board.updatedAt = new Date().toISOString();
-    bumpWorkspace(company);
+    touchWorkspaceEntity(company, "board", board);
+    recordAudit(company, user, `board.qa_${action}`, "board", board.id, { note: board.qaNote });
     await save();
     const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
     sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
@@ -2290,6 +2693,14 @@ const routes = {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 100);
     sendJSON(res, 200, { notifications });
+  },
+
+  "GET /api/audit": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only a manager can read the audit log.");
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = Math.min(500, Math.max(1, Math.trunc(Number(url.searchParams.get("limit"))) || 100));
+    sendJSON(res, 200, { entries: [...company.auditLog].reverse().slice(0, limit) });
   },
 
   // --- team (admin only) -------------------------------------------------
@@ -2317,6 +2728,7 @@ const routes = {
       createdAt: new Date().toISOString(),
     };
     company.invites.push(invite);
+    recordAudit(company, user, "account.invite_created", "invite", invite.code, { role: invite.role });
     await save();
     sendJSON(res, 200, { invite });
   },
@@ -2327,6 +2739,7 @@ const routes = {
     const { code } = await readBody(req);
     const invite = company.invites.find((i) => i.code === code);
     if (invite) invite.active = false;
+    recordAudit(company, user, "account.invite_revoked", "invite", String(code || ""), {});
     await save();
     sendJSON(res, 200, { ok: true });
   },
@@ -2343,6 +2756,10 @@ const routes = {
       if (!ROLES.includes(role) || role === "owner") return fail(res, 400, "Bad role.");
       member.role = role;
     }
+    recordAudit(company, user, "account.member_updated", "user", member.id, {
+      active: member.active,
+      role: member.role,
+    });
     await save();
     sendJSON(res, 200, { ok: true });
   },
@@ -2360,6 +2777,9 @@ const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme", "POST /api/board
 
 const OPEN_ROUTES = new Set([
   "GET /api/health",
+  "GET /api/session",
+  "POST /api/password-recovery/request",
+  "POST /api/password-recovery/reset",
   "POST /api/company",
   "POST /api/login",
   "POST /api/mobile/login",
@@ -2444,6 +2864,7 @@ function serveCatalogImage(req, res, urlPath) {
 // ---------------------------------------------------------------- server
 
 const server = http.createServer(async (req, res) => {
+  applySecurityHeaders(req, res);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const key = `${req.method} ${url.pathname}`;
 

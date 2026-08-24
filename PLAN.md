@@ -11,6 +11,25 @@ Build one connected PanelVault platform for electrical-board companies:
 - A scanned delivery note can update warehouse stock after a worker reviews
   and confirms the recognized items.
 
+## Pilot readiness update (24 August 2026)
+
+- The Cloud bundle is module-checked and fresh-loaded in Chromium in CI; the
+  sign-in screen must render with no console or runtime errors.
+- Projects and boards carry per-record revisions. The incremental workspace
+  change API deduplicates `changeID`, merges edits to different records, and
+  returns the current server record on a same-record `409`.
+- The legacy Manager client no longer retries a conflict by resending its stale
+  complete workspace after downloading a newer version.
+- Production security headers and persistent audit records cover account,
+  role, board, and stock administration.
+- Board attachments use private object storage and now record storage key,
+  MIME type, size, checksum, uploader, and timestamps.
+- The normalized Supabase target schema exists, but the compatibility JSON
+  document remains the live runtime store until a controlled backfill and
+  dual-write migration is completed.
+- The one-company release gates and external operations are tracked in
+  `PILOT_RUNBOOK.md`.
+
 ## Guiding principles
 
 - Stock changes are append-only movements, not directly edited totals.
@@ -146,9 +165,10 @@ The page images are the remaining gap. PanelVault Cloud currently persists one
 guarded JSON document — locally or in Supabase — and a delivery note is
 megabytes of JPEG. Putting them in that document would bloat every read and
 every save of the whole company state, and an ephemeral Render disk would lose
-them on the next deploy. Pages therefore stay on the phone until Phase 7
-provides object storage; the batch already carries the page count, so the
-website can say what it does not yet hold.
+them on the next deploy. Pages therefore stay on the phone until the delivery
+queue is connected to the private object store already used by board files; the
+batch already carries the page count, so the website can say what it does not
+yet hold.
 
 ### Upload ordering
 
@@ -177,7 +197,7 @@ rejected — and the stock it created. The remaining items below are still open.
 - Add low-stock and out-of-stock views.
 - ~~Show delivery batches with supplier, note number, worker, and sync time.~~ Done.
 - Open a delivery to inspect its confirmed lines and original scan — lines are
-  done; the original scan waits on object storage.
+  done; the original scan still needs the phone-to-object-store upload path.
 - Allow managers to add corrections with a required reason.
 - Keep destructive actions behind confirmation dialogs.
 - Add export for stock, movement history, and delivery records.

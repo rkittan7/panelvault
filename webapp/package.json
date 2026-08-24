@@ -8,6 +8,12 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test body.test.js server.test.js storage.test.js gemini.test.js scheme.test.js"
+    "check:web": "node --input-type=module --check < public/app.js",
+    "test:unit": "node --test body.test.js server.test.js storage.test.js gemini.test.js scheme.test.js",
+    "test:browser": "playwright test browser.smoke.test.js --reporter=line",
+    "test": "npm run check:web && npm run test:unit && npm run test:browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }
