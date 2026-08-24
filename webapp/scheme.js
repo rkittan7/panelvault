@@ -74,7 +74,7 @@ function targetBoardNumberFromFileName(value) {
 /** The exact shape the phone decodes. */
 const BOARD_SCHEME_SCHEMA = {
   type: "object",
-  required: ["board", "pageBoards", "components", "warnings"],
+  required: ["board", "pageBoards", "components", "doorDevices", "warnings"],
   properties: {
     board: {
       type: "object",
@@ -160,6 +160,34 @@ const BOARD_SCHEME_SCHEMA = {
         },
       },
     },
+    doorDevices: {
+      type: "array",
+      maxItems: 200,
+      description: "Exhaustive inventory of every physical operator or indicator position installed on the selected board's doors or control stations.",
+      items: {
+        type: "object",
+        required: [
+          "rawText", "manufacturer", "model", "type", "rating", "poles",
+          "curve", "sensitivity", "quantity", "reference", "sourcePage", "boardNumber",
+          "isMainBreaker",
+        ],
+        properties: {
+          rawText: { type: "string", description: "Visible label, function, color and callout identifying this door position; required even when brand/model are unreadable." },
+          manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
+          model: { type: "string", description: "Model/series exactly as printed; empty when unreadable." },
+          type: { type: "string", description: "Push Button, Selector Switch, Pilot Light, Emergency Stop, Door Switch, Buzzer, Main Handle or the visible operator type." },
+          rating: { type: "string", description: "Operator voltage or rating exactly as printed; empty when absent." },
+          poles: { type: "string", description: "Contact arrangement such as 1NO, 1NC or 1NO+1NC; empty when absent." },
+          curve: { type: "string", description: "Color, maintained/spring-return action or other stock-defining visible variant." },
+          sensitivity: { type: "string", description: "Empty unless explicitly applicable." },
+          quantity: { type: "integer", minimum: 1, maximum: 999, description: "Number of distinct installed door positions represented by this exact specification." },
+          reference: { type: "string", description: "Device tag, function label, or stable door/row/position description for every counted position." },
+          sourcePage: { type: "integer", minimum: 0, description: "One-based page containing the door layout or operator schedule." },
+          boardNumber: { type: "string", description: "Exact selected board number." },
+          isMainBreaker: { type: "boolean", description: "True only when this row is the board's main incoming device rather than its door handle accessory." },
+        },
+      },
+    },
     warnings: {
       type: "array",
       maxItems: 20,
@@ -185,13 +213,18 @@ function boardSchemePrompt(fileName) {
       rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
       curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "", isMainBreaker: false,
     }],
+    doorDevices: [{
+      rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
+      curve: "", sensitivity: "", quantity: 1, reference: "", sourcePage: 0, boardNumber: "", isMainBreaker: false,
+    }],
     warnings: [],
   };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
     "main incomer and every component actually used across the schematic and installed-equipment layout pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references or labelled installed positions in board-specific door/control-station layouts, not from the final-page parts list.",
-    "Perform a dedicated door-device pass for push buttons, selector/key switches, emergency stops, pilot/indicator lamps, buzzers, door/limit switches, contact blocks and lamp modules. A labelled door elevation is valid installation evidence; merge a repeated schematic tag instead of counting it twice.",
+    "Fill doorDevices using a dedicated exhaustive door-layout pass. Sweep every target-board door and control station left-to-right and top-to-bottom; return every switch, button and lamp position, including positions whose manufacturer or model is unreadable. Never stop after the first recognized operator. A labelled door elevation is valid installation evidence.",
+    "Use components for the remaining installed devices. If a door device also appears in the schematic, keep its physical tag in doorDevices so the server can merge it instead of counting it twice.",
     "Before returning JSON, perform one final document-wide aggregation: identical manufacturer + model + rating + poles + curve + sensitivity must be one component row with the total unique-device quantity across every target-board page. sourcePage is traceability only and must never create a separate row.",
     "Classify the board into the closest supported PanelVault type. Prefer an explicit title-block type; if none is printed, make a reviewable best guess from the board name, incoming/outgoing topology, loads and installed equipment, and return confidence plus concise evidence.",
     "First map every PDF page to its governing title-block board number in pageBoards. Count components only after that map is complete, and put that board number on every component line.",
@@ -520,7 +553,14 @@ function normalizeReading(reading, catalog, options = {}) {
   const pageBoardNumbers = new Map((Array.isArray(reading?.pageBoards) ? reading.pageBoards : [])
     .map((entry) => [Math.trunc(Number(entry?.page) || 0), text(entry?.boardNumber, 60)])
     .filter(([page, number]) => page > 0 && number));
-  const parts = (Array.isArray(reading?.components) ? [...reading.components] : []).filter((part) => {
+  const extractedParts = [
+    // Door devices get first claim on the safety cap. They are the easiest
+    // items for a long power schedule to crowd out, and the dedicated ledger
+    // exists specifically so every physical operator survives normalization.
+    ...(Array.isArray(reading?.doorDevices) ? reading.doorDevices : []),
+    ...(Array.isArray(reading?.components) ? reading.components : []),
+  ];
+  const parts = extractedParts.filter((part) => {
     if (!selectedBoardNumber) return true;
     const claimedBoard = text(part?.boardNumber, 60);
     const sourcePage = Math.trunc(Number(part?.sourcePage) || 0);

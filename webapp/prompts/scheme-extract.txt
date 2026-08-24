@@ -152,6 +152,25 @@ of counting it twice. Different colors, voltages, contact arrangements,
 operator functions or model suffixes are different specifications and must
 remain separate.
 
+Return that second-pass inventory in doorDevices, separate from the general
+components array. It is an exhaustive physical-position ledger, not a list of
+only the models you recognize. Sweep each target-board door/control station
+left-to-right and top-to-bottom, then compare the returned total with the
+visible positions before answering. Never stop after the first switch or lamp.
+Include every selector, rotary or key switch; push button; illuminated button;
+emergency stop; pilot/indicator lamp; buzzer; main handle; and door-position
+switch. Include color and function labels such as RUN, TRIP, HEALTHY, START,
+STOP, RESET, TEST, HAND/OFF/AUTO, LOCAL/REMOTE and ON/OFF in rawText. When no
+device tag is printed, reference must identify the physical position stably,
+for example `Door 2 row 1 position 4 - green RUN lamp`. When only the symbol,
+color or function is readable, still return the position with empty
+manufacturer/model fields so PanelVault keeps it in Needs review. Do not omit
+an installed position merely because it cannot match the catalog.
+
+Do not repeat doorDevices in components. If an operator also appears on a
+wiring/control page, use the same exact device tag in doorDevices; PanelVault
+will defensively merge a duplicate tag rather than count it twice.
+
 The last/final page may be a generic parts list, legend or template. Do not add
 an item merely because it appears there, and never use its summarized quantity
 as the count. A component must be instantiated on a schematic/control page or
