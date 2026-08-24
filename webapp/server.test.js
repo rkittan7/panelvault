@@ -30,6 +30,13 @@ test("the board Components tab separates catalog families and custom spacers", (
   assert.match(browserApp, /groupedBoardComponents\(board\.components\)/);
 });
 
+test("matching a board component includes an exact amperage selector", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /const ratingLabel = el\("label", null, "Ampere rating"\)/);
+  assert.match(browserApp, /Choose the exact amperage rating/);
+  assert.match(browserApp, /rating: rating\.value/);
+});
+
 async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {
@@ -338,11 +345,12 @@ test("projects and boards use the same creation contract as the app", async () =
     const component = await json(server.baseURL, "/api/board-components", {
       method: "POST", headers,
       body: JSON.stringify({
-        boardID: createdBoard.body.board.id, action: "add", partID: "abb-s201-1p", quantity: 12, reference: "QF1-QF12",
+        boardID: createdBoard.body.board.id, action: "add", partID: "abb-s201-1p", rating: "63A", quantity: 12, reference: "QF1-QF12",
       }),
     });
     assert.equal(component.response.status, 200);
     assert.equal(component.body.board.components.find((item) => item.reference === "QF1-QF12").quantity, 12);
+    assert.equal(component.body.board.components.find((item) => item.reference === "QF1-QF12").rating, "63A");
 
     const matchedDraft = await json(server.baseURL, "/api/board-components", {
       method: "POST", headers,
@@ -351,6 +359,7 @@ test("projects and boards use the same creation contract as the app", async () =
         action: "add",
         draftID: createdBoard.body.board.componentDrafts[0].id,
         partID: "siemens-5sy",
+        rating: "16A",
         quantity: 2,
         reference: "QF30-QF31",
       }),
@@ -359,7 +368,7 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(matchedDraft.body.board.componentDrafts.length, 0);
     const importedDraft = matchedDraft.body.board.components.find((item) => item.reference === "QF30-QF31");
     assert.equal(importedDraft.source, "ai");
-    assert.equal(importedDraft.rating, "10A");
+    assert.equal(importedDraft.rating, "16A");
     assert.equal(importedDraft.poles, "1P");
     assert.equal(importedDraft.curve, "C");
 

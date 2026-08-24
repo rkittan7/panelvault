@@ -270,10 +270,10 @@ function boardComponentFromCatalog(company, incoming, userID) {
     type: part.type,
     group: catalogGroup.group,
     groupName: catalogGroup.groupName,
-    // Catalog rows describe a product family (often "Set A"). An AI import
-    // describes the exact fitted variant, so keep its scanned current, poles,
-    // trip curve and RCD sensitivity on the board component.
-    rating: fromScan ? cleanSpecification(incoming?.rating, 60) || part.rating || "" : part.rating || "",
+    // Catalog rows describe a product family (often "Set A"). A scan or the
+    // manual matching flow can select the exact fitted current, so preserve it
+    // for exact stock matching instead of falling back to the family range.
+    rating: cleanSpecification(incoming?.rating, 60) || part.rating || "",
     poles: fromScan ? cleanSpecification(incoming?.poles, 30) || part.poles || "" : part.poles || "",
     curve: fromScan ? cleanSpecification(incoming?.curve, 30) || part.curve || "" : part.curve || "",
     sensitivity: fromScan ? cleanSpecification(incoming?.sensitivity, 30) : "",
@@ -2027,7 +2027,7 @@ const routes = {
 
   "POST /api/board-components": async (req, res, session) => {
     const { company, user } = session;
-    const { boardID, action, componentID, draftID, partID, quantity, reference } = await readBody(req);
+    const { boardID, action, componentID, draftID, partID, rating, quantity, reference } = await readBody(req);
     const board = company.boards.find((item) => item.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
     if (!canUpdateBoard(user, board)) {
@@ -2058,7 +2058,7 @@ const routes = {
         reference,
         rawText: draft?.rawText,
         sourcePage: draft?.sourcePage,
-        rating: draft?.rating,
+        rating: rating || draft?.rating,
         poles: draft?.poles,
         curve: draft?.curve,
         sensitivity: draft?.sensitivity,

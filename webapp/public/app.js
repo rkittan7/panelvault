@@ -1646,6 +1646,11 @@ async function openAddBoardComponentModal(board, draft = null) {
     const choiceLabel = el("label", null, "Component");
     const choice = el("select");
     choiceLabel.append(choice);
+    const ratingLabel = el("label", null, "Ampere rating");
+    const rating = el("select");
+    rating.disabled = true;
+    rating.append(new Option("Select a component first", ""));
+    ratingLabel.append(rating);
     const quantity = field("Quantity", "1", "number");
     quantity.input.min = "1";
     quantity.input.max = "9999";
@@ -1664,21 +1669,52 @@ async function openAddBoardComponentModal(board, draft = null) {
         const details = [part.type, part.rating, part.poles, part.curve].filter(Boolean).join(" · ");
         choice.append(new Option(`${part.manufacturer} ${part.model} — ${details}`, part.id));
       });
+      rating.replaceChildren(new Option("Select a component first", ""));
+      rating.disabled = true;
+    };
+    const drawRatings = () => {
+      const part = catalog.find((item) => item.id === choice.value);
+      rating.replaceChildren();
+      if (!part) {
+        rating.append(new Option("Select a component first", ""));
+        rating.disabled = true;
+        return;
+      }
+      const currentRated = ampereValue(part.rating) != null
+        || ampereValue(draft?.rating) != null
+        || /\b(?:MCB|MCCB|ACB|RCBO|RCD|RCCB|MPCB|contactor|isolator|switch|fuse)\b/i.test(String(part.type || ""));
+      if (!currentRated) {
+        rating.append(new Option("Not applicable", ""));
+        rating.disabled = true;
+        return;
+      }
+      const values = ampereOptionsFor(part);
+      rating.append(new Option("Select ampere rating", ""));
+      values.forEach((value) => rating.append(new Option(value, value)));
+      const requestedAmpere = ampereValue(draft?.rating);
+      const requested = values.find((value) => ampereValue(value) === requestedAmpere);
+      const catalogAmpere = ampereValue(part.rating);
+      const catalogRating = values.find((value) => ampereValue(value) === catalogAmpere);
+      rating.value = requested || (/^[\d.]+\s*A$/i.test(String(part.rating || "").trim()) ? catalogRating || "" : "");
+      rating.disabled = false;
     };
     drawChoices();
     search.input.addEventListener("input", drawChoices);
+    choice.addEventListener("change", drawRatings);
     const grid = el("div", "creation-grid");
-    grid.append(search.label, choiceLabel, quantity.label, reference.label);
+    grid.append(search.label, choiceLabel, ratingLabel, quantity.label, reference.label);
     modal.append(grid);
     const error = el("div", "form-error hidden");
     modal.append(error);
     modal.append(modalActions(close, "Add component", async () => {
       try {
         if (!choice.value) throw new Error("Choose a component first.");
+        if (!rating.disabled && !rating.value) throw new Error("Choose the exact amperage rating.");
         await api("/api/board-components", {
           boardID: board.id,
           action: "add",
           partID: choice.value,
+          rating: rating.value,
           quantity: quantity.input.value,
           reference: reference.input.value,
           draftID: draft?.id,
