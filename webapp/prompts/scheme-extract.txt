@@ -21,9 +21,14 @@ HOW TO READ THE DOCUMENT
    details. When the filename prompt supplies MANDATORY TARGET BOARD, include
    only pages mapped to that exact number. If it is absent, return no components
    and warn; never fall back to the previous, next, nearest or primary board.
-4. Walk only that target board's schematic/circuit pages in page order. Build a ledger of the
-   physical devices actually instantiated for this board, keyed by each unique
-   device tag/reference (for example QF1, QF2, KM1 or X1).
+4. Walk that target board's schematic/circuit pages and installed-equipment
+   layout pages in page order. This includes panel-door elevations, control
+   station layouts and operator-device schedules that show devices actually
+   fitted to this board. Build a ledger of the physical devices actually
+   instantiated for this board, keyed by each unique device tag/reference
+   (for example QF1, QF2, KM1, PB1, SS1, PL1 or X1). A labelled door-layout
+   position is installation evidence even when the device is not repeated on
+   the single-line diagram.
 5. Group those unique device references by exact manufacturer, model, type,
    rating, poles, curve, sensitivity and accessory. The quantity is the number
    of unique physical references in that group. Return that exact specification
@@ -35,7 +40,9 @@ HOW TO READ THE DOCUMENT
 6. Locate schedules, legends, bills of materials and final-page parts lists
    only to resolve the printed model/specification for a device already used
    on the schematic. They are reference material, not the quantity source.
-7. Use physical-layout pages for cabinet/section count and enclosure details.
+7. Use physical-layout pages for cabinet/section count, enclosure details and
+   installed door/operator devices. Do not treat an unplaced generic symbol
+   library or catalog illustration as installed equipment.
 
 Title blocks and drawing borders can repeat on every sheet. Ignore company
 contact details, grid references, sheet-count furniture, revision clouds and
@@ -109,7 +116,9 @@ instantiated on the schematic, not only breakers.
 - model: exact printed model/series. Preserve significant letters and digits;
   XT1C, XT1D and XT1N are different. Preserve iC60N casing when readable.
 - type: MCB, MCCB, ACB, RCBO, RCCB, contactor, relay, meter, terminal, VFD,
-  power supply, selector, lamp, accessory, or the printed type.
+  power supply, push button, selector switch, pilot light/indicator lamp,
+  emergency stop, door/limit switch, contact block, lamp module, accessory,
+  or the printed type.
 - rating: for every breaker, return its operating/trip current with the A unit.
   Treat C16 as rating 16A plus curve C. Treat 6A + N as rating 6A, not as one
   combined rating string. Never confuse 6kA/10kA breaking capacity with 6A/10A.
@@ -129,11 +138,24 @@ instantiated on the schematic, not only breakers.
 - isMainBreaker: true only on the single main incomer component. Every outgoing
   or downstream breaker must return false.
 
+Door and operator devices require an explicit second pass. Inspect every door
+elevation, control-station layout and operator schedule for push buttons,
+illuminated push buttons, selector/key switches, emergency stops, pilot or
+indicator lights/lamps, buzzers, door-position/limit switches, contact blocks,
+lamp/LED modules and legend plates. Allen-Bradley may be printed as AB, A-B,
+Allen Bradley or Rockwell; preserve the visible manufacturer and model/series,
+including 800F, 800T and 802T. Count each labelled installed position once.
+If the same tag also appears in a wiring/control schematic, merge it instead
+of counting it twice. Different colors, voltages, contact arrangements,
+operator functions or model suffixes are different specifications and must
+remain separate.
+
 The last/final page may be a generic parts list, legend or template. Do not add
 an item merely because it appears there, and never use its summarized quantity
-as the count. A component must be instantiated on a schematic page to be
-returned. Use a final-page row only to decode the model/specification of those
-already-counted device references.
+as the count. A component must be instantiated on a schematic/control page or
+on a board-specific installed-equipment layout such as a labelled door
+elevation. Use a final-page row only to decode the model/specification of those
+already-counted device references or installed layout positions.
 
 Read each device callout by spatial association. A nearby word can be a circuit
 or load name rather than a product model. For example, in `FIRL 6A + N`, FIRL

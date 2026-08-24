@@ -106,7 +106,7 @@ const BOARD_SCHEME_SCHEMA = {
             },
           },
         },
-        mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB or isolator." },
+        mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB, changeover switch or isolator." },
         mainBreakerModel: { type: "string", description: "Exact manufacturer/model printed for the main incomer." },
         mainBreakerAmpere: { type: "string", description: "Main incomer current rating including unit." },
         cabinetCount: { type: "integer", minimum: 0, maximum: 40, description: "Physical cabinets or sections; 0 when unstated." },
@@ -189,8 +189,9 @@ function boardSchemePrompt(fileName) {
   };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
-    "main incomer and every component actually used across the schematic pages. Include the main incomer itself once in components.",
-    "Count quantity from unique physical device references in the schematic, not from the final-page parts list.",
+    "main incomer and every component actually used across the schematic and installed-equipment layout pages. Include the main incomer itself once in components.",
+    "Count quantity from unique physical device references or labelled installed positions in board-specific door/control-station layouts, not from the final-page parts list.",
+    "Perform a dedicated door-device pass for push buttons, selector/key switches, emergency stops, pilot/indicator lamps, buzzers, door/limit switches, contact blocks and lamp modules. A labelled door elevation is valid installation evidence; merge a repeated schematic tag instead of counting it twice.",
     "Before returning JSON, perform one final document-wide aggregation: identical manufacturer + model + rating + poles + curve + sensitivity must be one component row with the total unique-device quantity across every target-board page. sourcePage is traceability only and must never create a separate row.",
     "Classify the board into the closest supported PanelVault type. Prefer an explicit title-block type; if none is printed, make a reviewable best guess from the board name, incoming/outgoing topology, loads and installed equipment, and return confidence plus concise evidence.",
     "First map every PDF page to its governing title-block board number in pageBoards. Count components only after that map is complete, and put that board number on every component line.",
@@ -214,6 +215,8 @@ function modelKeys(value) {
   const raw = partKey(value);
   if (!raw) return [];
   const keys = new Set([raw]);
+  const allenBradleyBulletin = raw.match(/^(800f|800t|802t)/);
+  if (allenBradleyBulletin) keys.add(allenBradleyBulletin[1]);
   let withoutRangeWords = raw;
   for (const prefix of ["acti9", "sace", "tmax", "sentron"]) {
     if (withoutRangeWords.startsWith(prefix)) withoutRangeWords = withoutRangeWords.slice(prefix.length);
@@ -271,6 +274,17 @@ function typeKey(value) {
   const key = partKey(value);
   if (key === "mcb" || key.includes("miniaturecircuitbreaker")) return "mcb";
   if (key === "mccb" || key.includes("mouldedcasecircuitbreaker") || key.includes("moldedcasecircuitbreaker")) return "mccb";
+  if (["button", "pushbutton", "pushbuttonoperator", "pushbuttonswitch", "momentarypushbutton"].includes(key)) return "pushbutton";
+  if (["lamp", "pilot", "pilotlight", "pilotlightoperator", "pilotlamp", "indicator", "indicatorlight", "indicatorlamp", "signallamp", "controllamp"].includes(key)) return "pilotlight";
+  if (["selectorswitch", "selector", "keyswitch", "keyselectorswitch"].includes(key)) return "selectorswitch";
+  if (["emergencystop", "emergencystopbutton", "emergencystopoperator", "estop", "estopbutton"].includes(key)) return "emergencystop";
+  if (["doorswitch", "doorpositionswitch", "limitswitch", "doorlimitswitch"].includes(key)) return "doorswitch";
+  return key;
+}
+
+function manufacturerKey(value) {
+  const key = partKey(value);
+  if (["ab", "allenbradley", "rockwell", "rockwellautomation"].includes(key)) return "allenbradley";
   return key;
 }
 
@@ -294,7 +308,7 @@ function sameModel(left, right) {
  */
 function matchCatalogPart(catalog, part) {
   const models = modelKeys(part.model || part.rawText);
-  const manufacturer = partKey(part.manufacturer);
+  const manufacturer = manufacturerKey(part.manufacturer);
   const requestedType = typeKey(part.type);
   const requestedPoles = poleKey(part.poles, part.rawText, part.rating);
   const requestedAmpere = ampereRating(part.rating, part.rawText);
@@ -315,7 +329,7 @@ function matchCatalogPart(catalog, part) {
       // A model alone is ambiguous across brands — several ranges share
       // numbers — so the brand must agree whenever the drawing names one.
       if (manufacturer) {
-        const candidateManufacturer = partKey(candidate.manufacturer);
+        const candidateManufacturer = manufacturerKey(candidate.manufacturer);
         if (candidateManufacturer !== manufacturer
           && !candidateManufacturer.includes(manufacturer)
           && !manufacturer.includes(candidateManufacturer)) return null;
