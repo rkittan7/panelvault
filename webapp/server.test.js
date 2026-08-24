@@ -18,8 +18,16 @@ test("the board Components tab keeps model variants together with highest ampere
   const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
   assert.match(browserApp, /function compareBoardComponents\(left, right\)/);
   assert.match(browserApp, /return rightAmpere - leftAmpere/);
-  assert.match(browserApp, /\[\.\.\.\(board\.components \|\| \[\]\)\]\.sort\(compareBoardComponents\)/);
+  assert.match(browserApp, /\[\.\.\.\(components \|\| \[\]\)\]\.sort\(compareBoardComponents\)/);
   assert.match(browserApp, /\[\.\.\.board\.componentDrafts\]\.sort\(compareBoardComponents\)/);
+});
+
+test("the board Components tab separates catalog families and custom spacers", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /function groupedBoardComponents\(components\)/);
+  assert.match(browserApp, /Spacers & Supports/);
+  assert.match(browserApp, /component-type-section/);
+  assert.match(browserApp, /groupedBoardComponents\(board\.components\)/);
 });
 
 async function startServer(extraEnv = {}) {
@@ -274,6 +282,7 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.components.length, 1);
     assert.equal(createdBoard.body.board.components[0].source, "ai");
     assert.equal(createdBoard.body.board.components[0].sourcePage, 7);
+    assert.equal(createdBoard.body.board.components[0].groupName, "MCBs");
     assert.equal(createdBoard.body.board.components[0].rating, "16A");
     assert.equal(createdBoard.body.board.components[0].poles, "2P");
     assert.equal(createdBoard.body.board.components[0].curve, "C");

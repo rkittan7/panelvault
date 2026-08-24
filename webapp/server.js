@@ -237,6 +237,15 @@ function partFor(company, partID) {
   return CATALOG_BY_ID.get(partID) || company.customParts.find((p) => p.id === partID) || null;
 }
 
+function partCatalogGroup(part) {
+  const source = part?.sourceID ? CATALOG_BY_ID.get(part.sourceID) : null;
+  const family = source || part;
+  return {
+    group: String(family?.group || "").trim(),
+    groupName: String(family?.groupName || "").trim(),
+  };
+}
+
 function boardComponentFromCatalog(company, incoming, userID) {
   const part = partFor(company, incoming?.partID);
   if (!part) {
@@ -252,12 +261,15 @@ function boardComponentFromCatalog(company, incoming, userID) {
   }
   const cleanSpecification = (value, max) => String(value || "").trim().slice(0, max);
   const fromScan = incoming?.source === "ai";
+  const catalogGroup = partCatalogGroup(part);
   return {
     id: id("component"),
     partID: part.id,
     manufacturer: part.manufacturer,
     model: part.model,
     type: part.type,
+    group: catalogGroup.group,
+    groupName: catalogGroup.groupName,
     // Catalog rows describe a product family (often "Set A"). An AI import
     // describes the exact fitted variant, so keep its scanned current, poles,
     // trip curve and RCD sensitivity on the board component.
@@ -1249,10 +1261,15 @@ const routes = {
         const board = {
           ...b,
           ...boardProgressPayload(b),
-          components: (b.components || []).map((component) => ({
-            ...component,
-            stock: boardComponentStockStatus(company, b, component),
-          })),
+          components: (b.components || []).map((component) => {
+            const catalogGroup = partCatalogGroup(partFor(company, component.partID));
+            return {
+              ...component,
+              group: component.group || catalogGroup.group,
+              groupName: component.groupName || catalogGroup.groupName,
+              stock: boardComponentStockStatus(company, b, component),
+            };
+          }),
           assignedName: company.users.find((u) => u.id === b.assignedTo)?.name || "",
           qaAssignedName: company.users.find((u) => u.id === b.qaAssignedTo)?.name || "",
         };

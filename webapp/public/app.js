@@ -1974,6 +1974,45 @@ function compareBoardComponents(left, right) {
   );
 }
 
+const COMPONENT_SECTION_ORDER = [
+  "MCBs", "RCBOs & RCDs", "MCCBs & ACBs", "Surge & Arc Protection",
+  "Switching & Isolation", "Fuses & Fusegear", "Contactors", "Drives & Soft Starters",
+  "Motor Protection & Starters", "Control Power & UPS", "Control & Automation", "Relays",
+  "Metering & Monitoring", "Power Factor & Quality", "Terminals & Wiring", "Busbars & Earthing",
+  "Door & Operator Devices", "Enclosure & Climate", "Spacers & Supports",
+];
+
+function componentSectionName(component) {
+  if (component?.groupName) return component.groupName;
+  const type = String(component?.type || component?.description || "").trim();
+  if (/spacer|standoff|stand[ -]?off|mounting support/i.test(type)) return "Spacers & Supports";
+  if (/\bMCCB\b|\bACB\b/i.test(type)) return "MCCBs & ACBs";
+  if (/\bMCB\b/i.test(type)) return "MCBs";
+  if (/RCBO|RCCB|\bRCD\b/i.test(type)) return "RCBOs & RCDs";
+  if (/contactor/i.test(type)) return "Contactors";
+  if (/terminal|ferrule|wire|cable|DIN rail|trunking/i.test(type)) return "Terminals & Wiring";
+  if (/busbar|copper bar|earth|neutral bar/i.test(type)) return "Busbars & Earthing";
+  if (/relay/i.test(type)) return "Relays";
+  if (/fuse/i.test(type)) return "Fuses & Fusegear";
+  if (/switch|isolator/i.test(type)) return "Switching & Isolation";
+  return type || "Other components";
+}
+
+function groupedBoardComponents(components) {
+  const groups = new Map();
+  [...(components || [])].sort(compareBoardComponents).forEach((component) => {
+    const section = componentSectionName(component);
+    if (!groups.has(section)) groups.set(section, []);
+    groups.get(section).push(component);
+  });
+  const order = (name) => {
+    const index = COMPONENT_SECTION_ORDER.indexOf(name);
+    return index < 0 ? COMPONENT_SECTION_ORDER.length : index;
+  };
+  return [...groups.entries()].sort(([left], [right]) =>
+    order(left) - order(right) || left.localeCompare(right, undefined, { sensitivity: "base", numeric: true }));
+}
+
 function renderBoardDetail() {
   const view = $("#view-board-detail");
   if (!view) return;
@@ -2071,31 +2110,40 @@ function renderBoardDetail() {
     componentHead.append(smallBtn("Issue available stock", "", "arrowOut", () => issueBoardStock(board)));
   }
   componentsPanel.append(componentHead);
-  const componentList = el("div", "board-component-list");
-  [...(board.components || [])].sort(compareBoardComponents).forEach((component) => {
-    const row = el("div", "board-component-row clickable");
-    row.tabIndex = 0;
-    row.setAttribute("role", "button");
-    row.setAttribute("aria-label", `View source details for ${component.manufacturer} ${component.model}`);
-    const identity = el("div", "board-component-identity");
-    identity.append(partChip({ ...component, id: component.partID }), el("div"));
-    const text = identity.lastElementChild;
-    text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
-      el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference,
-        component.source === "ai" ? "AI scan" : null,
-        component.sourcePage ? `Page ${component.sourcePage}` : null]
-        .filter(Boolean).join(" · ")));
-    row.append(identity, componentStockBadge(component.stock), el("strong", "component-quantity", `× ${component.quantity}`));
-    row.append(icon("chevron", 15));
-    row.addEventListener("click", () => openComponentSourceCard(board, component));
-    row.addEventListener("keydown", (event) => {
-      if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openComponentSourceCard(board, component); }
+  const componentList = el("div", "board-component-groups");
+  groupedBoardComponents(board.components).forEach(([sectionName, sectionComponents]) => {
+    const section = el("section", "component-type-section");
+    const sectionHead = el("div", "component-type-head");
+    const totalQuantity = sectionComponents.reduce((sum, component) => sum + (Number(component.quantity) || 0), 0);
+    sectionHead.append(el("h4", null, sectionName), el("span", null, `${sectionComponents.length} line${sectionComponents.length === 1 ? "" : "s"} · ${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`));
+    const rows = el("div", "board-component-list");
+    sectionComponents.forEach((component) => {
+      const row = el("div", "board-component-row clickable");
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", `View source details for ${component.manufacturer} ${component.model}`);
+      const identity = el("div", "board-component-identity");
+      identity.append(partChip({ ...component, id: component.partID }), el("div"));
+      const text = identity.lastElementChild;
+      text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
+        el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference,
+          component.source === "ai" ? "AI scan" : null,
+          component.sourcePage ? `Page ${component.sourcePage}` : null]
+          .filter(Boolean).join(" · ")));
+      row.append(identity, componentStockBadge(component.stock), el("strong", "component-quantity", `× ${component.quantity}`));
+      row.append(icon("chevron", 15));
+      row.addEventListener("click", () => openComponentSourceCard(board, component));
+      row.addEventListener("keydown", (event) => {
+        if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openComponentSourceCard(board, component); }
+      });
+      if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", (event) => {
+        event.stopPropagation();
+        removeBoardComponent(board, component.id);
+      }));
+      rows.append(row);
     });
-    if (canEditBoard) row.append(smallBtn("Remove", "ghost", "x", (event) => {
-      event.stopPropagation();
-      removeBoardComponent(board, component.id);
-    }));
-    componentList.append(row);
+    section.append(sectionHead, rows);
+    componentList.append(section);
   });
   if (!(board.components || []).length) {
     const legacy = (board.componentTypes || []).filter(Boolean);
