@@ -54,13 +54,56 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /כיתאו אליקטריק/);
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("warnings"));
   assert.ok(BOARD_SCHEME_SCHEMA.required.includes("pageBoards"));
+  assert.ok(BOARD_SCHEME_SCHEMA.required.includes("doorDevices"));
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /extract only pages mapped to this exact board number/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /MANDATORY TARGET BOARD: "3918.24-12-1"/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /not from the final-page parts list/i);
-  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /dedicated door-device pass/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /dedicated exhaustive door-layout pass/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /never stop after the first recognized operator/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /closest supported PanelVault type/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
+});
+
+test("the exhaustive door inventory keeps every switch and lamp without double-counting schematic tags", () => {
+  const result = normalizeReading({
+    board: { number: "3918.24-12-1" },
+    pageBoards: [{ page: 4, boardNumber: "3918.24-12-1" }],
+    components: [{
+      manufacturer: "A-B", model: "800F", type: "selector", quantity: 1,
+      reference: "SS1", rawText: "SS1 HAND-OFF-AUTO", sourcePage: 2,
+      boardNumber: "3918.24-12-1",
+    }],
+    doorDevices: [
+      {
+        manufacturer: "Allen Bradley", model: "800F-X", type: "Selector Switch", quantity: 1,
+        reference: "SS1", rawText: "SS1 HAND-OFF-AUTO", sourcePage: 4,
+        boardNumber: "3918.24-12-1",
+      },
+      {
+        manufacturer: "Allen Bradley", model: "800F-X", type: "Selector Switch", quantity: 1,
+        reference: "SS2", rawText: "SS2 LOCAL-REMOTE", sourcePage: 4,
+        boardNumber: "3918.24-12-1",
+      },
+      {
+        manufacturer: "Rockwell", model: "800F-P", type: "Indicator Lamp", quantity: 3,
+        reference: "PL1-PL3", rawText: "green RUN, red TRIP, amber HEALTHY", sourcePage: 4,
+        boardNumber: "3918.24-12-1",
+      },
+      {
+        manufacturer: "", model: "", type: "Pilot Light", quantity: 1,
+        reference: "Door 2 row 1 position 4 - white lamp", rawText: "white indicator lamp", sourcePage: 4,
+        boardNumber: "3918.24-12-1",
+      },
+    ],
+  }, CATALOG, { fileName: "3918.24-12-1 MDB.pdf" });
+
+  const selector = result.components.find((part) => part.partID === "allen-bradley-800f-selector");
+  const lamps = result.components.find((part) => part.partID === "allen-bradley-800f-pilot-light");
+  assert.equal(selector?.quantity, 2);
+  assert.equal(lamps?.quantity, 3);
+  assert.equal(result.unmatched.length, 1);
+  assert.match(result.unmatched[0].reference, /Door 2 row 1 position 4/i);
 });
 
 test("Allen-Bradley door operators match by bulletin, device type, and common brand aliases", () => {
