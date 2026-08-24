@@ -428,6 +428,74 @@ input:focus, select:focus, textarea:focus {
 }
 
 .content { flex: 1; width: 100%; min-width: 0; padding: 20px 24px 40px; }
+
+/* ---------------------------------------------------------- hover rail
+
+   The sidebar rests as a column of icons and opens when the pointer comes
+   near it. It grows *over* the page rather than pushing it: the negative
+   margin holds its footprint at the rail width, so nothing reflows on hover.
+
+   The icon column sits at the same x in both states — 12px of sidebar padding
+   plus 12px of button padding centres an 18px glyph in a 66px rail — so
+   opening the panel moves nothing. Only the words fade in beside the icons.
+
+   Below 720px the sidebar is already a horizontal bar and there is no pointer
+   to hover with, so none of this applies there. */
+@media (min-width: 721px) {
+  .shell { --rail: 66px; --rail-open: 244px; }
+
+  .sidebar {
+    flex: none;
+    width: var(--rail);
+    margin-right: 0;
+    z-index: 30;
+    /* Inherited by everything inside; the open state flips them once. */
+    --label-shown: 0;
+    --label-delay: 0s;
+    --label-events: none;
+    transition: width .24s cubic-bezier(.22, .61, .36, 1),
+                margin-right .24s cubic-bezier(.22, .61, .36, 1),
+                box-shadow .24s ease;
+  }
+  /* focus-within so tabbing into the nav opens it too. */
+  .sidebar:hover,
+  .sidebar:focus-within {
+    width: var(--rail-open);
+    margin-right: calc(var(--rail) - var(--rail-open));
+    box-shadow: 26px 0 54px -26px rgba(0, 0, 0, .3);
+    --label-shown: 1;
+    /* Held back a moment so the words land in a panel that is already open
+       instead of smearing across it. Reverting to 0s makes closing immediate. */
+    --label-delay: .07s;
+    --label-events: auto;
+  }
+
+  /* A reserved scrollbar gutter would eat 15px of a 66px rail and shift every
+     icon sideways the moment the nav overflowed. */
+  .nav { scrollbar-gutter: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* The brand mark, the nav glyphs and the avatar all sit on one vertical
+     line at 34px. The nav buttons carry a 1px transparent border, hence the
+     odd-looking insets: 12 sidebar + 1 border + 12 button + 9 = 34. */
+  .sidebar-brand { padding-left: 6px; }
+  .sidebar-brand .brand-mark { flex: none; }
+  .user-chip { padding-left: 7px; }
+
+  .sidebar-brand-text,
+  .sidebar .nav-section-label,
+  .sidebar .nav-label,
+  .sidebar .nav .count,
+  .sidebar .user-chip-text,
+  .sidebar .skin,
+  .sidebar #logout {
+    opacity: var(--label-shown);
+    transition: opacity .18s ease var(--label-delay);
+  }
+  /* Invisible controls must not still be clickable out in the rail. */
+  .sidebar .skin,
+  .sidebar #logout { pointer-events: var(--label-events); }
+}
 .view { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; max-width: 1440px; margin: 0 auto; }
 .view > *, .dash-grid > *, .dashboard-top-grid > *, .dashboard-work-grid > * { min-width: 0; max-width: 100%; }
 
@@ -1522,6 +1590,8 @@ img.brand-logo {
 .linked-parts div { color: var(--ink-2); font-size: 10.5px; }
 
 @media (prefers-reduced-motion: reduce) {
+  .sidebar, .sidebar-brand-text, .sidebar .nav-section-label, .sidebar .nav-label,
+  .sidebar .nav .count, .sidebar .user-chip-text, .sidebar .skin, .sidebar #logout,
   .board-save-state, .board-save-state.syncing, .board-save-state.syncing i,
   .board-stage, .board-stage-tracker.changing .board-stage, .check-row, .check-row.just-changed,
   .check-row.just-changed .check-mark, .check-row.just-changed.checked .check-mark {
