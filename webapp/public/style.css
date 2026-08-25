@@ -1014,13 +1014,17 @@ img.brand-logo {
    underneath once it arrived. A fixed box also puts the switch and the title in
    the same place on every part, whatever shape the photograph is. */
 .part-hero {
-  display: grid; place-items: center;
+  display: flex; align-items: center; justify-content: center;
   height: 268px;
   padding: 14px;
   margin-bottom: 2px;
   overflow: hidden;
 }
-.part-hero img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
+/* Capped in pixels, not in per cent: a percentage resolves against the box's
+   own height, which is not definite while the picture is still loading, and a
+   picture capped at nought is a picture nobody sees. 240 is the 268 box less
+   its padding. */
+.part-hero img { max-width: 100%; max-height: 240px; object-fit: contain; }
 
 .part-title-row { display: flex; align-items: center; gap: 14px; }
 .type-tile {
