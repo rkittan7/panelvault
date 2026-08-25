@@ -42,6 +42,12 @@ let maxShadowStep: Double = 13
 let maxShadowChroma: Double = 30
 /// Alpha below this, on a pixel the flood reached, is haze rather than edge.
 let hazeFloor: Double = 90
+/// How sharp a step the flood may cross. Paper is flat, so its own noise sits
+/// under this; the outline of a product is a step above it even when the
+/// product is white and the paper is white. Without this the flood walks
+/// straight into a white breaker body and deletes it, which brightness alone
+/// can never prevent.
+let edgeLimit: Double = 7
 
 struct Bitmap {
     var width: Int
@@ -96,13 +102,43 @@ func cutOut(_ bitmap: inout Bitmap) {
     var queue: [Int] = []
     queue.reserveCapacity(width * height / 4)
 
+    // Luminance smoothed over 3x3 before the steps are measured, so a JPEG's
+    // speckle does not read as an edge and stop the flood in open paper.
+    var smooth = [Double](repeating: 0, count: width * height)
+    for y in 0..<height {
+        for x in 0..<width {
+            var total = 0.0
+            var count = 0.0
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let nx = x + dx, ny = y + dy
+                    guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                    total += bitmap.luminance(at: (ny * width + nx) * 4)
+                    count += 1
+                }
+            }
+            smooth[y * width + x] = total / count
+        }
+    }
+
+    /// The sharpest step between this pixel and its neighbours.
+    func edge(_ x: Int, _ y: Int) -> Double {
+        let here = smooth[y * width + x]
+        var sharpest = 0.0
+        if x > 0 { sharpest = max(sharpest, abs(here - smooth[y * width + x - 1])) }
+        if x < width - 1 { sharpest = max(sharpest, abs(here - smooth[y * width + x + 1])) }
+        if y > 0 { sharpest = max(sharpest, abs(here - smooth[(y - 1) * width + x])) }
+        if y < height - 1 { sharpest = max(sharpest, abs(here - smooth[(y + 1) * width + x])) }
+        return sharpest
+    }
+
     func isBackdrop(_ index: Int) -> Bool {
         bitmap.luminance(at: index) >= softWhite && bitmap.chroma(at: index) <= maxChroma
     }
 
     func seed(_ x: Int, _ y: Int) {
         let cell = y * width + x
-        guard !reached[cell], isBackdrop(cell * 4) else { return }
+        guard !reached[cell], isBackdrop(cell * 4), edge(x, y) <= edgeLimit else { return }
         reached[cell] = true
         queue.append(cell)
     }
@@ -219,6 +255,83 @@ func dropIslands(_ bitmap: inout Bitmap, share: Double) -> Int {
     return sizes.filter { $0 < floor }.count
 }
 
+/// How solid the cut-out is: the share of what is left that belongs to its
+/// biggest connected piece. A device whose body was flooded away leaves only
+/// its printing, which reads as many small pieces and a low share.
+func solidity(_ bitmap: Bitmap) -> Double {
+    let width = bitmap.width, height = bitmap.height
+    var label = [Int](repeating: -1, count: width * height)
+    var sizes: [Int] = []
+    var queue: [Int] = []
+    var ink = 0
+    for start in 0..<(width * height) where bitmap.pixels[start * 4 + 3] > 128 {
+        ink += 1
+        guard label[start] == -1 else { continue }
+        let id = sizes.count
+        var size = 0
+        label[start] = id
+        queue.removeAll(keepingCapacity: true)
+        queue.append(start)
+        var head = 0
+        while head < queue.count {
+            let cell = queue[head]; head += 1
+            size += 1
+            let x = cell % width, y = cell / width
+            func visit(_ nx: Int, _ ny: Int) {
+                let next = ny * width + nx
+                guard label[next] == -1, bitmap.pixels[next * 4 + 3] > 128 else { return }
+                label[next] = id
+                queue.append(next)
+            }
+            if x > 0 { visit(x - 1, y) }
+            if x < width - 1 { visit(x + 1, y) }
+            if y > 0 { visit(x, y - 1) }
+            if y < height - 1 { visit(x, y + 1) }
+        }
+        sizes.append(size)
+    }
+    guard ink > 0, let biggest = sizes.max() else { return 0 }
+    return Double(biggest) / Double(ink)
+}
+
+/// Put back the body of a part the flood ate.
+///
+/// A white breaker photographed on white paper has a body at the same level as
+/// the backdrop, so no threshold can tell them apart and the flood walks in
+/// through the anti-aliased rim and hollows it out, leaving the printing
+/// floating in mid-air. These devices are rectangles, so what belongs to the
+/// part is what has printing to its left and right and above and below: every
+/// such pixel is restored from the original photograph.
+func restoreBody(_ bitmap: inout Bitmap, original: [UInt8]) {
+    let width = bitmap.width, height = bitmap.height
+    var betweenRows = [Bool](repeating: false, count: width * height)
+    var betweenColumns = [Bool](repeating: false, count: width * height)
+
+    for y in 0..<height {
+        var first = -1, last = -1
+        for x in 0..<width where bitmap.pixels[bitmap[x, y] + 3] > 128 {
+            if first < 0 { first = x }
+            last = x
+        }
+        if first >= 0 { for x in first...last { betweenRows[y * width + x] = true } }
+    }
+    for x in 0..<width {
+        var first = -1, last = -1
+        for y in 0..<height where bitmap.pixels[bitmap[x, y] + 3] > 128 {
+            if first < 0 { first = y }
+            last = y
+        }
+        if first >= 0 { for y in first...last { betweenColumns[y * width + x] = true } }
+    }
+
+    for cell in 0..<(width * height) where betweenRows[cell] && betweenColumns[cell] {
+        let index = cell * 4
+        guard bitmap.pixels[index + 3] <= 128 else { continue }
+        for channel in 0..<4 { bitmap.pixels[index + channel] = original[index + channel] }
+        bitmap.pixels[index + 3] = 255
+    }
+}
+
 /// The box around everything still visible, with a small margin so a part does
 /// not sit hard against the edge of its own picture.
 func contentBox(_ bitmap: Bitmap) -> CGRect {
@@ -289,6 +402,8 @@ if let value = number("--soft") { softWhite = value; thresholdsGiven = true }
 if let value = number("--islands") { islandShare = value }
 var wantsProbe = false
 if let at = arguments.firstIndex(of: "--probe") { wantsProbe = true; arguments.remove(at: at) }
+var wantsPlain = false
+if let at = arguments.firstIndex(of: "--plain") { wantsPlain = true; arguments.remove(at: at) }
 guard arguments.count == 2 else {
     FileHandle.standardError.write("usage: cutout <in> <out.png> [--max 1400]\n".data(using: .utf8)!)
     exit(2)
@@ -334,14 +449,35 @@ if !thresholdsGiven {
     border.sort()
     let backdrop = border[max(0, border.count / 20)]
     hardWhite = min(253, max(236, backdrop - 2))
-    softWhite = hardWhite - 14
+    // A narrow fade band, not a wide one. The band is where a pixel is treated
+    // as part backdrop, and a white breaker body photographed on white paper
+    // sits only a few levels under the paper: a wide band swallows the body at
+    // a third of its alpha, which is how a part came out as floating printing
+    // with nothing behind it. Five levels is enough to feather the rim.
+    softWhite = hardWhite - 5
     print(String(format: "  backdrop %.0f -> hard %.0f soft %.0f", backdrop, hardWhite, softWhite))
 }
 if false {
     FileHandle.standardError.write("cannot read \(arguments[0])\n".data(using: .utf8)!)
     exit(1)
 }
+let original = bitmap.pixels
 cutOut(&bitmap)
+var note = ""
+// A cut that shreds the part is worse than no cut at all. First it is put back
+// together; if that still leaves the part in pieces, the photograph goes out as
+// it was taken. A white plate behind a whole breaker beats a clean cut-out of
+// half of one.
+if wantsPlain {
+    // Asked for as-photographed: some products are the same white as the paper
+    // they were shot on, and a whole breaker on a white plate beats a clean
+    // cut-out of half of one.
+    bitmap.pixels = original
+    note = " left uncut as asked"
+} else if solidity(bitmap) < 0.85 {
+    restoreBody(&bitmap, original: original)
+    note = String(format: " body restored, solidity %.0f%%", solidity(bitmap) * 100)
+}
 let islands = islandShare > 0 ? dropIslands(&bitmap, share: islandShare) : 0
 let box = contentBox(bitmap)
 guard write(bitmap, crop: box, maxSide: maxSide, to: arguments[1]) else {
@@ -350,4 +486,4 @@ guard write(bitmap, crop: box, maxSide: maxSide, to: arguments[1]) else {
 }
 let cut = Int(box.width) < bitmap.width || Int(box.height) < bitmap.height
 print("\(arguments[0]) -> \(arguments[1]) \(Int(box.width))x\(Int(box.height))"
-      + (cut ? " cropped" : "") + (islands > 0 ? " \(islands) island(s) dropped" : ""))
+      + (cut ? " cropped" : "") + (islands > 0 ? " \(islands) island(s) dropped" : "") + note)
