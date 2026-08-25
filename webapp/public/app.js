@@ -231,15 +231,59 @@ function imageURL(file) {
   return `/catalog-images/${path}${version ? `?v=${encodeURIComponent(version)}` : ""}`;
 }
 
-function partPhotoURL(part, pole) {
+function partPhotoURL(part, pole, klass) {
   const id = part && (part.sourceID || part.id);
-  if (pole) {
-    // A part photographed per pole keeps one picture per pole under its own id
-    // with the pole appended; anything else falls back to the part's picture.
-    const forPole = imageURL(catalogImages.components[`${id}-${String(pole).toLowerCase()}`]);
-    if (forPole) return forPole;
+  // Most specific first: a picture of this class in this pole count, then of
+  // the pole, then of the class, then the part's own.
+  const pole_ = pole ? String(pole).toLowerCase() : "";
+  const class_ = klass ? String(klass).toLowerCase() : "";
+  const tries = [];
+  if (class_ && pole_) tries.push(`${id}-${class_}-${pole_}`);
+  if (pole_) tries.push(`${id}-${pole_}`);
+  if (class_) tries.push(`${id}-${class_}`);
+  tries.push(id);
+  for (const key of tries) {
+    const url = imageURL(catalogImages.components[key]);
+    if (url) return url;
   }
-  return imageURL(catalogImages.components[id]);
+  return null;
+}
+
+/** The breaking-capacity classes a part is sold in, with the kA each one
+ * stands for. An MCCB's class letter is not a trip curve — it sets how much
+ * fault current the breaker interrupts, so an XT1 N and an XT1 H are the same
+ * breaker at 36kA and 70kA. Read from the description, which is where the
+ * catalog states them. Kept in step with PanelComponent.classOptions. */
+function classesOffered(part) {
+  const sentence = String((part && part.about) || "").match(/Classes[^.]*\./);
+  if (!sentence) return [];
+  const words = sentence[0].slice("Classes".length).split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const isClassLetter = (word) => /^[A-Z]$/.test(word);
+
+  const paired = [];
+  const seen = new Set();
+  words.forEach((word, index) => {
+    if (!isClassLetter(word) || seen.has(word)) return;
+    const rating = Number(words[index + 1]);
+    if (!Number.isInteger(rating)) return;
+    seen.add(word);
+    paired.push({ letter: word, interrupting: rating });
+  });
+  if (paired.length > 1) return paired;
+
+  const letters = [];
+  seen.clear();
+  words.forEach((word) => {
+    if (!isClassLetter(word) || seen.has(word)) return;
+    seen.add(word);
+    letters.push({ letter: word, interrupting: null });
+  });
+  return letters.length > 1 ? letters : [];
+}
+
+/** "N — 36kA at 415V", or the letter alone where no rating is stated. */
+function classLabel(option) {
+  return option.interrupting ? `${option.letter} — ${option.interrupting}kA at 415V` : `Class ${option.letter}`;
 }
 
 /** The pole counts a part is sold in, read off the row it already carries:
@@ -3652,43 +3696,62 @@ function openCatalogPartModal(part) {
     modal.classList.add("part-sheet");
 
     const poles = polesOffered(part);
+    const classes = classesOffered(part);
     let pole = poles[0] || null;
-    const url = partPhotoURL(part, pole);
+    let klass = classes.length ? classes[0].letter : null;
+    const url = partPhotoURL(part, pole, klass);
+    let img = null;
     if (url) {
       const figure = el("div", "part-hero");
-      const img = el("img");
+      img = el("img");
       img.src = url;
       img.alt = `${part.manufacturer} ${part.model}`;
       img.addEventListener("error", () => figure.remove());
       figure.append(img);
       modal.append(figure);
+    }
 
-      if (poles.length > 1) {
-        // One part, one picture per pole - the same switch the board detail
-        // uses for its own tabs, so it reads as the same control.
-        const tabs = el("div", "board-detail-tabs pole-tabs");
-        tabs.setAttribute("role", "tablist");
-        tabs.setAttribute("aria-label", "Pole count");
-        const draw = () => {
-          tabs.replaceChildren();
-          poles.forEach((option) => {
-            const button = el("button", option === pole ? "active" : "", option);
-            button.type = "button";
-            button.setAttribute("role", "tab");
-            button.setAttribute("aria-selected", String(option === pole));
-            button.addEventListener("click", () => {
-              pole = option;
-              img.src = partPhotoURL(part, pole) || url;
-              draw();
-              const line = modal.querySelector("[data-poles-value]");
-              if (line) line.textContent = `${pole} — sold as ${part.poles}`;
-            });
-            tabs.append(button);
+    // The switches belong to the part, not to its photograph: a part sold three
+    // ways and four ways is still sold both ways before anyone photographs it,
+    // and the specification lines under them follow the choice either way.
+    const refresh = () => {
+      if (img) img.src = partPhotoURL(part, pole, klass) || url;
+      const poleLine = modal.querySelector("[data-poles-value]");
+      if (poleLine) poleLine.textContent = `${pole} — sold as ${part.poles}`;
+      const classLine = modal.querySelector("[data-class-value]");
+      const picked = classes.find((option) => option.letter === klass);
+      if (classLine && picked) classLine.textContent = classLabel(picked);
+    };
+
+    const switcher = (label, options, isActive, choose) => {
+      const tabs = el("div", "board-detail-tabs pole-tabs");
+      tabs.setAttribute("role", "tablist");
+      tabs.setAttribute("aria-label", label);
+      const draw = () => {
+        tabs.replaceChildren();
+        options.forEach((option) => {
+          const button = el("button", isActive(option) ? "active" : "", option);
+          button.type = "button";
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", String(isActive(option)));
+          button.addEventListener("click", () => {
+            choose(option);
+            draw();
+            refresh();
           });
-        };
-        draw();
-        modal.append(tabs);
-      }
+          tabs.append(button);
+        });
+      };
+      draw();
+      modal.append(tabs);
+    };
+
+    if (classes.length > 1) {
+      switcher("Breaking capacity class", classes.map((option) => option.letter),
+        (letter) => letter === klass, (letter) => { klass = letter; });
+    }
+    if (poles.length > 1) {
+      switcher("Pole count", poles, (option) => option === pole, (option) => { pole = option; });
     }
 
     // The brand's own mark leads when there is one — a reader recognises the
@@ -3753,6 +3816,7 @@ function openCatalogPartModal(part) {
     modal.append(refSection("Specification", "layers", infoLines([
       ["Type", part.type],
       ["Rating", part.rating],
+      ["Class", classes.length > 1 ? classLabel(classes.find((option) => option.letter === klass)) : "", "classValue"],
       ["Poles / phase", poles.length > 1 ? `${pole} — sold as ${part.poles}` : part.poles, "polesValue"],
       ["Serial number", part.serialNumber],
       ["Curve / notes", part.curve],

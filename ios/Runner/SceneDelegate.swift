@@ -10876,6 +10876,8 @@ struct ComponentDetailSheet: View {
   @State private var editorImage: ImagePreviewItem?
   /// Which pole count is being looked at, for a part sold in several.
   @State private var selectedPole: String
+  /// Which breaking-capacity class, for a part sold in several of those.
+  @State private var selectedClass: String
 
   init(
     theme: PanelTheme,
@@ -10892,12 +10894,14 @@ struct ComponentDetailSheet: View {
     self.onRemoveImage = onRemoveImage
     _selectedImage = State(initialValue: image)
     _selectedPole = State(initialValue: component.poleOptions.first ?? "")
+    _selectedClass = State(initialValue: component.classOptions.first?.letter ?? "")
   }
 
   /// The picture for the pole being looked at: the one taken on this device
   /// first, then the catalog photo for that pole, then the part's own.
   private var displayedImage: UIImage? {
-    selectedImage ?? CatalogImageLibrary.componentImage(ids: component.imageLookupIDs(pole: selectedPole))
+    selectedImage ?? CatalogImageLibrary.componentImage(
+      ids: component.imageLookupIDs(pole: selectedPole, class: selectedClass))
   }
 
   private var manufacturerColor: Color {
@@ -10918,12 +10922,23 @@ struct ComponentDetailSheet: View {
   /// would each need their own stock line.
   @ViewBuilder
   private var poleSwitch: some View {
-    let options = component.poleOptions
-    if options.count > 1 {
-      Picker("Poles", selection: $selectedPole) {
-        ForEach(options, id: \.self) { Text($0) }
+    let poles = component.poleOptions
+    let classes = component.classOptions
+    if poles.count > 1 || classes.count > 1 {
+      VStack(spacing: 8) {
+        if classes.count > 1 {
+          Picker("Class", selection: $selectedClass) {
+            ForEach(classes) { Text($0.letter).tag($0.letter) }
+          }
+          .pickerStyle(.segmented)
+        }
+        if poles.count > 1 {
+          Picker("Poles", selection: $selectedPole) {
+            ForEach(poles, id: \.self) { Text($0) }
+          }
+          .pickerStyle(.segmented)
+        }
       }
-      .pickerStyle(.segmented)
     }
   }
 
@@ -10965,6 +10980,10 @@ struct ComponentDetailSheet: View {
             VStack(alignment: .leading, spacing: 10) {
               InfoLine(title: "Type", value: component.type)
               InfoLine(title: "Rating", value: component.rating)
+              if let picked = component.classOptions.first(where: { $0.letter == selectedClass }),
+                 component.classOptions.count > 1 {
+                InfoLine(title: "Class", value: picked.label)
+              }
               InfoLine(title: "Poles / Phase",
                        value: component.poleOptions.count > 1 && !selectedPole.isEmpty
                          ? "\(selectedPole) — sold as \(component.poles)"
@@ -13794,6 +13813,21 @@ struct ComponentGroup: Identifiable {
   ]
 }
 
+/// One breaking-capacity class of a part: the letter printed on the breaker and
+/// the kA it stands for, where the catalog states it.
+struct ComponentClass: Identifiable, Hashable {
+  let letter: String
+  let interrupting: Int?
+
+  var id: String { letter }
+
+  /// "N — 36kA at 415V", or just the letter where no rating is stated.
+  var label: String {
+    guard let interrupting else { return "Class \(letter)" }
+    return "\(letter) — \(interrupting)kA at 415V"
+  }
+}
+
 struct PanelComponent: Identifiable {
   let id: String
   let manufacturer: String
@@ -13838,12 +13872,53 @@ struct PanelComponent: Identifiable {
     return []
   }
 
-  /// Image id for one pole of this part. Falls back to the part itself, which
-  /// is what a part photographed only once resolves to.
-  func imageLookupIDs(pole: String?) -> [String] {
-    guard let pole, !pole.isEmpty else { return imageLookupIDs }
-    let suffix = "-" + pole.lowercased()
-    return imageLookupIDs.map { $0 + suffix } + imageLookupIDs
+  /// The breaking-capacity classes this part is sold in, with the kA each one
+  /// stands for. An MCCB's class letter is not a trip curve — it sets how much
+  /// fault current the breaker can interrupt — so an XT1 N and an XT1 H are the
+  /// same breaker rated 36kA and 70kA. The catalog states them in the part's own
+  /// description, which is where these are read from.
+  var classOptions: [ComponentClass] {
+    guard let sentence = about.range(of: "Classes[^.]*\\.", options: .regularExpression) else { return [] }
+    // "Classes: N 36, S 50, H 70 kA at 415V" reads as letter-then-rating pairs;
+    // "Classes B, C, N and L set short-circuit performance" states the letters
+    // on their own. Both are walked as words rather than matched with a pattern,
+    // which keeps this readable and free of a regex dialect.
+    let words = String(about[sentence])
+      .dropFirst("Classes".count)
+      .split { !$0.isLetter && !$0.isNumber }
+      .map(String.init)
+    let isClassLetter = { (word: String) -> Bool in
+      word.count == 1 && (word.first?.isUppercase ?? false)
+    }
+
+    var paired: [ComponentClass] = []
+    var seen: Set<String> = []
+    for (index, word) in words.enumerated() where isClassLetter(word) {
+      guard index + 1 < words.count, let rating = Int(words[index + 1]) else { continue }
+      guard seen.insert(word).inserted else { continue }
+      paired.append(ComponentClass(letter: word, interrupting: rating))
+    }
+    if paired.count > 1 { return paired }
+
+    var letters: [ComponentClass] = []
+    seen.removeAll()
+    for word in words where isClassLetter(word) {
+      guard seen.insert(word).inserted else { continue }
+      letters.append(ComponentClass(letter: word, interrupting: nil))
+    }
+    return letters.count > 1 ? letters : []
+  }
+
+  /// Image id for one variant of this part, most specific first. Falls back to
+  /// the part itself, which is what a part photographed once resolves to.
+  func imageLookupIDs(pole: String? = nil, class classLetter: String? = nil) -> [String] {
+    let pole = (pole ?? "").lowercased()
+    let letter = (classLetter ?? "").lowercased()
+    var suffixes: [String] = []
+    if !letter.isEmpty && !pole.isEmpty { suffixes.append("-\(letter)-\(pole)") }
+    if !pole.isEmpty { suffixes.append("-\(pole)") }
+    if !letter.isEmpty { suffixes.append("-\(letter)") }
+    return suffixes.flatMap { suffix in imageLookupIDs.map { $0 + suffix } } + imageLookupIDs
   }
 
   var imageLookupIDs: [String] {
