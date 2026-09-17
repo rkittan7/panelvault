@@ -411,3 +411,47 @@ test("a reading with nothing usable produces empty lists, not throws", () => {
   assert.doesNotThrow(() => normalizeReading(null, CATALOG));
   assert.doesNotThrow(() => normalizeReading({ components: "not an array" }, CATALOG));
 });
+
+const LAMP_CATALOG = [
+  { id: "allen-bradley-800f-pilot-light", manufacturer: "Allen-Bradley", model: "800F pilot light", type: "Pilot Light", rating: "22.5mm" },
+  { id: "allen-bradley-800fp-pilot-light-red", manufacturer: "Allen-Bradley", model: "800FP pilot light, red", type: "Pilot Light", rating: "22.5mm" },
+  { id: "allen-bradley-800fp-pilot-light-green", manufacturer: "Allen-Bradley", model: "800FP pilot light, green", type: "Pilot Light", rating: "22.5mm" },
+  { id: "eaton-m22-pilot-light-red", manufacturer: "Eaton", model: "M22 pilot light, red", type: "Pilot Light", rating: "22.5mm" },
+  { id: "eaton-m22-pilot-light-green", manufacturer: "Eaton", model: "M22 pilot light, green", type: "Pilot Light", rating: "22.5mm" },
+  { id: "satec-pm130e-plus", manufacturer: "Satec", model: "PM130E PLUS", type: "Meter", rating: "230/400V" },
+  { id: "satec-pm130eh-plus", manufacturer: "Satec", model: "PM130EH PLUS", type: "Meter", rating: "230/400V" },
+];
+
+test("the metal 800F is not mistaken for the plastic 800FP", () => {
+  for (const part of [
+    { manufacturer: "Allen-Bradley", model: "800F pilot light", type: "Pilot Light" },
+    { manufacturer: "Allen-Bradley", model: "800F", type: "Pilot Light", curve: "Red" },
+  ]) {
+    assert.equal(matchCatalogPart(LAMP_CATALOG, part)?.id, "allen-bradley-800f-pilot-light", JSON.stringify(part));
+  }
+  assert.deepEqual(modelKeys("800FP pilot light, red").includes("800fp"), true);
+  assert.deepEqual(modelKeys("800F pilot light").includes("800fp"), false);
+});
+
+test("a lamp split by lens colour is found by the colour the drawing gives", () => {
+  const green = matchCatalogPart(LAMP_CATALOG, { manufacturer: "Allen-Bradley", model: "800FP", type: "Pilot Light", curve: "Green" });
+  assert.equal(green?.id, "allen-bradley-800fp-pilot-light-green");
+  const hebrew = matchCatalogPart(LAMP_CATALOG, { manufacturer: "Eaton", model: "M22", type: "Pilot Light", rawText: "נורית סימון אדומה" });
+  assert.equal(hebrew?.id, "eaton-m22-pilot-light-red");
+});
+
+test("a lamp with no single colour on the drawing is left for a person", () => {
+  for (const rawText of ["", "red / green", "reduced glare"]) {
+    assert.equal(matchCatalogPart(LAMP_CATALOG, { manufacturer: "Eaton", model: "M22", type: "Pilot Light", rawText }), null, rawText);
+  }
+});
+
+test("Moeller on a drawing is Eaton", () => {
+  const hit = matchCatalogPart(LAMP_CATALOG, { manufacturer: "Moeller", model: "M22", type: "Pilot Light", curve: "green" });
+  assert.equal(hit?.id, "eaton-m22-pilot-light-green");
+});
+
+test("a SATEC variant printed without PLUS still finds its own row", () => {
+  const hit = matchCatalogPart(LAMP_CATALOG, { manufacturer: "SATEC", model: "PM130E", type: "Meter" });
+  assert.equal(hit?.id, "satec-pm130e-plus");
+});

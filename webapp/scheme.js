@@ -248,8 +248,12 @@ function modelKeys(value) {
   const raw = partKey(value);
   if (!raw) return [];
   const keys = new Set([raw]);
-  const allenBradleyBulletin = raw.match(/^(800f|800t|802t)/);
-  if (allenBradleyBulletin) keys.add(allenBradleyBulletin[1]);
+  // Read the bulletin before spaces are squeezed out, or "800F pilot light"
+  // reads as the plastic 800FP. 800FM is the metal 800F by its catalog number.
+  const allenBradleyBulletin = String(value).toLowerCase().match(/^\s*(800f|800t|802t)([pm])?(?![a-z])/);
+  if (allenBradleyBulletin) {
+    keys.add(allenBradleyBulletin[1] + (allenBradleyBulletin[2] === "p" ? "p" : ""));
+  }
   let withoutRangeWords = raw;
   for (const prefix of ["acti9", "sace", "tmax", "sentron"]) {
     if (withoutRangeWords.startsWith(prefix)) withoutRangeWords = withoutRangeWords.slice(prefix.length);
@@ -261,6 +265,10 @@ function modelKeys(value) {
   // F202A / F204A print the residual-current type as a suffix; the pole count
   // in front of it is what names the catalog family.
   if (/^f20[1-4]a$/.test(withoutRangeWords)) keys.add(withoutRangeWords.slice(0, -1));
+  // SATEC prints "PM130E" as often as "PM130E PLUS"; the letters before PLUS
+  // are the variant, so they alone must still find it rather than tie with EH.
+  const satecPlus = withoutRangeWords.match(/^(pm130(?:p|e|eh))plus$/);
+  if (satecPlus) keys.add(satecPlus[1]);
   return [...keys].filter((key) => key.length >= 3);
 }
 
@@ -320,7 +328,25 @@ function typeKey(value) {
 function manufacturerKey(value) {
   const key = partKey(value);
   if (["ab", "allenbradley", "rockwell", "rockwellautomation"].includes(key)) return "allenbradley";
+  if (["moeller", "eatonmoeller", "kloecknermoeller", "klocknermoeller"].includes(key)) return "eaton";
   return key;
+}
+
+/** Lens colour of a lamp. Catalog rows carry it at the end of the model
+ * ("M22 pilot light, red"); a drawing puts it in the variant, the label or the
+ * callout, in English or Hebrew. Only the colours the catalog splits on. */
+const LENS_COLOURS = { red: ["red", "אדום", "אדומה"], green: ["green", "ירוק", "ירוקה"] };
+
+function lensColour(...values) {
+  const found = new Set();
+  for (const value of values) {
+    const source = String(value || "").toLowerCase();
+    for (const [colour, words] of Object.entries(LENS_COLOURS)) {
+      if (words.some((word) => new RegExp(`(^|[^\\p{L}])${word}($|[^\\p{L}])`, "u").test(source))) found.add(colour);
+    }
+  }
+  // A line naming both colours is a group, not one lamp.
+  return found.size === 1 ? [...found][0] : "";
 }
 
 function exactAmpereRating(value) {
@@ -347,6 +373,7 @@ function matchCatalogPart(catalog, part) {
   const requestedType = typeKey(part.type);
   const requestedPoles = poleKey(part.poles, part.rawText, part.rating);
   const requestedAmpere = ampereRating(part.rating, part.rawText);
+  const requestedColour = lensColour(part.curve, part.model, part.rawText);
 
   const scored = catalog
     .map((candidate) => {
@@ -394,6 +421,10 @@ function matchCatalogPart(catalog, part) {
         if (requestedAmpere !== candidateAmpere) return null;
         score += 3;
       }
+      // A lamp of the other colour is ruled out, but the right colour earns
+      // nothing: a colour must not lift a weaker model match into a tie.
+      const candidateColour = lensColour(candidate.model);
+      if (requestedColour && candidateColour && requestedColour !== candidateColour) return null;
       return { candidate, score };
     })
     .filter(Boolean)
