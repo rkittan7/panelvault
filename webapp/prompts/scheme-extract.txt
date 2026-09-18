@@ -88,6 +88,8 @@ BOARD FIELDS
   brand. manufacturerRole must describe the selected name's actual role.
 - mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
   incomer, not a downstream feeder. Keep model spelling and the ampere unit.
+  A manual or motorised changeover at the head of the board is a Changeover
+  Switch and must be returned as the main breaker, not as a downstream device.
   Read the printed current digit by digit and cross-check the incomer callout;
   never calculate it from outgoing loads, cable sizes or protection settings.
   Return that same main incomer once in components as an installed device; its

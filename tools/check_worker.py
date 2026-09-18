@@ -47,6 +47,8 @@ SYSTEM = {
     "ExpressibleByStringLiteral", "CustomStringConvertible", "Timer",
     "ProcessInfo", "HTTPURLResponse", "NSError", "NSLock", "OSStatus",
     "Regex", "Scanner", "Stride", "Strideable", "Duration",
+    # Network path monitoring
+    "NWPathMonitor", "NWPath", "NWInterface",
     # Combine
     "ObservableObject", "Published", "AnyCancellable", "Cancellable",
     "PassthroughSubject", "CurrentValueSubject", "ObservableObjectPublisher",

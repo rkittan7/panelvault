@@ -1,0 +1,66 @@
+name: PanelVault release gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cloud:
+    name: Cloud tests and browser smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+
+  native:
+    name: Native iOS builds
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: ios/Runner.xcodeproj
+            scheme: Runner
+          - project: worker/Worker.xcodeproj
+            scheme: Worker
+          - project: warehouse/Warehouse.xcodeproj
+            scheme: Warehouse
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.scheme }} for iOS Simulator
+        run: >-
+          xcodebuild
+          -project "${{ matrix.project }}"
+          -scheme "${{ matrix.scheme }}"
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  structural:
+    name: Catalog and generated-source checks
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python3 tools/gen_web_catalog.py --check
+      - run: python3 tools/check_worker.py
+      - run: swiftc -parse ios/Runner/*.swift
+      - run: find worker/Sources -name '*.swift' -print0 | xargs -0 swiftc -parse
+      - run: find warehouse/Sources -name '*.swift' -print0 | xargs -0 swiftc -parse

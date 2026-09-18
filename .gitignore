@@ -32,6 +32,10 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+**/node_modules/
+webapp/test-results/
+webapp/playwright-report/
+webapp/supabase/.temp/
 
 # Local runtime secrets
 .env

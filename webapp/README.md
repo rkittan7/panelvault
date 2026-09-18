@@ -112,7 +112,7 @@ with a tunnel). Two things matter in production:
   back unmatched rather than placed on a board. See `scheme.js`.
 - `catalog.json` is generated from the app's own component catalog by
   `tools/gen_web_catalog.py` and carries each part's category, so the Catalog
-  page can show the same fifteen groups the iPhone apps browse. It is loaded
+  page can show the same eighteen groups the iPhone apps browse. It is loaded
   once at startup; regenerate it and restart to pick up catalog changes.
 - Component and manufacturer pictures are served at `/catalog-images/` straight
   out of `../assets/catalog`, the same folder the three iPhone apps bundle, so

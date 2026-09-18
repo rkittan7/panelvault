@@ -2,10 +2,11 @@ services:
   - type: web
     name: panelvault-cloud
     runtime: node
-    plan: free
+    # Pilot phones must not wait for a sleeping free instance to wake up.
+    plan: starter
     region: frankfurt
     rootDir: webapp
-    buildCommand: ""
+    buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
@@ -23,3 +24,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.6-flash
+      - key: PUBLIC_BASE_URL
+        value: https://cloud.panel-vault.com
+      - key: PASSWORD_RESET_WEBHOOK_URL
+        sync: false
+      - key: PASSWORD_RESET_WEBHOOK_SECRET
+        sync: false

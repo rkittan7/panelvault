@@ -43,20 +43,30 @@ foreground, records a movement, or the user taps **Sync Now**.
 
 ## Digitize existing stock with barcodes
 
-Open **Stock** and tap the barcode viewfinder in the top bar. Scan every box
-once. The first time PanelVault sees a barcode, choose its exact component and
-set how many units are in one box. That mapping is saved for the company, so
-future scans recognize it immediately on every synchronized phone.
+Open **Stock** and tap the barcode viewfinder in the top bar. Work through one
+shelf, room, or zone at a time. Scan every sealed box once. The first time
+PanelVault sees a barcode, choose its exact component and set how many units
+are in one box. That mapping is saved for the company, so future scans
+recognize it immediately on every synchronized phone. Add the remaining units
+from open boxes with the loose-unit controls.
 
-The stocktake remains a draft while scanning. Its review shows the counted
-quantity beside the currently recorded quantity. **Review and Set Stock**
-creates auditable adjustment movements only after confirmation. Camera scans
-never change stock directly. Managers can also type a damaged barcode or test
-the flow in Simulator using the keyboard button.
+The stocktake is saved after every scan and can be resumed after closing or
+restarting the app. The last accepted scan is shown with an Undo action, and a
+short duplicate guard rejects accidental immediate rescans. Mark each
+location complete before opening the final review.
+
+The review shows recorded quantity, physical count, and variance. Products
+with recorded stock that were not scanned remain unchanged unless the manager
+explicitly marks them missing and confirms they should become zero. **Apply
+Physical Count** creates auditable adjustment movements and a completed
+stocktake record only after confirmation. Camera scans never change stock
+directly. Managers can also type a damaged barcode or test the flow in
+Simulator using the keyboard button.
 
 ## Not built yet
 
-- Delivery batch metadata and scanned page/PDF upload
+- Scanned page/PDF upload (delivery metadata, OCR lines, movement links,
+  worker, device, and retry-safe Cloud synchronization are implemented)
 - Continuous network-path monitoring and exponential retry backoff
 - App Group data sharing with PanelVault on-device
 - Purchase orders and delivery reconciliation

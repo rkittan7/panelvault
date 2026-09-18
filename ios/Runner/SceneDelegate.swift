@@ -458,39 +458,18 @@ struct PanelVaultAppView: View {
     do {
       let result: PanelCloudWorkspace
       if cloudAccountCanAdminister {
-        do {
-          result = try await PanelCloudClient().uploadWorkspace(
-            account: account,
-            expectedVersion: cloudWorkspaceVersion,
-            projects: localProjects,
-            boards: localBoards
-          )
-        } catch {
-          // Optimistic versioning prevents a stale phone from overwriting a web
-          // edit. Pull the new version and replay this local edit once.
-          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
-          result = try await PanelCloudClient().uploadWorkspace(
-            account: account,
-            expectedVersion: latest.version,
-            projects: localProjects,
-            boards: localBoards
-          )
-        }
+        result = try await PanelCloudClient().uploadWorkspace(
+          account: account,
+          expectedVersion: cloudWorkspaceVersion,
+          projects: localProjects,
+          boards: localBoards
+        )
       } else {
-        do {
-          result = try await PanelCloudClient().uploadBoardProgress(
-            account: account,
-            expectedVersion: cloudWorkspaceVersion,
-            boards: localBoards
-          )
-        } catch {
-          let latest = try await PanelCloudClient().downloadWorkspace(account: account)
-          result = try await PanelCloudClient().uploadBoardProgress(
-            account: account,
-            expectedVersion: latest.version,
-            boards: localBoards
-          )
-        }
+        result = try await PanelCloudClient().uploadBoardProgress(
+          account: account,
+          expectedVersion: cloudWorkspaceVersion,
+          boards: localBoards
+        )
       }
       guard cloudAccount?.token == account.token else { return }
       if cloudWorkspaceSignature == localSignature {
@@ -506,7 +485,13 @@ struct PanelVaultAppView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
       }
     } catch {
-      // Leave the dirty flag set; the next foreground/poll or local edit retries.
+      // Never turn a conflict into "download the new version, then resend my
+      // old complete snapshot". That sequence can erase another client's
+      // newer work. Preserve this phone's local snapshot and suspend automatic
+      // workspace uploads until a fresh bootstrap/account reconnect; new
+      // clients use the record-level /api/sync/workspace-change outbox.
+      cloudWorkspaceDirty = true
+      cloudWorkspaceReady = false
     }
   }
 
@@ -5634,7 +5619,7 @@ struct MainBreakerStepView: View {
   let manufacturerNames: [String]
   let manufacturers: [ManufacturerItem]
   let create: () -> Void
-  @State private var pickerSheet: MainBreakerPickerSheet?
+  @State private var editorOpen = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -5645,16 +5630,16 @@ struct MainBreakerStepView: View {
               .frame(height: 72)
           }
 
-          CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Choose the breaker details") {
-            CreationMenuInput(theme: theme, title: "Breaker type", symbol: "bolt.fill", value: mainBreakerType, options: MainBreakerCatalog.types, selection: typeBinding)
-            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: identity.manufacturer, manufacturers: manufacturers) {
-              pickerSheet = .manufacturer
-            }
-            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: identity.model) {
-              pickerSheet = .model
-            }
-            CreationPickerInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: mainBreakerAmpere) {
-              pickerSheet = .ampere
+          CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill", subtitle: "Tap the selected device to change it") {
+            MainBreakerSelectionSlot(
+              theme: theme,
+              type: mainBreakerType,
+              storedModel: mainBreakerModel,
+              ampere: mainBreakerAmpere,
+              manufacturerNames: manufacturerNames,
+              manufacturers: manufacturers
+            ) {
+              editorOpen = true
             }
           }
           BottomTabClearance(height: 24)
@@ -5683,70 +5668,180 @@ struct MainBreakerStepView: View {
     .background(theme.background.ignoresSafeArea())
     .navigationTitle("Main Breaker")
     .navigationBarTitleDisplayMode(.inline)
-    .sheet(item: $pickerSheet) { sheet in
-      switch sheet {
-      case .manufacturer:
-        ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: identity.manufacturer) {
-          setManufacturer($0)
+    .sheet(isPresented: $editorOpen) {
+      MainBreakerEditorSheet(
+        theme: theme,
+        type: $mainBreakerType,
+        storedModel: $mainBreakerModel,
+        ampere: $mainBreakerAmpere,
+        manufacturerNames: manufacturerNames,
+        manufacturers: manufacturers
+      )
+    }
+  }
+}
+
+struct MainBreakerSelectionSlot: View {
+  let theme: PanelTheme
+  let type: String
+  let storedModel: String
+  let ampere: String
+  let manufacturerNames: [String]
+  let manufacturers: [ManufacturerItem]
+  let action: () -> Void
+
+  private var identity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: storedModel, manufacturers: manufacturerNames)
+  }
+
+  private var selectedPart: PanelComponent? {
+    MainBreakerCatalog.part(for: type, model: identity.model, manufacturer: identity.manufacturer)
+  }
+
+  private var accent: Color {
+    syncedManufacturer(named: identity.manufacturer, in: manufacturers)?.color ?? theme.primary
+  }
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 14) {
+        Group {
+          if let part = selectedPart,
+             let image = CatalogImageLibrary.componentThumbnail(id: part.id) {
+            TransparentImageBubble(image: image, width: 68, height: 68, glowColor: accent)
+          } else {
+            Image(systemName: "bolt.shield.fill")
+              .font(.system(size: 25, weight: .bold))
+              .foregroundStyle(accent)
+              .frame(width: 68, height: 68)
+              .background(accent.opacity(0.12))
+              .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+          }
         }
-      case .model:
-        CreationOptionPickerSheet(
-          theme: theme,
-          title: "\(mainBreakerType) model",
-          symbol: "tag.fill",
-          options: MainBreakerCatalog.models(for: mainBreakerType, manufacturer: identity.manufacturer),
-          selected: identity.model
-        ) {
-          setModel($0)
+
+        VStack(alignment: .leading, spacing: 5) {
+          Text(identity.model.isEmpty ? "MAIN BREAKER SLOT" : "SELECTED MAIN BREAKER")
+            .font(.system(size: 9, weight: .black))
+            .tracking(0.7)
+            .foregroundStyle(accent)
+          Text(storedModel.isEmpty || identity.model.isEmpty ? "Choose a catalog breaker" : storedModel)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+          Text([type, ampere].filter { !$0.isEmpty }.joined(separator: " · "))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
         }
-      case .ampere:
-        CreationOptionPickerSheet(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", options: AmpereRating.all, selected: mainBreakerAmpere) {
-          mainBreakerAmpere = $0
+        Spacer(minLength: 8)
+        VStack(spacing: 5) {
+          Image(systemName: "slider.horizontal.3")
+          Text("Edit")
+            .font(.caption2.bold())
+        }
+        .foregroundStyle(accent)
+      }
+      .padding(14)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(accent.opacity(0.07))
+      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+          .stroke(accent.opacity(0.24), lineWidth: 1)
+      )
+    }
+    .buttonStyle(PanelPressButtonStyle())
+    .accessibilityLabel("Edit selected main breaker, \(storedModel), \(type), \(ampere)")
+  }
+}
+
+struct MainBreakerEditorSheet: View {
+  let theme: PanelTheme
+  @Binding var type: String
+  @Binding var storedModel: String
+  @Binding var ampere: String
+  let manufacturerNames: [String]
+  let manufacturers: [ManufacturerItem]
+  @Environment(\.dismiss) private var dismiss
+
+  private var identity: MainBreakerIdentity {
+    MainBreakerIdentity(stored: storedModel, manufacturers: manufacturerNames)
+  }
+
+  private var availableManufacturers: [String] {
+    Array(Set(manufacturers.map(\.name) + manufacturerNames + MainBreakerCatalog.brands))
+      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .sorted()
+  }
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          MainBreakerSelectionSlot(
+            theme: theme,
+            type: type,
+            storedModel: storedModel,
+            ampere: ampere,
+            manufacturerNames: manufacturerNames,
+            manufacturers: manufacturers,
+            action: {}
+          )
+          .allowsHitTesting(false)
+
+          CreationFormSection(theme: theme, title: "Breaker Details", symbol: "bolt.shield.fill", subtitle: "Select the installed incomer") {
+            CreationMenuInput(theme: theme, title: "Type", symbol: "bolt.fill", value: type, options: MainBreakerCatalog.types, selection: typeBinding)
+            CreationMenuInput(theme: theme, title: "Manufacturer", symbol: "building.2.fill", value: identity.manufacturer, options: availableManufacturers, selection: manufacturerBinding)
+            CreationMenuInput(theme: theme, title: "Model", symbol: "tag.fill", value: identity.model, options: MainBreakerCatalog.models(for: type, manufacturer: identity.manufacturer), selection: modelBinding)
+            CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: ampere, options: AmpereRating.all, selection: $ampere)
+          }
+        }
+        .padding(18)
+      }
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Edit Main Breaker")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }
+            .fontWeight(.bold)
         }
       }
     }
   }
 
-  /// Manufacturer and model are stored joined in `mainBreakerModel`; the slots
-  /// edit the halves and write the joined value straight back.
-  private var identity: MainBreakerIdentity {
-    MainBreakerIdentity(stored: mainBreakerModel, manufacturers: manufacturerNames)
-  }
-
   private var typeBinding: Binding<String> {
     Binding {
-      mainBreakerType
+      type
     } set: { newValue in
       var updated = identity
-      mainBreakerType = newValue
-      // A model names one family of device, so it cannot outlive the type.
+      type = newValue
       updated.model = ""
-      mainBreakerModel = updated.stored
+      storedModel = updated.stored
     }
   }
 
-  private func setManufacturer(_ name: String) {
-    var updated = identity
-    if !MainBreakerCatalog.lists(model: updated.model, type: mainBreakerType, manufacturer: name) {
-      updated.model = ""
+  private var manufacturerBinding: Binding<String> {
+    Binding {
+      identity.manufacturer
+    } set: { name in
+      var updated = identity
+      if !MainBreakerCatalog.lists(model: updated.model, type: type, manufacturer: name) {
+        updated.model = ""
+      }
+      updated.manufacturer = name
+      storedModel = updated.stored
     }
-    updated.manufacturer = name
-    mainBreakerModel = updated.stored
   }
 
-  private func setModel(_ model: String) {
-    var updated = identity
-    updated.model = model
-    mainBreakerModel = updated.stored
+  private var modelBinding: Binding<String> {
+    Binding {
+      identity.model
+    } set: { model in
+      var updated = identity
+      updated.model = model
+      storedModel = updated.stored
+    }
   }
-}
-
-enum MainBreakerPickerSheet: String, Identifiable {
-  case manufacturer
-  case model
-  case ampere
-
-  var id: String { rawValue }
 }
 
 struct NewBoardStepIndicator: View {
@@ -6460,14 +6555,16 @@ struct BoardEditSheet: View {
           }
 
           CreationFormSection(theme: theme, title: "Main Breaker", symbol: "bolt.shield.fill") {
-            CreationMenuInput(theme: theme, title: "Main breaker", symbol: "bolt.fill", value: board.mainBreakerType, options: MainBreakerCatalog.types, selection: mainBreakerTypeBinding)
-            ManufacturerPickerInput(theme: theme, title: "Manufacturer", value: mainBreakerIdentity.manufacturer, manufacturers: manufacturers) {
-              pickerSheet = .mainBreakerManufacturer
+            MainBreakerSelectionSlot(
+              theme: theme,
+              type: board.mainBreakerType,
+              storedModel: board.mainBreakerModel,
+              ampere: board.mainBreakerAmpere,
+              manufacturerNames: manufacturerNames,
+              manufacturers: manufacturers
+            ) {
+              pickerSheet = .mainBreaker
             }
-            CreationPickerInput(theme: theme, title: "Model", symbol: "tag.fill", value: mainBreakerIdentity.model) {
-              pickerSheet = .mainBreakerModel
-            }
-            CreationMenuInput(theme: theme, title: "Ampere", symbol: "gauge.with.dots.needle.67percent", value: board.mainBreakerAmpere, options: AmpereRating.all, selection: ampereBinding)
           }
 
           if let onDelete {
@@ -6504,54 +6601,18 @@ struct BoardEditSheet: View {
           ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: board.manufacturer) {
             board.manufacturer = $0
           }
-        case .mainBreakerManufacturer:
-          ManufacturerCreationPickerSheet(theme: theme, manufacturers: manufacturers, selected: mainBreakerIdentity.manufacturer) {
-            setMainBreakerManufacturer($0)
-          }
-        case .mainBreakerModel:
-          CreationOptionPickerSheet(
+        case .mainBreaker:
+          MainBreakerEditorSheet(
             theme: theme,
-            title: "\(board.mainBreakerType) model",
-            symbol: "tag.fill",
-            options: MainBreakerCatalog.models(for: board.mainBreakerType, manufacturer: mainBreakerIdentity.manufacturer),
-            selected: mainBreakerIdentity.model
-          ) {
-            setMainBreakerModel($0)
-          }
+            type: $board.mainBreakerType,
+            storedModel: $board.mainBreakerModel,
+            ampere: ampereBinding,
+            manufacturerNames: manufacturerNames,
+            manufacturers: manufacturers
+          )
         }
       }
     }
-  }
-
-  /// See [MainBreakerIdentity]: one stored field, two slots on the form.
-  private var mainBreakerIdentity: MainBreakerIdentity {
-    MainBreakerIdentity(stored: board.mainBreakerModel, manufacturers: manufacturers.map(\.name))
-  }
-
-  private var mainBreakerTypeBinding: Binding<String> {
-    Binding {
-      board.mainBreakerType
-    } set: { newValue in
-      var updated = mainBreakerIdentity
-      board.mainBreakerType = newValue
-      updated.model = ""
-      board.mainBreakerModel = updated.stored
-    }
-  }
-
-  private func setMainBreakerManufacturer(_ name: String) {
-    var updated = mainBreakerIdentity
-    if !MainBreakerCatalog.lists(model: updated.model, type: board.mainBreakerType, manufacturer: name) {
-      updated.model = ""
-    }
-    updated.manufacturer = name
-    board.mainBreakerModel = updated.stored
-  }
-
-  private func setMainBreakerModel(_ model: String) {
-    var updated = mainBreakerIdentity
-    updated.model = model
-    board.mainBreakerModel = updated.stored
   }
 
   private var ampereBinding: Binding<String> {
@@ -6643,8 +6704,7 @@ enum BoardEditPickerSheet: String, Identifiable {
   case boardType
   case subtype
   case manufacturer
-  case mainBreakerManufacturer
-  case mainBreakerModel
+  case mainBreaker
 
   var id: String { rawValue }
 }
@@ -13407,7 +13467,42 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "abb-tmax-xt7d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D", rating: "IEC 1600A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT7 frame, to 1600A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt7dm", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D M", rating: "IEC 1600A frame", poles: "3P/4P", curve: "Stored-energy, no protection", about: "Switch-disconnector in the XT7 frame with a stored-energy mechanism. No trip unit: it needs protection upstream."),
       PanelComponent(id: "generic-changeover", manufacturer: "Generic", type: "Changeover Switch", model: "Manual changeover", rating: "Set A", poles: "4P", curve: "I-0-II", about: "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once."),
-      PanelComponent(id: "socomec-sirco", manufacturer: "Socomec", type: "Changeover Switch", model: "Sirco MOT", rating: "125-3200A", poles: "3P/4P", curve: "Motorised I-0-II", about: "Motorised changeover switch for automatic transfer between utility and generator, mechanically interlocked so both sources can never be paralleled."),
+      PanelComponent(id: "socomec-sirco", manufacturer: "Socomec", type: "Legacy Changeover Switch", model: "SIRCO MOT", rating: "125-3200A", poles: "3P/4P", curve: "Motorised - verify reference", about: "Legacy motorised switching family still found in installed panels. Record the full reference and control voltage; for a new IEC transfer scheme compare the current ATyS r, g and p ranges rather than assuming accessories or ratings carry over."),
+      PanelComponent(id: "socomec-como-cs-i-ii", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "COMO CS I-II", rating: "25-100A", poles: "3P/4P", curve: "Manual I-II, IEC", about: "Compact cam-operated on-load transfer switch for backplate or door mounting. It transfers directly between sources without a stable centre-off position, so use the I-0-II version where maintained isolation is required."),
+      PanelComponent(id: "socomec-como-cs-i-0-ii", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "COMO CS I-0-II", rating: "25-100A", poles: "3P/4P", curve: "Manual I-0-II, IEC", about: "Compact manual source selector with a stable OFF position between supplies. Intended for on-load transfer and safe disconnection in small distribution panels."),
+      PanelComponent(id: "socomec-como-cs-bypass", manufacturer: "Socomec", type: "Bypass Changeover Switch", model: "COMO CS Bypass", rating: "25-100A", poles: "3P/4P", curve: "Manual bypass I-0-II", about: "Compact cam-switch bypass arrangement for routing a small load around equipment during maintenance. Confirm the exact switching diagram because a bypass is not wired like a standard two-source selector."),
+      PanelComponent(id: "socomec-sirco-m", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "SIRCO M I-0-II", rating: "25-125A", poles: "3P/4P", curve: "Manual I-0-II, IEC", about: "Modular manual transfer switch with positive-break indication, on-load switching and a stable centre OFF. Suits DIN or compact panel assemblies where a simple local source selector is needed."),
+      PanelComponent(id: "socomec-sirco-vm1", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "SIRCO VM1 I-0-II", rating: "63-125A", poles: "3P/4P", curve: "Visible break I-0-II", about: "Modular changeover switch with double visible breaking for direct confirmation of isolation. Available for DIN rail, backplate or modular panel mounting."),
+      PanelComponent(id: "socomec-sirco-vm1-overlap", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "SIRCO VM1 I-I+II-II", rating: "63-125A", poles: "3P/4P", curve: "Overlapping contact", about: "Compact manual make-before-break transfer switch for synchronised sources. The overlap momentarily parallels both supplies, so it must never be applied to unsynchronised utility and generator sources."),
+      PanelComponent(id: "socomec-sircover-i-0-ii", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "SIRCOVER I-0-II", rating: "125-3200A", poles: "3P/4P", curve: "Class PC, manual I-0-II", about: "Heavy-duty IEC manual transfer switch with positive-break indication, double breaking per pole and a stable centre OFF. It has no overcurrent trip, so coordinate its short-circuit rating with the upstream fuse or breaker."),
+      PanelComponent(id: "socomec-sircover-overlap", manufacturer: "Socomec", type: "Manual Changeover Switch", model: "SIRCOVER I-I+II-II", rating: "125-1600A", poles: "3P/4P", curve: "Class PC, overlapping contact", about: "Heavy-duty make-before-break manual transfer switch intended to avoid load interruption between synchronised sources. The system design must permit the momentary parallel connection."),
+      PanelComponent(id: "socomec-sircover-bypass", manufacturer: "Socomec", type: "Bypass Changeover Switch", model: "SIRCOVER Bypass I-0-II", rating: "125-1600A", poles: "3+6P/4+8P", curve: "Class PC, bypass I-0-II", about: "Three interlocked load-break switches forming a maintenance-bypass arrangement with open-transition source selection. Use the manufacturer sequence and diagram; the combined pole count represents the main and bypass paths."),
+      PanelComponent(id: "socomec-sircover-bypass-overlap", manufacturer: "Socomec", type: "Bypass Changeover Switch", model: "SIRCOVER Bypass I-I+II-II", rating: "125-1600A", poles: "3+6P/4+8P", curve: "Class PC, overlap bypass", about: "Maintenance-bypass arrangement with overlapping contacts for synchronised sources or a UPS in static-bypass mode. It is not suitable where the two sources cannot be paralleled."),
+      PanelComponent(id: "socomec-sircover-pv", manufacturer: "Socomec", type: "PV Changeover Switch", model: "SIRCOVER PV", rating: "200-630A", poles: "3P/4P", curve: "Manual PV I-0-II", about: "Manual multipole transfer switch for on-load source inversion between photovoltaic circuits. Verify the exact DC voltage, current and pole arrangement from the selected reference; an AC rating cannot be reused for PV duty."),
+      PanelComponent(id: "socomec-sircover-ats-bypass", manufacturer: "Socomec", type: "Bypass Changeover Switch", model: "SIRCOVER ATS Bypass", rating: "125-630A", poles: "4+12P", curve: "ATS isolation + source bypass", about: "Single manual assembly that isolates an ATS upstream and downstream while allowing source selection on the bypass path. Intended to maintain supply while the automatic transfer equipment is serviced."),
+      PanelComponent(id: "socomec-atys-s", manufacturer: "Socomec", type: "Motorised Changeover Switch", model: "ATyS S", rating: "40-125A", poles: "4P", curve: "RTSE, 12/24/48VDC or 230VAC", about: "Compact remotely operated transfer switch commanded by dry contacts from a PLC, genset controller or ATS controller. Select the actuator supply version deliberately; the switch alone does not monitor sources."),
+      PanelComponent(id: "socomec-atys-d-s", manufacturer: "Socomec", type: "Motorised Changeover Switch", model: "ATyS d S", rating: "40-125A", poles: "4P", curve: "RTSE, dual 230VAC supply", about: "Compact remote transfer switch with two 230VAC control supplies so it can operate from either available source. Automatic operation still requires external sensing and control logic."),
+      PanelComponent(id: "socomec-atys-d-m", manufacturer: "Socomec", type: "Motorised Changeover Switch", model: "ATyS d M", rating: "40-160A", poles: "2P/4P", curve: "RTSE, modular I-0-II", about: "DIN-format remotely operated transfer switch with positive-break indication and dry-contact control. Its stable rotating contacts provide fast transfer, but an external ATS controller is required for automatic source monitoring."),
+      PanelComponent(id: "socomec-atys-r", manufacturer: "Socomec", type: "Motorised Changeover Switch", model: "ATyS r", rating: "125-3200A", poles: "3P/4P", curve: "Class PC RTSE, I-0-II", about: "Large motorised transfer switch operated by pulse commands from a PLC, switch, genset controller or separate ATS controller. Includes mechanical and electrical interlocking but no overcurrent protection."),
+      PanelComponent(id: "socomec-atys-d-h", manufacturer: "Socomec", type: "Motorised Changeover Switch", model: "ATyS d H IEC Fixed", rating: "4000-6300A", poles: "3P/4P", curve: "Class PC RTSE, high current", about: "Fixed high-current remote transfer switch with integrated dual power supply and volt-free command inputs. Intended for custom low-voltage assemblies where fault withstand, busbars and enclosure temperature rise are engineered together."),
+      PanelComponent(id: "socomec-atys-t-m", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS t M", rating: "40-160A", poles: "4P", curve: "ATSE, mains-mains", about: "Compact automatic transfer switch dedicated to three-phase mains-to-mains systems. Potentiometer and DIP-switch setup covers source priority plus voltage and frequency monitoring."),
+      PanelComponent(id: "socomec-atys-g-m", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS g M", rating: "40-160A", poles: "2P/4P", curve: "ATSE, mains-genset", about: "Compact automatic transfer switch with integrated mains-generator control and generator start logic. Available for single- and three-phase systems; confirm AC-33 duty at the selected rating."),
+      PanelComponent(id: "socomec-atys-p-m", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS p M", rating: "40-160A", poles: "4P", curve: "Programmable ATSE", about: "Fully programmable modular ATSE combining mains-mains and mains-generator functions with configurable timers, I/O, return-to-zero trip and remote display options."),
+      PanelComponent(id: "socomec-atys-p-m-com", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS p M + COM", rating: "40-160A", poles: "4P", curve: "Programmable ATSE + Modbus", about: "Communication version of the programmable ATyS p M, adding integrated Modbus access to status, voltage, frequency and configuration data."),
+      PanelComponent(id: "socomec-atys-a-m", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS a M", rating: "25-160A", poles: "2P/4P by region", curve: "Preset ATSE, regional", about: "Preset compact automatic transfer switch published in Socomec regional catalogues. Confirm local availability, voltage, approvals and support before using it outside the catalogue region."),
+      PanelComponent(id: "socomec-atys-g", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS g", rating: "125-3200A", poles: "3P/4P", curve: "Class PC ATSE, mains/genset", about: "Large automatic transfer switch for mains-mains or mains-generator applications, configured by potentiometers and DIP switches. Optional RS485 supports remote monitoring."),
+      PanelComponent(id: "socomec-atys-p", manufacturer: "Socomec", type: "Automatic Transfer Switch", model: "ATyS p", rating: "125-3200A", poles: "3P/4P", curve: "Class PC programmable ATSE", about: "Advanced automatic transfer switch with LCD setup, event logging, power and energy measurements, programmable I/O and generator exercise. Optional RS485 or Ethernet adds communications and a webserver."),
+      PanelComponent(id: "socomec-atys-c25", manufacturer: "Socomec", type: "ATS Controller", model: "ATyS C25", rating: "2-source control", poles: "DIN/door control", curve: "Entry level + communication", about: "Entry-level controller for ATyS r, ATyS S, ATyS d M or contactor transfer schemes. It applies fixed timers and thresholds; use C55 or C65 where a breaker-based scheme is required."),
+      PanelComponent(id: "socomec-atys-c35", manufacturer: "Socomec", type: "ATS Controller", model: "ATyS C35", rating: "2-source control", poles: "Door mount", curve: "Display + programmable timing", about: "Digital ATS controller with display, communications and programmable source thresholds and timers. Can command Socomec or other switch-, contactor- and breaker-based transfer equipment."),
+      PanelComponent(id: "socomec-atys-c55", manufacturer: "Socomec", type: "ATS Controller", model: "ATyS C55", rating: "Multi-source logic", poles: "Door mount", curve: "Smart ATS control", about: "Smart controller for motorised switches, contactors or circuit breakers, supporting transformer-transformer and transformer-generator combinations with configurable timers and I/O."),
+      PanelComponent(id: "socomec-atys-c65", manufacturer: "Socomec", type: "ATS Controller", model: "ATyS C65", rating: "Advanced ATS control", poles: "Door mount", curve: "Metering + load management", about: "Advanced transfer controller adding current, voltage and energy metering, load shedding, fire-lift functions, event alarms and DIRIS Digiware compatibility."),
+      PanelComponent(id: "socomec-atys-bypass", manufacturer: "Socomec", type: "Bypass Changeover Switch", model: "ATyS Bypass", rating: "40-3200A", poles: "Application dependent", curve: "Single/double-line no-break bypass", about: "Maintenance-bypass solution offered in single- and double-line arrangements so transfer equipment can be isolated without a planned load outage. The complete switching sequence and interlocks must be designed as a system."),
+      PanelComponent(id: "socomec-atys-enclosed", manufacturer: "Socomec", type: "Enclosed Changeover Switch", model: "ATyS Enclosed", rating: "40-3200A", poles: "2P/3P/4P by model", curve: "RTSE/ATSE enclosure", about: "Factory-enclosed ATyS solutions in steel or polycarbonate, depending family and rating. Select the complete assembly by IP rating, cable space, temperature rise and short-circuit coordination rather than by the internal switch alone."),
+      PanelComponent(id: "socomec-sircover-enclosed", manufacturer: "Socomec", type: "Enclosed Changeover Switch", model: "SIRCOVER Enclosed", rating: "160-1600A", poles: "3P/4P", curve: "Manual I-0-II enclosure", about: "Factory-enclosed manual SIRCOVER assembly, with polyester versions to 630A and painted-steel versions to 1600A. Check the assembly rating, IP protection and cable-entry arrangement."),
+      PanelComponent(id: "socomec-sircover-ul", manufacturer: "Socomec", type: "Manual Changeover Switch (UL)", model: "SIRCOVER UL", rating: "100-1200A", poles: "2P/3P/4P", curve: "UL 1008 / UL 98", about: "North American manual transfer family with I-0-II operation. UL 1008 transfer and UL 98 disconnect approvals vary by reference, so retain the exact catalogue number and its published short-circuit rating."),
+      PanelComponent(id: "socomec-atys-ul", manufacturer: "Socomec", type: "Motorised Changeover Switch (UL)", model: "ATyS UL 1008", rating: "100-1200A", poles: "2P/3P/4P", curve: "UL 1008, non-automatic", about: "North American non-automatic motorised open-transition switch for an external TSE controller. Do not treat the motorised switch alone as an automatic transfer system."),
+      PanelComponent(id: "socomec-atys-ft", manufacturer: "Socomec", type: "Automatic Transfer Switch (UL)", model: "ATyS FT", rating: "100-400A", poles: "3P/4P/solid neutral", curve: "UL 1008 fast transition", about: "Fully automatic North American open-transition switch with no centre-off position, supplied with the C66 controller. Provides RS485 Modbus and Digiware connectivity for emergency and standby applications."),
+      PanelComponent(id: "socomec-atys-dt", manufacturer: "Socomec", type: "Automatic Transfer Switch (UL)", model: "ATyS DT", rating: "100-400A", poles: "3P/4P/solid neutral", curve: "UL 1008 delayed transition", about: "Fully automatic North American delayed-transition switch with a centre-off interval and C66 controller. Use it where the disconnected time between sources must be deliberately controlled."),
       PanelComponent(id: "abb-ats021", manufacturer: "ABB", type: "ATS Controller", model: "ATS021", rating: "24VDC", poles: "DIN", curve: "Auto transfer control", about: "Automatic transfer controller monitoring the normal supply and commanding changeover to the standby source. Set the transfer and return delays deliberately so brief dips do not start the generator unnecessarily."),
       PanelComponent(id: "deepsea-dse", manufacturer: "Generic", type: "ATS Controller", model: "Generator controller", rating: "12/24VDC", poles: "Door mount", curve: "Auto mains failure", about: "Auto mains failure controller starting the generator on supply loss, transferring load and returning it once the mains is stable. It needs clear wiring to the generator start contacts and both source sensing points."),
       PanelComponent(id: "abb-emax2-e12-ms", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Emax 2 E1.2/MS", rating: "IEC to 1600A", poles: "3P/4P", curve: "No automatic protection", about: "Emax 2 switch-disconnector in the E1.2 frame. MS is neither a motor starter nor a magnetic trip: there is no trip unit and it needs protection upstream."),
@@ -13939,7 +14034,7 @@ enum EquipmentTypeCatalog {
 /// models behind each one. Both board forms read from here so the slots offer
 /// real parts instead of free text.
 enum MainBreakerCatalog {
-  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Isolator", "Fuse Switch"]
+  static let types = ["MCB", "RCBO", "MCCB", "ACB", "Changeover Switch", "Switch Disconnector", "Isolator", "Fuse Switch"]
 
   /// Models the catalog lists for `type`, narrowed to one brand when the board
   /// names one. A brand with nothing catalogued under this type falls back to
@@ -13958,6 +14053,21 @@ enum MainBreakerCatalog {
     guard !trimmed.isEmpty else { return false }
     return entries(for: type, brand: manufacturer)
       .contains { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+  }
+
+  /// The real catalog device represented by a main-breaker slot, used to show
+  /// its bundled product photo rather than a generic text-only field.
+  static func part(for type: String, model: String, manufacturer: String) -> PanelComponent? {
+    let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedModel.isEmpty else { return nil }
+    let trimmedBrand = manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+    let wanted = ([type] + (aliases[type] ?? [])).map(words(in:)).filter { !$0.isEmpty }
+    return ComponentGroup.samples.flatMap(\.items).first { part in
+      let partWords = words(in: part.type)
+      guard wanted.isEmpty || wanted.contains(where: { $0.isSubset(of: partWords) }) else { return false }
+      guard part.model.localizedCaseInsensitiveCompare(trimmedModel) == .orderedSame else { return false }
+      return trimmedBrand.isEmpty || part.manufacturer.localizedCaseInsensitiveCompare(trimmedBrand) == .orderedSame
+    }
   }
 
   /// Every brand the part catalog uses, so a stored "ABB SACE Tmax XT1D" still

@@ -194,3 +194,96 @@ struct BarcodeMapping: Identifiable, Codable, Equatable {
   let updatedAt: String
   let updatedByDeviceID: String
 }
+
+/// A locally saved physical-count draft. Only confirmed counts become stock
+/// movements; this object can be safely resumed after the app is closed.
+struct StocktakeSession: Identifiable, Codable, Equatable {
+  struct Location: Identifiable, Codable, Equatable {
+    let id: String
+    var name: String
+    var isComplete: Bool
+
+    init(id: String = UUID().uuidString, name: String, isComplete: Bool = false) {
+      self.id = id
+      self.name = name
+      self.isComplete = isComplete
+    }
+  }
+
+  struct PackageCount: Identifiable, Codable, Equatable {
+    var id: String { "\(barcode)|\(locationID)" }
+    let barcode: String
+    let packageQuantity: Int
+    let locationID: String
+    var boxes: Int
+  }
+
+  struct Line: Identifiable, Codable, Equatable {
+    let partID: String
+    var packages: [PackageCount]
+    /// Loose/open-box units are kept by location so reopening a shelf does not
+    /// blur where its count came from.
+    var looseUnitsByLocation: [String: Int]
+
+    var id: String { partID }
+    var boxScans: Int { packages.reduce(0) { $0 + $1.boxes } }
+    var boxedUnits: Int { packages.reduce(0) { $0 + ($1.boxes * $1.packageQuantity) } }
+    var looseUnits: Int { looseUnitsByLocation.values.reduce(0, +) }
+    var counted: Int { boxedUnits + looseUnits }
+  }
+
+  struct Scan: Identifiable, Codable, Equatable {
+    let id: String
+    let barcode: String
+    let partID: String
+    let packageQuantity: Int
+    let locationID: String
+    let date: Date
+
+    init(
+      id: String = UUID().uuidString,
+      barcode: String,
+      partID: String,
+      packageQuantity: Int,
+      locationID: String,
+      date: Date = Date()
+    ) {
+      self.id = id
+      self.barcode = barcode
+      self.partID = partID
+      self.packageQuantity = packageQuantity
+      self.locationID = locationID
+      self.date = date
+    }
+  }
+
+  let id: String
+  let startedAt: Date
+  var updatedAt: Date
+  var locations: [Location]
+  var currentLocationID: String
+  var lines: [Line]
+  var scans: [Scan]
+  /// Existing parts deliberately confirmed as absent during final review.
+  var zeroedPartIDs: [String]
+
+  init() {
+    let first = Location(name: "Main warehouse")
+    self.id = UUID().uuidString
+    self.startedAt = Date()
+    self.updatedAt = Date()
+    self.locations = [first]
+    self.currentLocationID = first.id
+    self.lines = []
+    self.scans = []
+    self.zeroedPartIDs = []
+  }
+
+  var currentLocation: Location? {
+    locations.first { $0.id == currentLocationID }
+  }
+
+  var allLocationsComplete: Bool {
+    !locations.isEmpty && locations.allSatisfy(\.isComplete)
+  }
+}

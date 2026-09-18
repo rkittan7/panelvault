@@ -8,13 +8,6 @@ struct ScannedBarcode: Identifiable {
   var id: String { code }
 }
 
-struct StocktakeCount: Identifiable {
-  let partID: String
-  var counted: Int
-  var scans: Int
-  var id: String { partID }
-}
-
 struct BarcodeStocktakeView: View {
   let theme: WarehouseTheme
   @EnvironmentObject private var store: WarehouseStore
@@ -22,29 +15,41 @@ struct BarcodeStocktakeView: View {
 
   @State private var isScanning = true
   @State private var unmappedBarcode: ScannedBarcode?
-  @State private var counts: [StocktakeCount] = []
   @State private var showingManualCode = false
   @State private var manualCode = ""
-  @State private var confirming = false
+  @State private var showingAddLocation = false
+  @State private var newLocation = ""
+  @State private var choosingLoosePart = false
+  @State private var showingReview = false
+  @State private var confirmingDiscard = false
+  @State private var lastAcceptedCode = ""
+  @State private var lastAcceptedAt = Date.distantPast
+  @State private var duplicateNotice = ""
+
+  private var draft: StocktakeSession? { store.activeStocktake }
+  private var lines: [StocktakeSession.Line] { draft?.lines ?? [] }
+  private var currentLocationIsOpen: Bool { draft?.currentLocation?.isComplete == false }
 
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
+          locationCard
           scannerPanel
+          lastScanCard
           summary
-          if counts.isEmpty {
+          if lines.isEmpty {
             GlassCard(theme: theme) {
               VStack(alignment: .leading, spacing: 6) {
-                Text("No boxes counted yet")
+                Text("Nothing counted yet")
                   .font(.headline.weight(.heavy))
-                Text("Scan each box once. The first scan of a new barcode teaches PanelVault what is inside.")
+                Text("Scan each sealed box once, then add loose units from opened boxes.")
                   .font(.subheadline)
                   .foregroundStyle(theme.mutedText)
               }
             }
           } else {
-            ForEach(counts) { line in
+            ForEach(lines) { line in
               stocktakeRow(line)
             }
           }
@@ -59,27 +64,41 @@ struct BarcodeStocktakeView: View {
         ToolbarItem(placement: .topBarLeading) {
           Button("Close") { dismiss() }
         }
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
           Button {
             showingManualCode = true
           } label: {
             Image(systemName: "keyboard")
           }
           .accessibilityLabel("Enter barcode")
+          Menu {
+            Button {
+              choosingLoosePart = true
+            } label: {
+              Label("Add loose item", systemImage: "plus.circle")
+            }
+            Button(role: .destructive) {
+              confirmingDiscard = true
+            } label: {
+              Label("Discard stocktake", systemImage: "trash")
+            }
+          } label: {
+            Image(systemName: "ellipsis.circle")
+          }
         }
       }
       .safeAreaInset(edge: .bottom) {
         Button {
-          confirming = true
+          showingReview = true
         } label: {
-          Label("Review and Set Stock", systemImage: "checkmark.circle.fill")
+          Label(reviewButtonTitle, systemImage: "checkmark.circle.fill")
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
             .frame(height: 52)
         }
         .buttonStyle(.borderedProminent)
         .tint(theme.primary)
-        .disabled(counts.isEmpty)
+        .disabled(lines.isEmpty || draft?.allLocationsComplete != true)
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial)
@@ -93,8 +112,19 @@ struct BarcodeStocktakeView: View {
             packageQuantity: mapping.packageQuantity,
             boxLabel: mapping.boxLabel
           )
-          add(mapping)
+          accept(mapping)
           unmappedBarcode = nil
+        }
+      }
+      .sheet(isPresented: $choosingLoosePart) {
+        PartPickerSheet(theme: theme, title: "Loose Component") { part in
+          store.changeStocktakeLooseUnits(for: part.id, by: 1)
+        }
+      }
+      .fullScreenCover(isPresented: $showingReview) {
+        StocktakeReviewView(theme: theme) {
+          showingReview = false
+          dismiss()
         }
       }
       .alert("Enter barcode", isPresented: $showingManualCode) {
@@ -110,19 +140,113 @@ struct BarcodeStocktakeView: View {
       } message: {
         Text("Useful in Simulator or when a label is damaged.")
       }
-      .alert("Set stock to these counts?", isPresented: $confirming) {
-        Button("Cancel", role: .cancel) {}
-        Button("Set Stock") { commitStocktake() }
+      .alert("Add a location", isPresented: $showingAddLocation) {
+        TextField("Shelf, room, or zone", text: $newLocation)
+        Button("Cancel", role: .cancel) { newLocation = "" }
+        Button("Add") {
+          store.addStocktakeLocation(named: newLocation)
+          newLocation = ""
+          isScanning = true
+        }
       } message: {
-        Text("PanelVault will record an opening adjustment for each counted component. The activity history remains fully auditable.")
+        Text("Count one location at a time to avoid missed or duplicated boxes.")
+      }
+      .alert("Discard this saved stocktake?", isPresented: $confirmingDiscard) {
+        Button("Cancel", role: .cancel) {}
+        Button("Discard", role: .destructive) {
+          store.discardActiveStocktake()
+          dismiss()
+        }
+      } message: {
+        Text("All box scans, loose-unit counts, and completed locations in this draft will be removed.")
       }
     }
     .preferredColorScheme(.dark)
+    .onAppear {
+      _ = store.startOrResumeStocktake()
+      isScanning = currentLocationIsOpen
+    }
+  }
+
+  private var reviewButtonTitle: String {
+    guard draft?.allLocationsComplete == true else { return "Finish Every Location First" }
+    return "Review Variances"
+  }
+
+  private var locationCard: some View {
+    GlassCard(theme: theme, padding: 14) {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("COUNTING LOCATION")
+              .font(.caption2.weight(.black))
+              .foregroundStyle(theme.mutedText)
+            Menu {
+              ForEach(draft?.locations ?? []) { location in
+                Button {
+                  store.selectStocktakeLocation(location.id)
+                  isScanning = !location.isComplete
+                } label: {
+                  Label(location.name, systemImage: location.isComplete ? "checkmark.circle.fill" : "circle")
+                }
+              }
+              Divider()
+              Button {
+                showingAddLocation = true
+              } label: {
+                Label("Add location", systemImage: "plus")
+              }
+            } label: {
+              HStack(spacing: 6) {
+                Text(draft?.currentLocation?.name ?? "Choose location")
+                  .font(.headline.weight(.heavy))
+                Image(systemName: "chevron.down")
+                  .font(.caption.weight(.bold))
+              }
+            }
+          }
+          Spacer()
+          Text("\(draft?.locations.filter(\.isComplete).count ?? 0)/\(draft?.locations.count ?? 0)")
+            .font(.subheadline.weight(.black))
+            .foregroundStyle(theme.mutedText)
+        }
+
+        Button {
+          let complete = !(draft?.currentLocation?.isComplete ?? false)
+          store.setCurrentStocktakeLocationComplete(complete)
+          isScanning = !complete
+        } label: {
+          Label(
+            currentLocationIsOpen ? "Mark Location Complete" : "Reopen This Location",
+            systemImage: currentLocationIsOpen ? "checkmark.circle" : "arrow.uturn.backward.circle"
+          )
+          .font(.subheadline.weight(.bold))
+          .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(currentLocationIsOpen ? theme.secondary : theme.primary)
+      }
+    }
   }
 
   private var scannerPanel: some View {
     ZStack(alignment: .bottom) {
-      if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+      if !currentLocationIsOpen {
+        Rectangle()
+          .fill(theme.surface)
+          .overlay {
+            VStack(spacing: 8) {
+              Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 38, weight: .bold))
+                .foregroundStyle(theme.primary)
+              Text("Location complete")
+                .font(.headline.weight(.heavy))
+              Text("Choose another location or reopen this one.")
+                .font(.caption)
+                .foregroundStyle(theme.mutedText)
+            }
+          }
+      } else if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
         BarcodeCameraView(isScanning: $isScanning, onRecognized: handle)
       } else {
         Rectangle()
@@ -143,7 +267,7 @@ struct BarcodeStocktakeView: View {
         Label("Point at one box barcode", systemImage: "viewfinder")
           .font(.footnote.weight(.bold))
         Spacer()
-        Text("\(counts.reduce(0) { $0 + $1.scans }) scans")
+        Text("\(lines.reduce(0) { $0 + $1.boxScans }) scans")
           .font(.caption.weight(.black))
       }
       .padding(12)
@@ -154,57 +278,130 @@ struct BarcodeStocktakeView: View {
     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.12)))
   }
 
+  @ViewBuilder
+  private var lastScanCard: some View {
+    if !duplicateNotice.isEmpty {
+      Label(duplicateNotice, systemImage: "exclamationmark.triangle.fill")
+        .font(.footnote.weight(.bold))
+        .foregroundStyle(Color.orange)
+        .padding(.horizontal, 4)
+    } else if let scan = draft?.scans.last, let part = store.part(for: scan.partID) {
+      GlassCard(theme: theme, padding: 12) {
+        HStack(spacing: 10) {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundStyle(theme.primary)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Last: \(part.displayName)")
+              .font(.subheadline.weight(.bold))
+              .lineLimit(1)
+            Text("Added 1 box × \(scan.packageQuantity)")
+              .font(.caption)
+              .foregroundStyle(theme.mutedText)
+          }
+          Spacer()
+          if scan.locationID == draft?.currentLocationID && currentLocationIsOpen {
+            Button("Undo") {
+              store.undoLastStocktakeScan()
+              lastAcceptedCode = ""
+            }
+            .font(.subheadline.weight(.bold))
+            .buttonStyle(.bordered)
+          }
+        }
+      }
+    }
+  }
+
   private var summary: some View {
     HStack(spacing: 10) {
-      Label("\(counts.count) component types", systemImage: "shippingbox.fill")
+      Label("\(lines.count) component types", systemImage: "shippingbox.fill")
       Spacer()
-      Text("\(counts.reduce(0) { $0 + $1.counted }) units counted")
+      Text("\(lines.reduce(0) { $0 + $1.counted }) units counted")
     }
     .font(.subheadline.weight(.bold))
     .foregroundStyle(theme.mutedText)
     .padding(.horizontal, 4)
   }
 
-  private func stocktakeRow(_ line: StocktakeCount) -> some View {
+  private func stocktakeRow(_ line: StocktakeSession.Line) -> some View {
     let part = store.part(for: line.partID)
     let current = store.onHand[line.partID] ?? 0
     return GlassCard(theme: theme, padding: 12) {
-      HStack(spacing: 12) {
-        Image(systemName: "barcode")
-          .font(.system(size: 20, weight: .semibold))
-          .foregroundStyle(theme.secondary)
-          .frame(width: 40, height: 40)
-          .background(theme.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        VStack(alignment: .leading, spacing: 3) {
-          Text(part?.displayName ?? line.partID)
-            .font(.subheadline.weight(.heavy))
-            .lineLimit(2)
-          Text("Recorded \(current)  ·  \(line.scans) box scan\(line.scans == 1 ? "" : "s")")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(theme.mutedText)
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 12) {
+          Image(systemName: "shippingbox.fill")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(theme.secondary)
+            .frame(width: 40, height: 40)
+            .background(theme.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+          VStack(alignment: .leading, spacing: 3) {
+            Text(part?.displayName ?? line.partID)
+              .font(.subheadline.weight(.heavy))
+              .lineLimit(2)
+            Text("Recorded \(current)  ·  Counted \(line.counted)")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(theme.mutedText)
+          }
+          Spacer(minLength: 6)
+          Text("\(line.counted)")
+            .font(.title2.weight(.black))
         }
-        Spacer(minLength: 6)
-        Button { change(line.partID, by: -1) } label: {
-          Image(systemName: "minus")
+        Text(packageSummary(line))
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(theme.mutedText)
+        HStack {
+          Text("Loose in this location")
+            .font(.subheadline.weight(.bold))
+          Spacer()
+          Button { store.changeStocktakeLooseUnits(for: line.partID, by: -1) } label: {
+            Image(systemName: "minus")
+          }
+          .buttonStyle(.bordered)
+          .disabled(!currentLocationIsOpen || currentLocationLooseUnits(line) == 0)
+          Text("\(currentLocationLooseUnits(line))")
+            .font(.headline.weight(.black))
+            .frame(minWidth: 36)
+          Button { store.changeStocktakeLooseUnits(for: line.partID, by: 1) } label: {
+            Image(systemName: "plus")
+          }
+          .buttonStyle(.bordered)
+          .disabled(!currentLocationIsOpen)
         }
-        .buttonStyle(.bordered)
-        .disabled(line.counted <= 0)
-        Text("\(line.counted)")
-          .font(.title3.weight(.black))
-          .frame(minWidth: 34)
-        Button { change(line.partID, by: 1) } label: {
-          Image(systemName: "plus")
-        }
-        .buttonStyle(.bordered)
       }
     }
   }
 
+  private func currentLocationLooseUnits(_ line: StocktakeSession.Line) -> Int {
+    guard let locationID = draft?.currentLocationID else { return 0 }
+    return line.looseUnitsByLocation[locationID] ?? 0
+  }
+
+  private func packageSummary(_ line: StocktakeSession.Line) -> String {
+    var grouped: [Int: Int] = [:]
+    for package in line.packages {
+      grouped[package.packageQuantity, default: 0] += package.boxes
+    }
+    var parts = grouped.keys.sorted().map { quantity in
+      let boxes = grouped[quantity] ?? 0
+      return "\(boxes) box\(boxes == 1 ? "" : "es") × \(quantity)"
+    }
+    if line.looseUnits > 0 { parts.append("\(line.looseUnits) loose") }
+    return parts.isEmpty ? "Loose units only" : parts.joined(separator: " + ")
+  }
+
   private func handle(_ barcode: ScannedBarcode) {
     let code = barcode.code.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !code.isEmpty, unmappedBarcode == nil else { return }
+    guard currentLocationIsOpen, !code.isEmpty, unmappedBarcode == nil else { return }
+    let now = Date()
+    if code.caseInsensitiveCompare(lastAcceptedCode) == .orderedSame,
+       now.timeIntervalSince(lastAcceptedAt) < 1.5 {
+      duplicateNotice = "Duplicate ignored — move to the next box, then scan again."
+      UINotificationFeedbackGenerator().notificationOccurred(.warning)
+      return
+    }
+    duplicateNotice = ""
     if let mapping = store.barcodeMapping(for: code) {
-      add(mapping)
+      accept(mapping)
     } else {
       isScanning = false
       unmappedBarcode = ScannedBarcode(code: code, symbology: barcode.symbology)
@@ -212,35 +409,147 @@ struct BarcodeStocktakeView: View {
     }
   }
 
-  private func add(_ mapping: BarcodeMapping) {
-    if let index = counts.firstIndex(where: { $0.partID == mapping.partID }) {
-      counts[index].counted += mapping.packageQuantity
-      counts[index].scans += 1
-    } else {
-      counts.append(StocktakeCount(partID: mapping.partID, counted: mapping.packageQuantity, scans: 1))
-    }
+  private func accept(_ mapping: BarcodeMapping) {
+    store.recordStocktakeScan(mapping)
+    lastAcceptedCode = mapping.code
+    lastAcceptedAt = Date()
+    duplicateNotice = ""
     UINotificationFeedbackGenerator().notificationOccurred(.success)
   }
+}
 
-  private func change(_ partID: String, by amount: Int) {
-    guard let index = counts.firstIndex(where: { $0.partID == partID }) else { return }
-    counts[index].counted = max(0, counts[index].counted + amount)
+struct StocktakeReviewView: View {
+  let theme: WarehouseTheme
+  let onCommitted: () -> Void
+
+  @EnvironmentObject private var store: WarehouseStore
+  @Environment(\.dismiss) private var dismiss
+  @State private var confirming = false
+
+  private var draft: StocktakeSession? { store.activeStocktake }
+  private var countedPartIDs: Set<String> { Set(draft?.lines.map(\.partID) ?? []) }
+  private var unscannedEntries: [StockEntry] {
+    store.entries.filter { $0.onHand != 0 && !countedPartIDs.contains($0.part.id) }
   }
 
-  private func commitStocktake() {
-    let current = store.onHand
-    let movements = counts.compactMap { line -> StockMovement? in
-      let delta = line.counted - (current[line.partID] ?? 0)
-      guard delta != 0 else { return nil }
-      return StockMovement(
-        partID: line.partID,
-        kind: .adjust,
-        quantity: delta,
-        reference: "Opening stocktake · barcode"
-      )
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          GlassCard(theme: theme, padding: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+              Label("All locations complete", systemImage: "checkmark.seal.fill")
+                .font(.headline.weight(.heavy))
+                .foregroundStyle(theme.primary)
+              Text(draft?.locations.map(\.name).joined(separator: " · ") ?? "")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(theme.mutedText)
+            }
+          }
+
+          Text("COUNTED VARIANCES")
+            .font(.caption2.weight(.black))
+            .foregroundStyle(theme.mutedText)
+            .padding(.horizontal, 4)
+
+          ForEach(draft?.lines ?? []) { line in
+            varianceRow(partID: line.partID, physicalCount: line.counted)
+          }
+
+          if !unscannedEntries.isEmpty {
+            Text("NOT SCANNED")
+              .font(.caption2.weight(.black))
+              .foregroundStyle(theme.mutedText)
+              .padding(.horizontal, 4)
+              .padding(.top, 8)
+            GlassCard(theme: theme, padding: 14) {
+              Text("These products currently have stock but were not counted. They stay unchanged unless you explicitly mark them missing.")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(theme.mutedText)
+            }
+            ForEach(unscannedEntries) { entry in
+              missingRow(entry)
+            }
+          }
+        }
+        .padding(18)
+        .padding(.bottom, 92)
+      }
+      .background(theme.background.ignoresSafeArea())
+      .navigationTitle("Review Stocktake")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Back") { dismiss() }
+        }
+      }
+      .safeAreaInset(edge: .bottom) {
+        Button {
+          confirming = true
+        } label: {
+          Label("Apply Physical Count", systemImage: "checkmark.shield.fill")
+            .font(.headline.weight(.bold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(theme.primary)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+      }
+      .alert("Apply this physical count?", isPresented: $confirming) {
+        Button("Cancel", role: .cancel) {}
+        Button("Apply Count") {
+          store.commitActiveStocktake()
+          onCommitted()
+        }
+      } message: {
+        Text("PanelVault will create auditable adjustments for every variance. This stocktake will remain in delivery and activity history.")
+      }
     }
-    store.append(movements)
-    dismiss()
+    .preferredColorScheme(.dark)
+  }
+
+  private func varianceRow(partID: String, physicalCount: Int) -> some View {
+    let recorded = store.onHand[partID] ?? 0
+    let difference = physicalCount - recorded
+    return GlassCard(theme: theme, padding: 12) {
+      HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(store.part(for: partID)?.displayName ?? partID)
+            .font(.subheadline.weight(.heavy))
+            .lineLimit(2)
+          Text("Recorded \(recorded)  →  Counted \(physicalCount)")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(theme.mutedText)
+        }
+        Spacer()
+        Text(difference == 0 ? "No change" : String(format: "%+d", difference))
+          .font(.subheadline.weight(.black))
+          .foregroundStyle(difference == 0 ? theme.mutedText : (difference < 0 ? Color.orange : theme.primary))
+      }
+    }
+  }
+
+  private func missingRow(_ entry: StockEntry) -> some View {
+    let missing = draft?.zeroedPartIDs.contains(entry.part.id) == true
+    return GlassCard(theme: theme, padding: 12) {
+      Toggle(isOn: Binding(
+        get: { missing },
+        set: { store.setStocktakePartMissing(entry.part.id, missing: $0) }
+      )) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(entry.part.displayName)
+            .font(.subheadline.weight(.heavy))
+            .lineLimit(2)
+          Text(missing ? "Set \(entry.onHand) → 0" : "Keep recorded quantity: \(entry.onHand)")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(missing ? Color.orange : theme.mutedText)
+        }
+      }
+      .tint(Color.orange)
+    }
   }
 }
 

@@ -54,6 +54,7 @@
             </label>
           </div>
           <button class="btn-ios" type="submit">Sign in</button>
+          <button class="auth-link" id="forgot-password" type="button">Forgot password?</button>
         </form>
 
         <form id="form-signup" class="auth-form hidden" role="tabpanel">
@@ -95,6 +96,10 @@
             <label class="ios-row">
               <span>Name</span>
               <input name="name" placeholder="Your name" required>
+            </label>
+            <label class="ios-row">
+              <span>Email</span>
+              <input name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
             </label>
             <label class="ios-row">
               <span>Password</span>
@@ -170,7 +175,27 @@
     </section>
   </div>
 
+  <section id="startup-error" class="startup-error hidden" role="alert" aria-live="assertive">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
+    </div>
+    <h1>PanelVault could not start</h1>
+    <p>The application files did not load correctly. Reload this page; if the problem continues, contact your PanelVault administrator.</p>
+    <button type="button" class="btn-ios" onclick="location.reload()">Reload PanelVault</button>
+  </section>
+
   <div id="modal-root"></div>
+  <script>
+    /* A classic script still runs when the module has a syntax error. The
+       module clears this watchdog as its first action after parsing. */
+    window.panelVaultStartupTimer = window.setTimeout(function () {
+      var auth = document.getElementById("auth");
+      var main = document.getElementById("main");
+      if (auth && main && auth.classList.contains("hidden") && main.classList.contains("hidden")) {
+        document.getElementById("startup-error").classList.remove("hidden");
+      }
+    }, 2500);
+  </script>
   <script>
     /* Skin picker. Kept out of app.js so the chrome keeps working even if the
        portal bundle fails to load. */

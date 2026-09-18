@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 
 /// Owns the movement log and part settings, persists them as JSON files in
 /// Application Support, and serves derived stock state to the views.
@@ -16,6 +17,7 @@ final class WarehouseStore: ObservableObject {
   /// Same shape as catalog parts so the rest of the app cannot tell them apart.
   @Published private(set) var customParts: [CatalogPart] = []
   @Published private(set) var barcodeMappings: [BarcodeMapping] = []
+  @Published private(set) var activeStocktake: StocktakeSession?
 
   /// Confirmed delivery notes, newest last. Evidence for the movements above.
   @Published private(set) var deliveries: [DeliveryBatch] = []
@@ -31,13 +33,26 @@ final class WarehouseStore: ObservableObject {
   }
 
   private let queue = DispatchQueue(label: "warehouse.persistence", qos: .utility)
+  private let networkQueue = DispatchQueue(label: "warehouse.network-path", qos: .utility)
+  private let pathMonitor = NWPathMonitor()
   private let cloud = WarehouseCloudClient()
   private var syncMetadata = WarehouseSyncMetadata()
+  private var retryTask: Task<Void, Never>?
+  private var retryAttempt = 0
 
   init() {
     account = WarehouseAccountKeychain.load()
     load()
     syncPhase = account == nil ? .signedOut : .idle
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      guard path.status == .satisfied else { return }
+      Task { @MainActor [weak self] in
+        self?.retryTask?.cancel()
+        self?.retryAttempt = 0
+        self?.triggerSync()
+      }
+    }
+    pathMonitor.start(queue: networkQueue)
     if account != nil { triggerSync() }
   }
 
@@ -142,6 +157,185 @@ final class WarehouseStore: ObservableObject {
   func barcodeMapping(for rawCode: String) -> BarcodeMapping? {
     let code = WarehouseStore.normalizedBarcode(rawCode)
     return barcodeMappings.first { $0.code == code }
+  }
+
+  // MARK: - Physical stocktake draft
+
+  @discardableResult
+  func startOrResumeStocktake() -> StocktakeSession {
+    if let activeStocktake { return activeStocktake }
+    let session = StocktakeSession()
+    activeStocktake = session
+    persistActiveStocktake()
+    return session
+  }
+
+  func addStocktakeLocation(named rawName: String) {
+    guard var draft = activeStocktake else { return }
+    let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return }
+    let location = StocktakeSession.Location(name: name)
+    draft.locations.append(location)
+    draft.currentLocationID = location.id
+    saveStocktake(draft)
+  }
+
+  func selectStocktakeLocation(_ id: String) {
+    guard var draft = activeStocktake,
+          draft.locations.contains(where: { $0.id == id }) else { return }
+    draft.currentLocationID = id
+    saveStocktake(draft)
+  }
+
+  func setCurrentStocktakeLocationComplete(_ complete: Bool) {
+    guard var draft = activeStocktake,
+          let index = draft.locations.firstIndex(where: { $0.id == draft.currentLocationID }) else { return }
+    draft.locations[index].isComplete = complete
+    saveStocktake(draft)
+  }
+
+  func recordStocktakeScan(_ mapping: BarcodeMapping) {
+    guard var draft = activeStocktake,
+          let location = draft.currentLocation,
+          !location.isComplete else { return }
+    let scan = StocktakeSession.Scan(
+      barcode: mapping.code,
+      partID: mapping.partID,
+      packageQuantity: mapping.packageQuantity,
+      locationID: location.id
+    )
+    if let lineIndex = draft.lines.firstIndex(where: { $0.partID == mapping.partID }) {
+      if let packageIndex = draft.lines[lineIndex].packages.firstIndex(where: {
+        $0.barcode == mapping.code && $0.locationID == location.id
+      }) {
+        draft.lines[lineIndex].packages[packageIndex].boxes += 1
+      } else {
+        draft.lines[lineIndex].packages.append(.init(
+          barcode: mapping.code,
+          packageQuantity: mapping.packageQuantity,
+          locationID: location.id,
+          boxes: 1
+        ))
+      }
+    } else {
+      draft.lines.append(.init(
+        partID: mapping.partID,
+        packages: [.init(
+          barcode: mapping.code,
+          packageQuantity: mapping.packageQuantity,
+          locationID: location.id,
+          boxes: 1
+        )],
+        looseUnitsByLocation: [:]
+      ))
+    }
+    draft.scans.append(scan)
+    saveStocktake(draft)
+  }
+
+  func changeStocktakeLooseUnits(for partID: String, by amount: Int) {
+    guard var draft = activeStocktake,
+          let location = draft.currentLocation,
+          !location.isComplete else { return }
+    let lineIndex: Int
+    if let existing = draft.lines.firstIndex(where: { $0.partID == partID }) {
+      lineIndex = existing
+    } else {
+      draft.lines.append(.init(partID: partID, packages: [], looseUnitsByLocation: [:]))
+      lineIndex = draft.lines.count - 1
+    }
+    let current = draft.lines[lineIndex].looseUnitsByLocation[location.id] ?? 0
+    draft.lines[lineIndex].looseUnitsByLocation[location.id] = max(0, current + amount)
+    removeEmptyStocktakeLines(from: &draft)
+    saveStocktake(draft)
+  }
+
+  func undoLastStocktakeScan() {
+    guard var draft = activeStocktake, let scan = draft.scans.popLast(),
+          let lineIndex = draft.lines.firstIndex(where: { $0.partID == scan.partID }),
+          let packageIndex = draft.lines[lineIndex].packages.firstIndex(where: {
+            $0.barcode == scan.barcode && $0.locationID == scan.locationID
+          }) else { return }
+    draft.lines[lineIndex].packages[packageIndex].boxes -= 1
+    if draft.lines[lineIndex].packages[packageIndex].boxes <= 0 {
+      draft.lines[lineIndex].packages.remove(at: packageIndex)
+    }
+    removeEmptyStocktakeLines(from: &draft)
+    saveStocktake(draft)
+  }
+
+  func setStocktakePartMissing(_ partID: String, missing: Bool) {
+    guard var draft = activeStocktake else { return }
+    draft.zeroedPartIDs.removeAll { $0 == partID }
+    if missing { draft.zeroedPartIDs.append(partID) }
+    saveStocktake(draft)
+  }
+
+  func discardActiveStocktake() {
+    activeStocktake = nil
+    // Use the persistence queue so a previously queued save cannot recreate
+    // the draft after the user discards it.
+    queue.async {
+      try? FileManager.default.removeItem(at: WarehouseStore.activeStocktakeURL)
+    }
+  }
+
+  /// Applies the reviewed physical count and preserves a stocktake evidence
+  /// batch alongside the append-only adjustment movements.
+  func commitActiveStocktake() {
+    guard let draft = activeStocktake, draft.allLocationsComplete else { return }
+    let current = onHand
+    var finalCounts = Dictionary(uniqueKeysWithValues: draft.lines.map { ($0.partID, $0.counted) })
+    for partID in draft.zeroedPartIDs where finalCounts[partID] == nil {
+      finalCounts[partID] = 0
+    }
+
+    var movements: [StockMovement] = []
+    var evidence: [DeliveryBatch.Line] = []
+    for (partID, physicalCount) in finalCounts.sorted(by: { $0.key < $1.key }) {
+      let delta = physicalCount - (current[partID] ?? 0)
+      let movement = delta == 0 ? nil : StockMovement(
+        partID: partID,
+        kind: .adjust,
+        quantity: delta,
+        reference: "Physical stocktake"
+      )
+      if let movement { movements.append(movement) }
+      evidence.append(.init(
+        id: UUID().uuidString,
+        rawText: "Physical count: \(physicalCount)",
+        quantity: physicalCount,
+        partID: partID,
+        included: true,
+        movementID: movement?.id
+      ))
+    }
+    let locationNames = draft.locations.map(\.name).joined(separator: ", ")
+    let batch = DeliveryBatch(
+      noteNumber: "ST-\(draft.id.prefix(8).uppercased())",
+      supplier: locationNames,
+      source: .stocktake,
+      scannedAt: draft.startedAt,
+      pageCount: 0,
+      lines: evidence,
+      movementIDs: movements.map(\.id)
+    )
+    activeStocktake = nil
+    queue.async {
+      try? FileManager.default.removeItem(at: WarehouseStore.activeStocktakeURL)
+    }
+    confirm(batch, movements: movements)
+  }
+
+  private func removeEmptyStocktakeLines(from draft: inout StocktakeSession) {
+    draft.lines.removeAll { $0.boxScans == 0 && $0.looseUnits == 0 }
+  }
+
+  private func saveStocktake(_ draft: StocktakeSession) {
+    var updated = draft
+    updated.updatedAt = Date()
+    activeStocktake = updated
+    persistActiveStocktake()
   }
 
   // MARK: - Mutations
@@ -272,7 +466,7 @@ final class WarehouseStore: ObservableObject {
 
   private var hasLocalCompanyData: Bool {
     !movements.isEmpty || !customParts.isEmpty || !barcodeMappings.isEmpty
-      || !settings.isEmpty || !deliveries.isEmpty
+      || !settings.isEmpty || !deliveries.isEmpty || activeStocktake != nil
   }
 
   private func preventCompanyChange(to companyCode: String) throws {
@@ -290,6 +484,9 @@ final class WarehouseStore: ObservableObject {
   }
 
   func signOut() {
+    retryTask?.cancel()
+    retryTask = nil
+    retryAttempt = 0
     account = nil
     WarehouseAccountKeychain.save(nil)
     syncPhase = .signedOut
@@ -370,9 +567,29 @@ final class WarehouseStore: ObservableObject {
         }
         persistSyncMetadata()
       }
+      retryTask?.cancel()
+      retryTask = nil
+      retryAttempt = 0
       syncPhase = .idle
     } catch {
       syncPhase = .failed(error.localizedDescription)
+      scheduleRetry()
+    }
+  }
+
+  /// Failed work remains on disk. Retry slowly enough that a phone with no
+  /// signal cannot hammer Cloud, but cap the delay so reconnecting in the
+  /// workshop recovers without a manual tap. NWPathMonitor resets the delay as
+  /// soon as an available path returns.
+  private func scheduleRetry() {
+    guard account != nil else { return }
+    retryTask?.cancel()
+    let delay = min(300, 2 << min(retryAttempt, 7))
+    retryAttempt = min(retryAttempt + 1, 8)
+    retryTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+      guard !Task.isCancelled else { return }
+      await self?.sync()
     }
   }
 
@@ -448,6 +665,7 @@ final class WarehouseStore: ObservableObject {
   private static var syncMetadataURL: URL { directory.appendingPathComponent("cloudSync.json") }
   private static var barcodeMappingsURL: URL { directory.appendingPathComponent("barcodeMappings.json") }
   private static var deliveriesURL: URL { directory.appendingPathComponent("deliveries.json") }
+  private static var activeStocktakeURL: URL { directory.appendingPathComponent("activeStocktake.json") }
 
   private static func normalizedBarcode(_ value: String) -> String {
     value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -478,6 +696,10 @@ final class WarehouseStore: ObservableObject {
        let decoded = try? JSONDecoder.warehouse.decode([DeliveryBatch].self, from: data) {
       deliveries = decoded
     }
+    if let data = try? Data(contentsOf: WarehouseStore.activeStocktakeURL),
+       let decoded = try? JSONDecoder.warehouse.decode(StocktakeSession.self, from: data) {
+      activeStocktake = decoded
+    }
   }
 
   private func persistMovements() {
@@ -498,6 +720,11 @@ final class WarehouseStore: ObservableObject {
 
   private func persistDeliveries() {
     persist(deliveries, to: WarehouseStore.deliveriesURL)
+  }
+
+  private func persistActiveStocktake() {
+    guard let activeStocktake else { return }
+    persist(activeStocktake, to: WarehouseStore.activeStocktakeURL)
   }
 
   private func persist<T: Encodable>(_ value: T, to url: URL) {
