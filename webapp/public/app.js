@@ -40,7 +40,7 @@ const POLE_RATINGS = ["1P", "1P+N", "2P", "3P", "3P+N", "4P", "3PH", "1PH", "DIN
 const BOARD_MANUFACTURERS = [
   "Generic", "Rittal", "ABB", "Yakir", "Tamhash", "HAGER", "Delta",
   "Schneider", "Siemens", "Eaton", "Legrand", "Mean Well", "Phoenix",
-  "Danfoss", "Socomec",
+  "Danfoss", "Socomec", "GIC",
 ];
 
 const $ = (sel) => document.querySelector(sel);
@@ -231,8 +231,80 @@ function imageURL(file) {
   return `/catalog-images/${path}${version ? `?v=${encodeURIComponent(version)}` : ""}`;
 }
 
-function partPhotoURL(part) {
-  return imageURL(catalogImages.components[part && (part.sourceID || part.id)]);
+function partPhotoURL(part, pole, klass) {
+  const id = part && (part.sourceID || part.id);
+  // Most specific first: a picture of this class in this pole count, then of
+  // the pole, then of the class, then the part's own.
+  const pole_ = pole ? String(pole).toLowerCase() : "";
+  const class_ = klass ? String(klass).toLowerCase() : "";
+  const tries = [];
+  if (class_ && pole_) tries.push(`${id}-${class_}-${pole_}`);
+  if (pole_) tries.push(`${id}-${pole_}`);
+  if (class_) tries.push(`${id}-${class_}`);
+  tries.push(id);
+  for (const key of tries) {
+    const url = imageURL(catalogImages.components[key]);
+    if (url) return url;
+  }
+  return null;
+}
+
+/** The breaking-capacity classes a part is sold in, with the kA each one
+ * stands for. An MCCB's class letter is not a trip curve — it sets how much
+ * fault current the breaker interrupts, so an XT1 N and an XT1 H are the same
+ * breaker at 36kA and 70kA. Read from the description, which is where the
+ * catalog states them. Kept in step with PanelComponent.classOptions. */
+function classesOffered(part) {
+  const sentence = String((part && part.about) || "").match(/Classes[^.]*\./);
+  if (!sentence) return [];
+  const words = sentence[0].slice("Classes".length).split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const isClassLetter = (word) => /^[A-Z]$/.test(word);
+
+  const paired = [];
+  const seen = new Set();
+  words.forEach((word, index) => {
+    if (!isClassLetter(word) || seen.has(word)) return;
+    const rating = Number(words[index + 1]);
+    if (!Number.isInteger(rating)) return;
+    seen.add(word);
+    paired.push({ letter: word, interrupting: rating });
+  });
+  if (paired.length > 1) return paired;
+
+  const letters = [];
+  seen.clear();
+  words.forEach((word) => {
+    if (!isClassLetter(word) || seen.has(word)) return;
+    seen.add(word);
+    letters.push({ letter: word, interrupting: null });
+  });
+  return letters.length > 1 ? letters : [];
+}
+
+/** "N — 36kA at 415V", or the letter alone where no rating is stated. */
+function classLabel(option) {
+  return option.interrupting ? `${option.letter} — ${option.interrupting}kA at 415V` : `Class ${option.letter}`;
+}
+
+/** The pole counts a part is sold in, read off the row it already carries:
+ * "3P/4P" is two, "1P-4P" is four, and a part built one way only has none to
+ * choose between. Kept in step with PanelComponent.poleOptions in the app. */
+function polesOffered(part) {
+  const field = String((part && part.poles) || "").toUpperCase().replace(/\s+/g, "");
+  const pole = (text) => (/^[1-4]P$/.test(text) ? text : null);
+  if (field.includes("/")) {
+    const listed = field.split("/").map(pole).filter(Boolean);
+    return listed.length > 1 ? listed : [];
+  }
+  if (field.includes("-")) {
+    const ends = field.split("-").map(pole).filter(Boolean);
+    if (ends.length !== 2) return [];
+    const low = Number(ends[0][0]);
+    const high = Number(ends[1][0]);
+    if (low >= high) return [];
+    return Array.from({ length: high - low + 1 }, (_, step) => `${low + step}P`);
+  }
+  return [];
 }
 
 function brandLogoURL(name) {
@@ -521,7 +593,7 @@ const NAV_ITEMS = [
   { view: "catalog", label: "Catalog", icon: "catalog", group: "operations" },
   { view: "deliveries", label: "Deliveries", icon: "note", group: "operations", count: () => state.deliveries.length },
   { view: "team", label: "Team", icon: "team", group: "operations", adminOnly: true, count: () => (state.members || []).length },
-  { view: "contacts", label: "Companies & Customers", icon: "building", group: "reference", count: () => new Set(state.projects.map((project) => project.customer).filter(Boolean)).size },
+  { view: "contacts", label: "Customers", icon: "building", group: "reference", count: () => contactArchiveNames().length },
   { view: "manufacturers", label: "Manufacturers", icon: "tag", group: "reference" },
 ];
 
@@ -1647,15 +1719,17 @@ async function updateBoardStage(board, stageID) {
   }
 }
 
-function boardProperty(iconName, label, value, onClick) {
+function boardProperty(iconName, label, value, onClick, mark = null) {
   const card = el(onClick ? "button" : "div", `board-property${onClick ? " clickable" : ""}`);
   if (onClick) {
     card.type = "button";
     card.setAttribute("aria-label", `${label}: ${value || "Not set"}. Open details`);
     card.addEventListener("click", onClick);
   }
-  card.append(chipIcon(iconName, "var(--primary)"));
-  const copy = el("div");
+  // `mark` is for a property that has a picture of its own - a manufacturer is
+  // known by its logo before its name.
+  card.append(mark || chipIcon(iconName, "var(--primary)"));
+  const copy = el("div", "board-property-copy");
   copy.append(el("span", null, label), el("strong", null, value || "Not set"));
   card.append(copy);
   if (onClick) card.append(icon("chevron", 15));
@@ -1665,9 +1739,10 @@ function boardProperty(iconName, label, value, onClick) {
 function openComponentSourceCard(board, component, isDraft = false) {
   openModal((modal, close) => {
     modal.classList.add("wide", "component-source-modal");
-    const displayName = isDraft
-      ? component.description || [component.manufacturer, component.model].filter(Boolean).join(" ") || "Extracted component"
-      : [component.manufacturer, component.model].filter(Boolean).join(" ") || "Board component";
+    const displayName = componentTitle(
+      component.manufacturer, component.model, component.rating,
+      isDraft ? (component.description || "Extracted component") : "Board component",
+    );
     const sourceLabel = component.source === "ai" ? "Electrical scheme · AI extraction" : "Added manually";
     const member = (state.members || []).find((person) => person.id === component.addedBy);
 
@@ -1704,6 +1779,8 @@ function openComponentSourceCard(board, component, isDraft = false) {
     sourceCard.append(sourceCopy);
     modal.append(sourceCard);
 
+    if (component.partID) modal.append(partManualCard(component.partID, close));
+
     if (component.sourcePage && (board.attachments || []).some((file) => file.kind === "scheme")) {
       modal.append(el("p", "component-source-note", `Open the board’s Schemes & photos tab and check page ${component.sourcePage} of the attached drawing.`));
     }
@@ -1716,6 +1793,79 @@ function openComponentSourceCard(board, component, isDraft = false) {
   });
 }
 
+/** The manufacturer's manual for a part.
+ *
+ * Kept per part rather than per board component: the datasheet for an isolated
+ * relay output module is the same document whichever board it lands on, so it
+ * is attached once and shows up beside the part everywhere it appears. */
+const partManual = (partID) => (state.partManuals || {})[partID] || null;
+
+const manualURL = (partID) => `/api/part-manual?partID=${encodeURIComponent(partID)}`;
+
+function partManualCard(partID, onChanged) {
+  const manual = partManual(partID);
+  const card = el("section", "component-origin-card part-manual-card");
+  card.append(chipIcon("note", manual ? "var(--positive)" : "var(--ink-3)"));
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "Manual"));
+  if (manual) {
+    const link = el("a", "part-manual-link", manual.name);
+    link.href = manualURL(partID);
+    link.target = "_blank";
+    link.rel = "noopener";
+    copy.append(el("h4", null, "Datasheet on file"), link);
+    copy.append(el("p", null, `${Math.max(1, Math.round(manual.size / 1024)).toLocaleString()} KB · added ${new Date(manual.createdAt).toLocaleDateString()}`));
+  } else {
+    copy.append(el("h4", null, "No manual yet"),
+      el("p", null, "Attach the manufacturer's datasheet and it stays with this part on every board."));
+  }
+  card.append(copy);
+  if (isAdmin()) {
+    const actions = el("div", "part-manual-actions");
+    actions.append(smallBtn(manual ? "Replace" : "Add manual", manual ? "" : "accent", "plus", () => {
+      pickPartManual(partID, onChanged);
+    }));
+    if (manual) {
+      actions.append(smallBtn("Remove", "ghost", "x", async () => {
+        await api("/api/part-manual-delete", { partID });
+        await refresh();
+        if (onChanged) onChanged();
+      }));
+    }
+    card.append(actions);
+  }
+  return card;
+}
+
+/** Opens the file picker, then uploads whatever comes back. */
+function pickPartManual(partID, onChanged) {
+  const input = el("input");
+  input.type = "file";
+  input.accept = "application/pdf,image/jpeg,image/png,image/webp,image/heic";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 6_000_000) {
+      window.alert("Manuals must be 6 MB or smaller.");
+      return;
+    }
+    try {
+      await api("/api/part-manual", {
+        partID,
+        fileName: file.name,
+        mimeType: file.type || "application/pdf",
+        data: await fileAsBase64(file),
+      });
+    } catch (caught) {
+      window.alert(caught.message || "That manual could not be saved.");
+      return;
+    }
+    await refresh();
+    if (onChanged) onChanged();
+  });
+  input.click();
+}
+
 async function openAddBoardComponentModal(board, draft = null) {
   if (!catalog) catalog = (await api("/api/catalog")).parts;
   openModal((modal, close) => {
@@ -1724,6 +1874,18 @@ async function openAddBoardComponentModal(board, draft = null) {
     modal.append(el("p", "modal-sub", draft
       ? "Choose the catalog item that matches the line read from the electrical scheme."
       : "Choose the exact model, amp rating, poles, and curve used on this board."));
+    // A scheme regularly names a device the catalog has never carried — an
+    // isolated relay output module, a bespoke interface card. Without this the
+    // line could only be deleted, so the reading was lost rather than recorded.
+    if (draft && isAdmin()) {
+      const missing = el("div", "draft-missing-note");
+      missing.append(el("span", null, "Not in the catalog?"));
+      missing.append(smallBtn("Create it as a part", "accent", "plus", () => {
+        close();
+        openNewPartModal({ draft, board });
+      }));
+      modal.append(missing);
+    }
     const search = field("Find component", "Search model, manufacturer, amp, curve…");
     const choiceLabel = el("label", null, "Component");
     const choice = el("select");
@@ -1958,8 +2120,8 @@ function drilldownMetric(label, value, color = "var(--primary)") {
 }
 
 function openCustomerOverview(customer) {
-  const boards = state.boards.filter((board) => board.customer === customer);
-  const projects = state.projects.filter((project) => project.customer === customer);
+  const boards = state.boards.filter((board) => sameName(board.customer, customer));
+  const projects = state.projects.filter((project) => sameName(project.customer, customer));
   const completed = boards.filter((board) => board.status === "Completed").length;
   openModal((modal, close) => {
     modal.classList.add("wide", "board-drilldown-modal");
@@ -1983,7 +2145,28 @@ function openCustomerOverview(customer) {
     boards.sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
       .forEach((board) => list.append(boardDrilldownRow(board, close)));
     modal.append(boards.length ? list : emptyState("board", "No boards are linked to this customer."));
+    appendContactRemoval(modal, close, "customer", customer, projects.length + boards.length);
   });
+}
+
+/** Offers to take a typed-in name back off the archive.
+ *
+ * Only for a name that was added by hand and has no work against it — one that
+ * a project or board carries is put there by that record, not by us, so there
+ * is nothing here to remove. */
+function appendContactRemoval(modal, close, kind, name, workCount) {
+  if (!isAdmin() || workCount) return;
+  const contact = storedContact(kind, name);
+  if (!contact) return;
+  const actions = el("div", "actions");
+  const remove = el("button", "btn-ghost", "Remove from archive");
+  remove.type = "button";
+  remove.addEventListener("click", () => {
+    close();
+    removeContact(contact);
+  });
+  actions.append(remove);
+  modal.append(actions);
 }
 
 /** A brand's page: what the catalog holds under it, the boards it is named on,
@@ -2239,7 +2422,8 @@ function renderBoardDetail() {
   top.append(identity, actions);
   view.append(top);
 
-  if (!["overview", "components", "files"].includes(selectedBoardTab)) selectedBoardTab = "overview";
+  if (!["overview", "breaker", "components", "files"].includes(selectedBoardTab)) selectedBoardTab = "overview";
+  const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
   const componentCount = (board.components || []).length + (board.componentDrafts || []).length;
   const fileCount = (board.attachments || []).length;
   const tabs = el("div", "board-detail-tabs");
@@ -2259,6 +2443,7 @@ function renderBoardDetail() {
     tabs.append(button);
   };
   addTab("overview", "Overview", "board");
+  addTab("breaker", "Main Breaker", "boltShield");
   addTab("components", "Components", "box", componentCount);
   addTab("files", "Schemes & photos", "note", fileCount);
   view.append(tabs);
@@ -2285,13 +2470,15 @@ function renderBoardDetail() {
       ? () => openWorkerOverview(board.qaAssignedTo, board.qaAssignedName) : null),
     boardProperty("cabinet", "Build", `${board.cabinetCount} cabinet${String(board.cabinetCount) === "1" ? "" : "s"} · ${board.buildFormat}`),
     boardProperty("tag", "Manufacturer", board.manufacturer,
-      board.manufacturer ? () => openManufacturerOverview(board.manufacturer) : null),
+      board.manufacturer ? () => openManufacturerOverview(board.manufacturer) : null,
+      board.manufacturer ? brandTile(board.manufacturer, "sm") : null),
     boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · "),
       () => openBreakerOverview(board)),
     boardProperty("hash", "Customer", board.customer, () => openCustomerOverview(board.customer)),
     boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
   );
   if (selectedBoardTab === "overview") view.append(properties);
+  if (selectedBoardTab === "breaker") view.append(renderBoardMainBreakerTab(board, canEditBoard));
 
   const work = el("div", "board-detail-grid");
   const componentsPanel = el("section", "panel board-components-panel");
@@ -2300,7 +2487,6 @@ function renderBoardDetail() {
   componentCopy.append(el("span", "eyebrow", "Board specification"), el("h3", null, "Components"),
     el("p", null, "The exact parts fitted to this board, shared with the phone app."));
   componentHead.append(componentCopy);
-  const canEditBoard = isAdmin() || board.assignedTo === state.me.id;
   if (canEditBoard) componentHead.append(smallBtn("Add component", "accent", "plus", () => openAddBoardComponentModal(board)));
   if (isAdmin() && (board.components || []).some((component) => (component.stock?.available || 0) > 0)) {
     componentHead.append(smallBtn("Issue available stock", "", "arrowOut", () => issueBoardStock(board)));
@@ -2317,11 +2503,12 @@ function renderBoardDetail() {
       const row = el("div", "board-component-row clickable");
       row.tabIndex = 0;
       row.setAttribute("role", "button");
-      row.setAttribute("aria-label", `View source details for ${component.manufacturer} ${component.model}`);
+      const componentName = componentTitle(component.manufacturer, component.model, component.rating);
+      row.setAttribute("aria-label", `View source details for ${componentName}`);
       const identity = el("div", "board-component-identity");
       identity.append(partChip({ ...component, id: component.partID }), el("div"));
       const text = identity.lastElementChild;
-      text.append(el("strong", null, `${component.manufacturer} ${component.model}`),
+      text.append(el("strong", null, componentName),
         el("span", null, [component.type, component.rating, component.poles, component.curve, component.reference,
           component.source === "ai" ? "AI scan" : null,
           component.sourcePage ? `Page ${component.sourcePage}` : null]
@@ -2368,7 +2555,7 @@ function renderBoardDetail() {
       const draftIdentity = el("div", "board-component-identity");
       draftIdentity.append(chipIcon("scan", "var(--warning)"), el("div"));
       const text = draftIdentity.lastElementChild;
-      text.append(el("strong", null, draft.description || [draft.manufacturer, draft.model].filter(Boolean).join(" ") || "Extracted component"),
+      text.append(el("strong", null, componentTitle(draft.manufacturer, draft.model, draft.rating, draft.description || "Extracted component")),
         el("span", null, [draft.type, draft.rating, draft.poles, draft.curve, draft.reference,
           draft.sourcePage ? `Page ${draft.sourcePage}` : null].filter(Boolean).join(" · ")));
       row.append(draftIdentity, el("strong", "component-quantity", `× ${draft.quantity || 1}`));
@@ -2747,12 +2934,30 @@ function ampereOptionsFor(part) {
    a stock variant produces — it belongs in the title next to the model. A
    catalog family whose rating is a range or a placeholder is left alone: a
    heading of "S201 0.5-63A" tells a reader nothing they want. */
+/** The amperage on its own, when that is all the rating says.
+ *
+ * A rating reads "16A" on a breaker but "30mA Type A" on an RCD or "C Curve"
+ * on a trip characteristic. Only a bare amperage belongs in a title — the rest
+ * stays in the detail line where there is room to read it. */
+function exactAmperage(rating) {
+  const value = String(rating || "").trim();
+  return /^[\d.]+\s*A$/i.test(value) ? value : "";
+}
+
+/** A component's name for a list row: what it is, then how many amps.
+ *
+ * The amperage is what tells two otherwise identical breakers apart, so it
+ * belongs in the title rather than only in the line underneath. It stays in
+ * that line as well — this adds the amperage, it does not move it. */
+function componentTitle(manufacturer, model, rating, fallback = "") {
+  const name = [manufacturer, model].filter(Boolean).join(" ").trim() || fallback;
+  const amperage = exactAmperage(rating);
+  return [name, amperage].filter(Boolean).join(" · ");
+}
+
 function partTitle(part) {
   if (!part) return "";
-  const name = `${part.manufacturer} ${part.model}`.trim();
-  const rating = String(part.rating || "").trim();
-  const exact = /^[\d.]+\s*A$/i.test(rating);
-  return exact ? `${name} · ${rating}` : name;
+  return componentTitle(part.manufacturer, part.model, part.rating);
 }
 
 function exactChoiceField(labelText, placeholder, values, selected = "") {
@@ -3038,21 +3243,8 @@ function uniqueNames(values) {
 }
 
 /** Customer, company and brand names are free text somebody typed, so "Electra"
-    and "electra" are one name. Accent-sensitive but case-insensitive, the same
-    rule the phone app matches on. */
-function sameName(a, b) {
-  if (!a || !b) return false;
-  return String(a).trim().localeCompare(String(b).trim(), undefined, { sensitivity: "accent" }) === 0;
-}
-
-/** Distinct names in the spelling they were first written with. */
-function distinctNames(values) {
-  const seen = [];
-  values.map((value) => String(value || "").trim()).filter(Boolean).forEach((value) => {
-    if (!seen.some((name) => sameName(name, value))) seen.push(value);
-  });
-  return seen.sort((a, b) => a.localeCompare(b));
-}
+ * and "electra" are one name. */
+const sameName = (a, b) => Boolean(nameKey(a)) && nameKey(a) === nameKey(b);
 
 function archiveCard(iconName, color, name, detail, open) {
   const card = el("button", "archive-card");
@@ -3067,21 +3259,51 @@ function archiveCard(iconName, color, name, detail, open) {
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
+/** Every name the Customers page lists.
+ *
+ * Customers come off boards as well as projects: a board can be raised for a
+ * customer who has no project yet, and that customer still needs a profile —
+ * reading only the projects is what kept those names invisible. The company a
+ * board is built for is listed below them, and was never shown anywhere before.
+ */
+function contactArchiveCustomers() {
+  return uniqueNames([
+    ...state.projects.map((project) => project.customer),
+    ...state.boards.map((board) => board.customer),
+    ...contactsOfKind("customer").map((contact) => contact.name),
+  ]);
+}
+
+function contactArchiveCompanies() {
+  return uniqueNames([
+    ...state.boards.map((board) => board.company),
+    ...contactsOfKind("company").map((contact) => contact.name),
+  ]);
+}
+
+const contactsOfKind = (kind) => (state.contacts || []).filter((contact) => contact.kind === kind);
+
+/** The typed-in record behind a name, when there is one. Only these can be
+    removed — a name a project or board carries is not ours to delete. */
+function storedContact(kind, name) {
+  return contactsOfKind(kind).find((contact) => sameName(contact.name, name)) || null;
+}
+
+function contactArchiveNames() {
+  return [...contactArchiveCustomers(), ...contactArchiveCompanies()];
+}
+
 function renderContacts() {
   const view = $("#view-contacts");
   view.replaceChildren();
-  view.append(viewHead("Companies & Customers"));
+  const actions = isAdmin()
+    ? [smallBtn("Add customer", "accent", "plus", () => openNewContactModal("customer")),
+       smallBtn("Add company", "", "plus", () => openNewContactModal("company"))]
+    : [];
+  view.append(viewHead("Customers", ...actions));
 
-  // Customers come off boards as well as projects. A board can be raised for a
-  // customer who has no project yet, and that customer still needs a profile
-  // here — reading only the projects is what made those names invisible.
-  const customers = distinctNames([
-    ...state.projects.map((project) => project.customer),
-    ...state.boards.map((board) => board.customer),
-  ]);
-  // The company a board is built for is recorded on the board and was never
-  // shown anywhere, on a page named after it.
-  const companies = distinctNames(state.boards.map((board) => board.company));
+  const customers = contactArchiveCustomers();
+  const companies = contactArchiveCompanies();
 
   const intro = el("div", "archive-intro");
   intro.append(
@@ -3115,6 +3337,7 @@ function renderContacts() {
         plural(projects.length, "project"),
         plural(boards.length, "board"),
         sites.size ? plural(sites.size, "site") : null,
+        storedContact("customer", name)?.note || null,
       ].filter(Boolean).join(" · ");
       customerGrid.append(archiveCard(
         "building", projects[0]?.colorHex || "var(--primary)", name, detail,
@@ -3124,7 +3347,7 @@ function renderContacts() {
     if (!visibleCustomers.length) {
       customerGrid.append(emptyState("search", customers.length
         ? "No customers match that search."
-        : "Customers appear here as soon as a project or board names one."));
+        : "Customers appear here as soon as a project or board names one — or add one now."));
     }
 
     const visibleCompanies = companies.filter(matches);
@@ -3135,10 +3358,14 @@ function renderContacts() {
     companyGrid.classList.toggle("hidden", hideCompanies);
     visibleCompanies.forEach((name) => {
       const boards = state.boards.filter((board) => sameName(board.company, name));
-      const named = distinctNames(boards.map((board) => board.customer));
+      const named = uniqueNames(boards.map((board) => board.customer));
       companyGrid.append(archiveCard(
         "team", "var(--secondary)", name,
-        [plural(boards.length, "board"), plural(named.length, "customer")].join(" · "),
+        [
+          plural(boards.length, "board"),
+          plural(named.length, "customer"),
+          storedContact("company", name)?.note || null,
+        ].filter(Boolean).join(" · "),
         () => openCompanyOverview(name),
       ));
     });
@@ -3147,14 +3374,73 @@ function renderContacts() {
     }
   };
 
-  view.append(archiveSearch("Search companies and customers", draw), customerHead, customerGrid, companyHead, companyGrid);
+  view.append(archiveSearch("Search customers and companies", draw), customerHead, customerGrid, companyHead, companyGrid);
   draw();
+}
+
+/** Add a customer or a company to the archive by hand.
+ *
+ * Everything else on this page is derived from the names on projects and
+ * boards, so a customer you have not raised work for yet had nowhere to live.
+ */
+function openNewContactModal(kind) {
+  const isCompany = kind === "company";
+  openModal((modal, close) => {
+    modal.append(el("h3", null, isCompany ? "Add company" : "Add customer"));
+    modal.append(el("div", "modal-sub", isCompany
+      ? "A company you build for. It also appears on boards that name it."
+      : "Someone you build for. Projects and boards can be raised against them straight away."));
+    const name = field("Name", isCompany ? "e.g. Danya Cebus" : "e.g. Electra");
+    const note = field("Note", "optional");
+    const error = el("div", "form-error hidden");
+    modal.append(name.label, note.label, error);
+    modal.append(modalActions(close, isCompany ? "Add company" : "Add customer", async () => {
+      if (!name.input.value.trim()) {
+        error.textContent = "Enter a name.";
+        error.classList.remove("hidden");
+        return;
+      }
+      error.classList.add("hidden");
+      try {
+        await api("/api/contacts", { kind, name: name.input.value, note: note.input.value });
+      } catch (caught) {
+        error.textContent = caught.message || "That could not be saved.";
+        error.classList.remove("hidden");
+        return;
+      }
+      close();
+      await refresh();
+      switchView("contacts");
+    }));
+  });
+}
+
+/** Take a typed-in name back off the archive. */
+function removeContact(contact) {
+  openModal((modal, close) => {
+    modal.append(el("h3", null, `Remove ${contact.name}?`));
+    modal.append(el("div", "modal-sub", "This only removes the entry from the archive. Nothing else is touched."));
+    const error = el("div", "form-error hidden");
+    modal.append(error);
+    modal.append(modalActions(close, "Remove", async () => {
+      try {
+        await api("/api/contact-delete", { contactID: contact.id });
+      } catch (caught) {
+        error.textContent = caught.message || "That could not be removed.";
+        error.classList.remove("hidden");
+        return;
+      }
+      close();
+      await refresh();
+      switchView("contacts");
+    }));
+  });
 }
 
 /** Everything built for one company, whoever the end customer was. */
 function openCompanyOverview(company) {
   const boards = state.boards.filter((board) => sameName(board.company, company));
-  const customers = distinctNames(boards.map((board) => board.customer));
+  const customers = uniqueNames(boards.map((board) => board.customer));
   const completed = boards.filter((board) => board.status === "Completed").length;
   openModal((modal, close) => {
     modal.classList.add("wide", "board-drilldown-modal");
@@ -3179,6 +3465,7 @@ function openCompanyOverview(company) {
       .sort((a, b) => (b.number || "").localeCompare(a.number || "", undefined, { numeric: true }))
       .forEach((board) => list.append(boardDrilldownRow(board, close)));
     modal.append(boards.length ? list : emptyState("board", "No boards are linked to this company."));
+    appendContactRemoval(modal, close, "company", company, boards.length);
   });
 }
 
@@ -3206,12 +3493,12 @@ async function renderManufacturers() {
     const query = value.trim().toLowerCase();
     const visible = names.filter((name) => !query || name.toLowerCase().includes(query));
     visible.forEach((name) => {
-      const parts = (catalog || []).filter((part) => part.manufacturer?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+      const parts = (catalog || []).filter((part) => sameName(part.manufacturer, name));
       const boards = state.boards.filter((board) => boardUsesManufacturer(board, name));
       const card = el("button", "manufacturer-card");
       card.type = "button";
       card.addEventListener("click", () => openManufacturerOverview(name));
-      const logoURL = manufacturerImage(name);
+      const logoURL = brandLogoURL(name);
       const logo = el("div", "manufacturer-logo");
       if (logoURL) {
         const image = el("img");
@@ -3242,7 +3529,7 @@ function drawCatalog() {
   const open = groups.find((g) => g.id === catalogCategory) || null;
 
   const actions = [];
-  if (isAdmin()) actions.push(smallBtn("New custom part", "ghost", "plus", openNewPartModal));
+  if (isAdmin()) actions.push(smallBtn("New custom part", "ghost", "plus", () => openNewPartModal()));
   view.append(viewHead(open ? open.name : "Catalog", ...actions));
 
   const wrap = el("div", "search-wrap");
@@ -3346,11 +3633,16 @@ function catalogRow(part, stock) {
   row.type = "button";
   row.append(partChip(part));
   const main = el("div", "row-main");
-  main.append(el("div", "row-title", `${part.manufacturer} ${part.model}`));
+  main.append(el("div", "row-title", partTitle(part)));
   const bits = [part.type, part.rating, part.poles, part.curve]
     .filter((bit) => bit && bit !== "—").join(" · ");
   main.append(partSubLine(part, bits));
   main.append(partPills(part));
+  if (partManual(part.id)) {
+    const flag = el("span", "part-manual-flag");
+    flag.append(icon("note", 11), el("span", null, "Manual"));
+    main.append(flag);
+  }
   row.append(main);
 
   const entry = stock.get(part.id);
@@ -3382,10 +3674,13 @@ function refSection(title, symbol, body) {
 /** InfoLine: label left, value right, on one row. */
 function infoLines(rows) {
   const list = el("div", "info-lines");
-  rows.forEach(([title, value]) => {
+  rows.forEach(([title, value, mark]) => {
     if (!value || value === "—") return;
     const line = el("div", "info-line");
-    line.append(el("span", "info-title", title), el("span", "info-value", value));
+    const shown = el("span", "info-value", value);
+    // Marked so a control above can rewrite it - the pole switch does.
+    if (mark) shown.dataset[mark] = "";
+    line.append(el("span", "info-title", title), shown);
     list.append(line);
   });
   return list;
@@ -3400,15 +3695,63 @@ function openCatalogPartModal(part) {
     tintByBrand(modal, part.manufacturer);
     modal.classList.add("part-sheet");
 
-    const url = partPhotoURL(part);
+    const poles = polesOffered(part);
+    const classes = classesOffered(part);
+    let pole = poles[0] || null;
+    let klass = classes.length ? classes[0].letter : null;
+    const url = partPhotoURL(part, pole, klass);
+    let img = null;
     if (url) {
       const figure = el("div", "part-hero");
-      const img = el("img");
+      img = el("img");
       img.src = url;
       img.alt = `${part.manufacturer} ${part.model}`;
       img.addEventListener("error", () => figure.remove());
       figure.append(img);
       modal.append(figure);
+    }
+
+    // The switches belong to the part, not to its photograph: a part sold three
+    // ways and four ways is still sold both ways before anyone photographs it,
+    // and the specification lines under them follow the choice either way.
+    const refresh = () => {
+      if (img) img.src = partPhotoURL(part, pole, klass) || url;
+      const poleLine = modal.querySelector("[data-poles-value]");
+      if (poleLine) poleLine.textContent = `${pole} — sold as ${part.poles}`;
+      const classLine = modal.querySelector("[data-class-value]");
+      const picked = classes.find((option) => option.letter === klass);
+      if (classLine && picked) classLine.textContent = classLabel(picked);
+    };
+
+    const switcher = (label, options, isActive, choose) => {
+      const tabs = el("div", "board-detail-tabs pole-tabs");
+      tabs.setAttribute("role", "tablist");
+      tabs.setAttribute("aria-label", label);
+      const draw = () => {
+        tabs.replaceChildren();
+        options.forEach((option) => {
+          const button = el("button", isActive(option) ? "active" : "", option);
+          button.type = "button";
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", String(isActive(option)));
+          button.addEventListener("click", () => {
+            choose(option);
+            draw();
+            refresh();
+          });
+          tabs.append(button);
+        });
+      };
+      draw();
+      modal.append(tabs);
+    };
+
+    if (classes.length > 1) {
+      switcher("Breaking capacity class", classes.map((option) => option.letter),
+        (letter) => letter === klass, (letter) => { klass = letter; });
+    }
+    if (poles.length > 1) {
+      switcher("Pole count", poles, (option) => option === pole, (option) => { pole = option; });
     }
 
     // The brand's own mark leads when there is one — a reader recognises the
@@ -3465,10 +3808,16 @@ function openCatalogPartModal(part) {
         el("p", "ref-body", part.about)));
     }
 
+    modal.append(partManualCard(part.id, () => {
+      close();
+      openCatalogPartModal(part);
+    }));
+
     modal.append(refSection("Specification", "layers", infoLines([
       ["Type", part.type],
       ["Rating", part.rating],
-      ["Poles / phase", part.poles],
+      ["Class", classes.length > 1 ? classLabel(classes.find((option) => option.letter === klass)) : "", "classValue"],
+      ["Poles / phase", poles.length > 1 ? `${pole} — sold as ${part.poles}` : part.poles, "polesValue"],
       ["Serial number", part.serialNumber],
       ["Curve / notes", part.curve],
       ["Category", part.groupName],
@@ -3493,34 +3842,74 @@ function openCatalogPartModal(part) {
   });
 }
 
-function openNewPartModal() {
+/** Create a part the catalog does not carry.
+ *
+ * `draft` is a line the scheme reader could not match: the form opens filled
+ * in from what it read, and once the part exists it is put straight onto the
+ * board that line came from, so the reading is not lost on the way. */
+function openNewPartModal({ draft = null, board = null } = {}) {
+  const fromDraft = Boolean(draft);
   openModal((modal, close) => {
-    modal.append(el("h3", null, "New custom part"));
-    modal.append(el("div", "modal-sub", "For anything the catalog doesn't carry."));
+    modal.append(el("h3", null, fromDraft ? "Create part from the scheme" : "New custom part"));
+    modal.append(el("div", "modal-sub", fromDraft
+      ? "Filled in from the line the scan read. Check it, then it goes on the board and into the catalog."
+      : "For anything the catalog doesn't carry."));
     const model = field("Model", "e.g. Cable tray 200mm");
     const manufacturer = field("Manufacturer", "optional");
     const type = field("Type", "e.g. Cable Tray");
     const rating = field("Rating", "optional");
-    const poles = selectField("Poles / phase", ["", ...POLE_RATINGS], "");
+    const poles = selectField("Poles / phase", ["", ...POLE_RATINGS], draft?.poles || "");
     const curve = field("Curve / trip", "e.g. C Curve or 30mA Type A");
     const serialNumber = field("Serial number", "optional");
-    modal.append(model.label, manufacturer.label, type.label, rating.label, poles.label, curve.label, serialNumber.label);
-    modal.append(modalActions(close, "Add part", async () => {
-      if (!model.input.value.trim() || !type.input.value.trim()) return;
-      const { part } = await api("/api/parts", {
-        model: model.input.value,
-        manufacturer: manufacturer.input.value,
-        type: type.input.value,
-        rating: rating.input.value,
-        poles: poles.select.value,
-        curve: curve.input.value,
-        serialNumber: serialNumber.input.value,
-      });
-      await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
-      catalog = null;
-      close();
-      await refresh();
-      switchView("stock");
+    if (fromDraft) {
+      model.input.value = draft.model || draft.description || "";
+      manufacturer.input.value = draft.manufacturer || "";
+      type.input.value = draft.type || "";
+      rating.input.value = draft.rating || "";
+      curve.input.value = draft.curve || "";
+    }
+    const error = el("div", "form-error hidden");
+    modal.append(model.label, manufacturer.label, type.label, rating.label, poles.label, curve.label, serialNumber.label, error);
+    if (fromDraft && draft.rawText) {
+      modal.append(el("p", "modal-sub", `Read off the drawing: ${draft.rawText}`));
+    }
+    modal.append(modalActions(close, fromDraft ? "Create and add to board" : "Add part", async () => {
+      if (!model.input.value.trim() || !type.input.value.trim()) {
+        error.textContent = "Model and type are required.";
+        error.classList.remove("hidden");
+        return;
+      }
+      error.classList.add("hidden");
+      try {
+        const { part } = await api("/api/parts", {
+          model: model.input.value,
+          manufacturer: manufacturer.input.value,
+          type: type.input.value,
+          rating: rating.input.value,
+          poles: poles.select.value,
+          curve: curve.input.value,
+          serialNumber: serialNumber.input.value,
+        });
+        await api("/api/part-settings", { partID: part.id, minimumLevel: null, location: "" });
+        catalog = null;
+        if (fromDraft && board) {
+          await api("/api/board-components", {
+            boardID: board.id,
+            action: "add",
+            partID: part.id,
+            rating: rating.input.value,
+            quantity: draft.quantity || 1,
+            reference: draft.reference || "",
+            draftID: draft.id,
+          });
+        }
+        close();
+        await refresh();
+        switchView(fromDraft && board ? "board-detail" : "stock");
+      } catch (caught) {
+        error.textContent = caught.message || "That part could not be created.";
+        error.classList.remove("hidden");
+      }
     }));
   });
 }
@@ -3910,6 +4299,7 @@ const MAIN_BREAKER_TYPES = ["Main Breaker", "MCB", "RCBO", "MCCB", "ACB", "Chang
  * range as switch-disconnectors; whichever name a board uses, the model slot
  * offers all of them. */
 const MAIN_BREAKER_TYPE_ALIASES = {
+  "Changeover Switch": ["Automatic Transfer Switch"],
   "Switch Disconnector": ["Isolator"],
   "Isolator": ["Switch Disconnector"],
 };
@@ -3958,6 +4348,104 @@ function mainBreakerModelField(typeSelect) {
   return control;
 }
 
+/** A brand's logo tile: the picture where there is one, its initials where
+ * there is not. Same tile the manufacturer library uses, at whatever size the
+ * caller asks for. */
+function brandTile(name, cls = "") {
+  const tile = el("div", `manufacturer-logo${cls ? ` ${cls}` : ""}`);
+  const url = brandLogoURL(name);
+  if (url) {
+    const image = el("img");
+    image.src = url;
+    image.alt = "";
+    image.loading = "lazy";
+    // A logo listed in the manifest but missing on disk falls back to initials
+    // rather than leaving a broken picture in the grid.
+    image.addEventListener("error", () => {
+      image.remove();
+      tile.append(el("strong", null, String(name || "?").slice(0, 2).toUpperCase()));
+    });
+    tile.append(image);
+  } else {
+    tile.append(el("strong", null, String(name || "?").slice(0, 2).toUpperCase()));
+  }
+  return tile;
+}
+
+/** The manufacturer grid, opened from a field that shows the current choice.
+ * A board's manufacturer is a brand you recognise by its mark long before you
+ * read its name, which a dropdown of words cannot use. */
+async function openManufacturerPicker(selected, onPick) {
+  await ensureCatalog().catch(() => {});
+  const names = uniqueNames([...manufacturerNames(), selected]);
+  openModal((modal, close) => {
+    modal.classList.add("wide");
+    modal.append(el("span", "eyebrow", "Board manufacturer"), el("h3", null, "Choose a manufacturer"));
+    modal.append(el("p", "modal-sub", "Brands from the catalog and from boards already built."));
+
+    const grid = el("div", "brand-grid");
+    const draw = (query = "") => {
+      grid.replaceChildren();
+      const term = query.trim().toLowerCase();
+      const visible = names.filter((name) => !term || name.toLowerCase().includes(term));
+      visible.forEach((name) => {
+        const parts = (catalog || []).filter((part) => nameKey(part.manufacturer) === nameKey(name)).length;
+        const boards = state.boards.filter((board) => boardUsesManufacturer(board, name)).length;
+        const option = el("button", `brand-option${nameKey(name) === nameKey(selected) ? " selected" : ""}`);
+        option.type = "button";
+        option.append(brandTile(name), el("strong", null, name));
+        const note = [parts ? `${parts} part${parts === 1 ? "" : "s"}` : "", boards ? `${boards} board${boards === 1 ? "" : "s"}` : ""]
+          .filter(Boolean).join(" · ");
+        option.append(el("small", null, note || "Not used yet"));
+        option.addEventListener("click", () => { onPick(name); close(); });
+        grid.append(option);
+      });
+      if (!visible.length) grid.append(emptyState("search", "No manufacturer matches that search."));
+    };
+
+    const search = el("input");
+    search.type = "search";
+    search.placeholder = `Search ${names.length} manufacturers`;
+    search.addEventListener("input", () => draw(search.value));
+    modal.append(search, grid);
+
+    const actions = el("div", "actions");
+    const done = el("button", "btn-ghost", "Close");
+    done.addEventListener("click", close);
+    actions.append(done);
+    modal.append(actions);
+    draw();
+  });
+}
+
+/** The manufacturer slot: the chosen brand's logo and name, and the grid
+ * behind it. Reads like the other page fields, and answers `.value` the way a
+ * select would. */
+function manufacturerPickerField(labelText, initial) {
+  const label = el("label", "page-field", labelText);
+  const button = el("button", "brand-field");
+  button.type = "button";
+  const mark = el("span", "brand-field-mark");
+  const name = el("span", "brand-field-name");
+  button.append(mark, name, icon("chevron", 15));
+  label.append(button);
+
+  const control = {
+    label,
+    button,
+    value: "",
+    set(next) {
+      control.value = String(next || "").trim();
+      mark.replaceChildren(brandTile(control.value, "sm"));
+      name.textContent = control.value || "Choose a manufacturer";
+      button.style.setProperty("--brand", brandAccent(control.value));
+    },
+  };
+  button.addEventListener("click", () => openManufacturerPicker(control.value, (picked) => control.set(picked)));
+  control.set(initial);
+  return control;
+}
+
 /** The catalog part represented by the values stored on a board draft. The web
  * picker stores "manufacturer + model" together, while an OCR draft may carry
  * only the printed model, so accept either spelling. */
@@ -3977,10 +4465,10 @@ function selectedMainBreakerPart(type, storedModel) {
 /** One visual slot for the selected incomer. Clicking the slot opens the three
  * underlying fields, keeping the board form compact while still allowing a
  * custom device that is not in the catalog. */
-function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
+function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl, options = {}) {
   const slot = el("button", "main-breaker-slot");
   slot.type = "button";
-  slot.setAttribute("aria-label", "Edit selected main breaker");
+  slot.setAttribute("aria-label", `${options.readOnly ? "View" : "Edit"} selected main breaker`);
 
   const render = () => {
     const type = typeControl.select.value;
@@ -4009,7 +4497,7 @@ function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
       el("span", "main-breaker-slot-spec", [type, ampere].filter(Boolean).join(" · ")),
     );
     const edit = el("span", "main-breaker-slot-edit");
-    edit.append(icon("sliders", 15), document.createTextNode(" Edit"));
+    edit.append(icon(options.readOnly ? "chevron" : "sliders", 15), document.createTextNode(options.readOnly ? " View" : " Edit"));
     slot.append(visual, copy, edit);
   };
 
@@ -4023,21 +4511,155 @@ function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl) {
     const grid = el("div", "page-form-grid main-breaker-editor-grid");
     grid.append(typeControl.label, modelControl.label, ampereControl.label);
     modal.append(grid);
+    const error = el("div", "form-error hidden");
+    modal.append(error);
     const actions = el("div", "actions");
-    const done = el("button", "btn-primary", "Done");
+    const done = el("button", "btn-primary", options.onSave ? "Save main breaker" : "Done");
     done.type = "button";
-    done.addEventListener("click", () => { render(); close(); });
+    done.addEventListener("click", async () => {
+      render();
+      if (!options.onSave) return close();
+      done.disabled = true;
+      error.classList.add("hidden");
+      try {
+        await options.onSave({
+          mainBreakerType: typeControl.select.value,
+          mainBreakerModel: modelControl.input.value.trim(),
+          mainBreakerAmpere: ampereControl.input.value.trim(),
+        });
+        close();
+      } catch (caught) {
+        error.textContent = caught.message || "Could not update the main breaker.";
+        error.classList.remove("hidden");
+        done.disabled = false;
+      }
+    });
     actions.append(done);
     modal.append(actions);
   });
 
-  slot.addEventListener("click", openEditor);
+  slot.addEventListener("click", options.readOnly
+    ? () => options.onView?.()
+    : openEditor);
   typeControl.select.addEventListener("change", render);
   modelControl.input.addEventListener("input", render);
   ampereControl.input.addEventListener("input", render);
   ensureCatalog().then(render).catch(render);
   render();
+  slot.refresh = render;
+  slot.openEditor = openEditor;
   return slot;
+}
+
+function canonicalMainBreakerType(partType) {
+  const words = typeWords(partType);
+  const types = MAIN_BREAKER_TYPES.filter((type) => type !== "Main Breaker");
+  const matches = (name) => {
+    const wanted = typeWords(name);
+    return wanted.size && [...wanted].every((word) => words.has(word));
+  };
+  return types.find(matches)
+    || types.find((type) => (MAIN_BREAKER_TYPE_ALIASES[type] || []).some(matches))
+    || null;
+}
+
+function mainBreakerCatalogParts() {
+  const seen = new Set();
+  return (catalog || []).map((part) => ({ part, type: canonicalMainBreakerType(part.type) }))
+    .filter(({ part, type }) => {
+      const key = [part.manufacturer, part.model, part.rating, part.poles].join("|").toLowerCase();
+      if (!type || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => [left.part.manufacturer, left.part.model, left.part.rating].join(" ")
+      .localeCompare([right.part.manufacturer, right.part.model, right.part.rating].join(" "), undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function renderBoardMainBreakerTab(board, canEditBoard) {
+  const panel = el("section", "panel board-main-breaker-panel");
+  const head = el("div", "panel-head");
+  const copy = el("div");
+  copy.append(el("span", "eyebrow", "Board incomer"), el("h3", null, "Main Breaker"),
+    el("p", null, canEditBoard
+      ? "Select the actual catalog device fitted to this board, or click the slot to enter a custom model."
+      : "The actual incoming device fitted to this board."));
+  head.append(copy);
+  panel.append(head);
+
+  const typeControl = pageField(selectField("Main breaker type", MAIN_BREAKER_TYPES, board.mainBreakerType || "Main Breaker"));
+  if (board.mainBreakerType && !MAIN_BREAKER_TYPES.includes(board.mainBreakerType)) {
+    typeControl.select.append(new Option(board.mainBreakerType, board.mainBreakerType));
+    typeControl.select.value = board.mainBreakerType;
+  }
+  const modelControl = pageField(mainBreakerModelField(typeControl.select));
+  modelControl.input.value = board.mainBreakerModel || "";
+  const ampereControl = pageField(field("Main breaker ampere", "e.g. 630A"));
+  ampereControl.input.value = board.mainBreakerAmpere || board.ampere || "";
+
+  const slot = mainBreakerSelectionSlot(typeControl, modelControl, ampereControl, {
+    readOnly: !canEditBoard,
+    onView: () => openBreakerOverview(board),
+    onSave: async (values) => {
+      const result = await api("/api/board-update", { boardID: board.id, ...values });
+      Object.assign(board, result.board);
+      const shared = state.boards.find((item) => item.id === board.id);
+      if (shared && shared !== board) Object.assign(shared, result.board);
+      renderBoardDetail();
+      renderBoards();
+      renderDashboard();
+    },
+  });
+  panel.append(slot);
+
+  if (!canEditBoard) return panel;
+
+  const catalogHead = el("div", "main-breaker-catalog-head");
+  const catalogCopy = el("div");
+  catalogCopy.append(el("h4", null, "Choose from catalog"), el("p", null, "Click a device to select it, then confirm or edit its installed ampere."));
+  const searchControl = field("Search breakers", "Manufacturer, model, type or rating");
+  searchControl.label.classList.add("main-breaker-search");
+  catalogHead.append(catalogCopy, searchControl.label);
+  const choices = el("div", "main-breaker-choice-grid");
+  panel.append(catalogHead, choices);
+
+  const renderChoices = () => {
+    choices.replaceChildren();
+    const query = searchControl.input.value.trim().toLowerCase();
+    const parts = mainBreakerCatalogParts().filter(({ part, type }) =>
+      !query || [part.manufacturer, part.model, part.type, type, part.rating, part.poles]
+        .filter(Boolean).join(" ").toLowerCase().includes(query));
+    if (!parts.length) {
+      choices.append(emptyState("search", query ? "No main-breaker catalog devices match this search." : "No main-breaker devices are available in the catalog."));
+      return;
+    }
+    const selected = selectedMainBreakerPart(typeControl.select.value, modelControl.input.value);
+    parts.forEach(({ part, type }) => {
+      const choice = el("button", `main-breaker-choice${selected?.id === part.id ? " selected" : ""}`);
+      choice.type = "button";
+      choice.append(partChip(part));
+      const detail = el("span", "main-breaker-choice-copy");
+      detail.append(el("strong", null, [part.manufacturer, part.model].filter(Boolean).join(" ")),
+        el("span", null, [type, part.rating, part.poles].filter(Boolean).join(" · ")));
+      choice.append(detail, icon("chevron", 15));
+      choice.addEventListener("click", () => {
+        typeControl.select.value = type;
+        typeControl.select.dispatchEvent(new Event("change"));
+        modelControl.input.value = [part.manufacturer, part.model].filter(Boolean).join(" ");
+        modelControl.input.dispatchEvent(new Event("input"));
+        if (!ampereControl.input.value && /^\d+\s*A$/i.test(part.rating || "")) {
+          ampereControl.input.value = part.rating.replace(/\s+/g, "");
+          ampereControl.input.dispatchEvent(new Event("input"));
+        }
+        slot.openEditor();
+      });
+      choices.append(choice);
+    });
+  };
+  searchControl.input.addEventListener("input", renderChoices);
+  ensureCatalog().then(renderChoices).catch(renderChoices);
+  renderChoices();
+  return panel;
 }
 
 function pageField(control) {
@@ -4139,7 +4761,7 @@ function renderBoardCreate() {
   const customer = pageField(field("Customer name", "search or type customer"));
   const company = pageField(field("Company you are doing it for", "optional company"));
   const subtype = pageField(selectField("Subtype", boardSubtypeOptions(selectedType.name), DEFAULT_BOARD_SUBTYPE));
-  const manufacturer = pageField(selectField("Board manufacturer", BOARD_MANUFACTURERS, "Generic"));
+  const manufacturer = manufacturerPickerField("Board manufacturer", "Generic");
   const cabinets = pageField(selectField("Cabinets", Array.from({ length: 12 }, (_, index) => String(index + 1)), "1"));
   const buildFormat = pageField(selectField("Build format", ["Panels", "Plate"], "Panels"));
   const dateOut = pageField(field("Out date", "", "date"));
@@ -4167,18 +4789,14 @@ function renderBoardCreate() {
       customer.input.value = matchedProject.customer;
       customer.input.disabled = true;
     }
-    const availableManufacturers = [...manufacturer.select.options].map((option) => option.value);
     const manufacturerKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
     const aiManufacturer = String(aiDraft.manufacturer || "").trim();
-    const matchedManufacturer = availableManufacturers.find((value) =>
+    const matchedManufacturer = manufacturerNames().find((value) =>
       manufacturerKey(value) === manufacturerKey(aiManufacturer));
-    if (matchedManufacturer) {
-      manufacturer.select.value = matchedManufacturer;
-    } else if (aiManufacturer) {
-      // Never erase a printed manufacturer merely because it is not in the
-      // built-in picker yet. The server already accepts company-specific names.
-      manufacturer.select.append(new Option(aiManufacturer, aiManufacturer, true, true));
-    }
+    // Never erase a printed manufacturer merely because the picker has never
+    // carried it. The server already accepts company-specific names, and the
+    // field keeps whatever it is given.
+    if (matchedManufacturer || aiManufacturer) manufacturer.set(matchedManufacturer || aiManufacturer);
     cabinets.select.value = String(Math.max(1, Math.min(12, Number(aiDraft.cabinetCount) || 1)));
     const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
     const matchedBreakerType = breakerTypes.find((value) =>
@@ -4247,7 +4865,7 @@ function renderBoardCreate() {
         project: project.select.value,
         type: selectedType.name,
         subtype: subtype.select.value,
-        manufacturer: manufacturer.select.value,
+        manufacturer: manufacturer.value,
         cabinetCount: cabinets.select.value,
         buildFormat: buildFormat.select.value,
         dateOut: dateOut.input.value,

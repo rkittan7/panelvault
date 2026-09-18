@@ -434,6 +434,74 @@ input:focus, select:focus, textarea:focus {
 }
 
 .content { flex: 1; width: 100%; min-width: 0; padding: 20px 24px 40px; }
+
+/* ---------------------------------------------------------- hover rail
+
+   The sidebar rests as a column of icons and opens when the pointer comes
+   near it. It grows *over* the page rather than pushing it: the negative
+   margin holds its footprint at the rail width, so nothing reflows on hover.
+
+   The icon column sits at the same x in both states — 12px of sidebar padding
+   plus 12px of button padding centres an 18px glyph in a 66px rail — so
+   opening the panel moves nothing. Only the words fade in beside the icons.
+
+   Below 720px the sidebar is already a horizontal bar and there is no pointer
+   to hover with, so none of this applies there. */
+@media (min-width: 721px) {
+  .shell { --rail: 66px; --rail-open: 244px; }
+
+  .sidebar {
+    flex: none;
+    width: var(--rail);
+    margin-right: 0;
+    z-index: 30;
+    /* Inherited by everything inside; the open state flips them once. */
+    --label-shown: 0;
+    --label-delay: 0s;
+    --label-events: none;
+    transition: width .24s cubic-bezier(.22, .61, .36, 1),
+                margin-right .24s cubic-bezier(.22, .61, .36, 1),
+                box-shadow .24s ease;
+  }
+  /* focus-within so tabbing into the nav opens it too. */
+  .sidebar:hover,
+  .sidebar:focus-within {
+    width: var(--rail-open);
+    margin-right: calc(var(--rail) - var(--rail-open));
+    box-shadow: 26px 0 54px -26px rgba(0, 0, 0, .3);
+    --label-shown: 1;
+    /* Held back a moment so the words land in a panel that is already open
+       instead of smearing across it. Reverting to 0s makes closing immediate. */
+    --label-delay: .07s;
+    --label-events: auto;
+  }
+
+  /* A reserved scrollbar gutter would eat 15px of a 66px rail and shift every
+     icon sideways the moment the nav overflowed. */
+  .nav { scrollbar-gutter: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* The brand mark, the nav glyphs and the avatar all sit on one vertical
+     line at 34px. The nav buttons carry a 1px transparent border, hence the
+     odd-looking insets: 12 sidebar + 1 border + 12 button + 9 = 34. */
+  .sidebar-brand { padding-left: 6px; }
+  .sidebar-brand .brand-mark { flex: none; }
+  .user-chip { padding-left: 7px; }
+
+  .sidebar-brand-text,
+  .sidebar .nav-section-label,
+  .sidebar .nav-label,
+  .sidebar .nav .count,
+  .sidebar .user-chip-text,
+  .sidebar .skin,
+  .sidebar #logout {
+    opacity: var(--label-shown);
+    transition: opacity .18s ease var(--label-delay);
+  }
+  /* Invisible controls must not still be clickable out in the rail. */
+  .sidebar .skin,
+  .sidebar #logout { pointer-events: var(--label-events); }
+}
 .view { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; max-width: 1440px; margin: 0 auto; }
 .view > *, .dash-grid > *, .dashboard-top-grid > *, .dashboard-work-grid > * { min-width: 0; max-width: 100%; }
 
@@ -938,14 +1006,25 @@ img.brand-logo {
 .part-sheet { --brand: var(--primary); }
 
 /* The photo leads, full width and uncropped, on the modal's own ground so the
-   halo has somewhere to fall. minHeight 180 and padding 14 as in the app. */
+   halo has somewhere to fall.
+
+   The height is definite rather than a minimum: a photograph that has not
+   finished loading contributes nothing to a grid row, so a box that only had a
+   minimum collapsed to it and the picture painted straight over the switches
+   underneath once it arrived. A fixed box also puts the switch and the title in
+   the same place on every part, whatever shape the photograph is. */
 .part-hero {
-  display: grid; place-items: center;
-  min-height: 180px;
+  display: flex; align-items: center; justify-content: center;
+  height: 268px;
   padding: 14px;
   margin-bottom: 2px;
+  overflow: hidden;
 }
-.part-hero img { max-width: 100%; max-height: 260px; object-fit: contain; }
+/* Capped in pixels, not in per cent: a percentage resolves against the box's
+   own height, which is not definite while the picture is still loading, and a
+   picture capped at nought is a picture nobody sees. 240 is the 268 box less
+   its padding. */
+.part-hero img { max-width: 100%; max-height: 240px; object-fit: contain; }
 
 .part-title-row { display: flex; align-items: center; gap: 14px; }
 .type-tile {
@@ -1298,6 +1377,43 @@ img.brand-logo {
   color: var(--ink-3); font-size: 10.5px; font-weight: 700; letter-spacing: .045em; text-transform: uppercase;
 }
 .page-field input, .page-field select { height: 42px; background: var(--wash-1); }
+
+/* The manufacturer slot: the brand you recognise by its mark, and the grid of
+   marks behind it. Sized to sit level with the inputs beside it. */
+.brand-field {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 42px; padding: 0 10px;
+  background: var(--wash-1); border: 1px solid var(--line); border-radius: var(--r-sm);
+  font: inherit; color: var(--ink); text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.brand-field:hover { border-color: var(--line-2); background: var(--raise); }
+.brand-field:focus-visible { outline: none; border-color: var(--primary); }
+.brand-field-mark { display: flex; flex: none; }
+.manufacturer-logo.sm { width: 30px; height: 30px; border-radius: 9px; }
+.manufacturer-logo.sm strong { font-size: 10px; }
+.brand-field-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13.5px; font-weight: 600;
+}
+.brand-field svg { flex: none; color: var(--ink-3); }
+
+.brand-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 8px;
+  max-height: 46vh; overflow: auto; padding: 1px; margin-top: 10px;
+}
+.brand-option {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 13px 8px;
+  background: var(--wash-1); border: 1px solid var(--line); border-radius: 12px;
+  font: inherit; color: var(--ink); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.brand-option:hover { border-color: var(--line-2); background: var(--raise); }
+.brand-option.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.brand-option strong { font-size: 12px; font-weight: 650; }
+.brand-option small { color: var(--ink-3); font-size: 9.5px; font-weight: 600; }
 .page-field input:disabled { color: var(--ink-2); opacity: .8; }
 .page-form-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 0 2px; }
 .page-form-actions button { min-width: 120px; }
@@ -1329,6 +1445,21 @@ img.brand-logo {
 .main-breaker-slot-edit { display: inline-flex; align-items: center; gap: 3px; color: var(--brand); font-size: 12px; font-weight: 800; }
 .main-breaker-editor-grid { margin-top: 18px; }
 .main-breaker-editor .actions { justify-content: flex-end; }
+.board-main-breaker-panel { padding: 20px; }
+.board-main-breaker-panel > .main-breaker-slot { margin-top: 14px; }
+.main-breaker-catalog-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
+.main-breaker-catalog-head h4 { font-size: 15px; }
+.main-breaker-catalog-head p { margin-top: 4px; color: var(--ink-3); font-size: 11px; }
+.main-breaker-search { width: min(330px, 100%); }
+.main-breaker-choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 9px; margin-top: 13px; }
+.main-breaker-choice { --brand: var(--primary); display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; padding: 10px; color: var(--ink); text-align: left; font: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); transition: transform .15s, border-color .15s, background .15s, box-shadow .15s; }
+.main-breaker-choice:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--primary) 34%, var(--line)); background: var(--raise); box-shadow: var(--apple-shadow); }
+.main-breaker-choice.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 7%, var(--panel)); }
+.main-breaker-choice .chip-icon { width: 40px; height: 40px; }
+.main-breaker-choice-copy { display: flex; flex-direction: column; min-width: 0; gap: 3px; }
+.main-breaker-choice-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.main-breaker-choice-copy span { color: var(--ink-3); font-size: 10px; }
+.main-breaker-choice > svg { flex-shrink: 0; color: var(--ink-3); }
 
 @property --progress {
   syntax: "<percentage>";
@@ -1348,6 +1479,10 @@ img.brand-logo {
 .board-detail-tabs button.active { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px rgb(15 23 42 / .08), 0 5px 16px rgb(15 23 42 / .05); }
 .board-detail-tabs button span { min-width: 20px; padding: 2px 6px; color: var(--ink-3); border-radius: 999px; background: var(--wash-2); font-size: 9px; font-variant-numeric: tabular-nums; }
 .board-detail-tabs button.active span { color: var(--primary); background: var(--primary-dim); }
+/* The pole switch inside a part sheet: the board's own tab control, narrowed
+   to sit under the picture it changes. */
+.pole-tabs { justify-content: center; margin: 0 auto 4px; width: fit-content; max-width: 100%; }
+.pole-tabs button { min-width: 62px; font-variant-numeric: tabular-nums; }
 .board-save-state { display: inline-flex; align-items: center; gap: 6px; color: var(--positive); font-size: 10.5px; font-weight: 650; transition: color .32s ease; }
 .board-save-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent); }
 .board-save-state.syncing { color: var(--warning); animation: saveStateIn .34s ease both; }
@@ -1398,7 +1533,9 @@ img.brand-logo {
 .board-property-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .board-property { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); font: inherit; text-align: left; }
 .board-property .chip-icon { width: 34px; height: 34px; flex-shrink: 0; }
-.board-property > div:not(.chip-icon) { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.board-property-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.board-property > .manufacturer-logo { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; }
+.board-property > .manufacturer-logo img { width: auto; height: auto; max-width: 78%; max-height: 78%; object-fit: contain; }
 .board-property span { color: var(--ink-3); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .board-property strong { margin-top: 2px; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-property.clickable { cursor: pointer; transition: transform .16s, border-color .16s, background .16s, box-shadow .16s; }
@@ -1541,6 +1678,8 @@ img.brand-logo {
 .linked-parts div { color: var(--ink-2); font-size: 10.5px; }
 
 @media (prefers-reduced-motion: reduce) {
+  .sidebar, .sidebar-brand-text, .sidebar .nav-section-label, .sidebar .nav-label,
+  .sidebar .nav .count, .sidebar .user-chip-text, .sidebar .skin, .sidebar #logout,
   .board-save-state, .board-save-state.syncing, .board-save-state.syncing i,
   .board-stage, .board-stage-tracker.changing .board-stage, .check-row, .check-row.just-changed,
   .check-row.just-changed .check-mark, .check-row.just-changed.checked .check-mark {
@@ -1682,6 +1821,9 @@ img.brand-logo {
   .board-type-verification { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .board-type-grid { grid-template-columns: minmax(0, 1fr); }
   .page-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .main-breaker-catalog-head { align-items: stretch; flex-direction: column; }
+  .main-breaker-search { width: 100%; }
+  .main-breaker-choice-grid { grid-template-columns: minmax(0, 1fr); }
   .creation-section-head { flex-direction: column; align-items: flex-start; gap: 4px; }
   .creation-section-head p { text-align: left; }
   .board-detail-top, .board-progress-head { flex-direction: column; align-items: flex-start; }
@@ -1776,6 +1918,38 @@ img.brand-logo {
   background-repeat: no-repeat;
 }
 .skin select:hover { border-color: var(--line-2); }
+
+/* The manual that travels with a part: the same block on the part sheet and on
+   a board component, so a datasheet looks the same wherever it is met. */
+/* The card is a two-column grid (glyph, copy); the buttons belong on the copy's
+   row, to its right, not stacked under it. */
+.part-manual-card { align-items: center; grid-template-columns: 42px minmax(0, 1fr) auto; }
+.part-manual-card .part-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; align-self: center; }
+@media (max-width: 620px) {
+  .part-manual-card { grid-template-columns: 42px minmax(0, 1fr); }
+  .part-manual-card .part-manual-actions { grid-column: 2; }
+}
+.part-manual-link {
+  display: inline-block; margin-top: 2px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--primary); font-size: 12px; font-weight: 650; text-decoration: none;
+}
+.part-manual-link:hover { text-decoration: underline; }
+.part-manual-flag {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 5px;
+  padding: 2px 7px; border-radius: 99px;
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+  color: var(--positive); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+/* The way out when the scan reads a device the catalog has never carried. */
+.draft-missing-note {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px dashed color-mix(in srgb, var(--primary) 34%, var(--line));
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+  color: var(--ink-2); font-size: 11.5px;
+}
 
 /* ============================================================ roles + costs */
 

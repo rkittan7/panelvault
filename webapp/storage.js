@@ -55,7 +55,10 @@ class LocalJSONStorage {
   }
 
   attachmentFile(objectPath) {
-    const root = path.join(this.dataDir, "attachments");
+    // Resolved rather than joined: a relative DATA_DIR — the dev config passes
+    // one — left `root` relative while `file` came back absolute, so the guard
+    // below rejected every upload as an escape attempt.
+    const root = path.resolve(this.dataDir, "attachments");
     const file = path.resolve(root, objectPath);
     if (file !== root && !file.startsWith(`${root}${path.sep}`)) {
       throw new Error("Invalid attachment path.");

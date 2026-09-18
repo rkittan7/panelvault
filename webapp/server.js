@@ -75,6 +75,13 @@ function normalizeCompanies() {
   for (const company of Object.values(db.companies || {})) {
     company.movements ||= [];
     company.customParts ||= [];
+    // Customers and companies typed straight into the archive, for the ones
+    // that have no project or board naming them yet.
+    company.contacts ||= [];
+    // { [partID]: attachment } — the manufacturer's manual for a part. Keyed by
+    // part rather than stored on it, because the built-in catalog is shared and
+    // read-only: a company's manuals have to live on the company.
+    company.partManuals ||= {};
     company.partSettings ||= {};
     company.projects ||= [];
     company.boards ||= [];
@@ -1175,6 +1182,8 @@ async function createCompanyAccount({ companyName, name, email, password }) {
     movements: [],
     customParts: [],
     partSettings: {},
+    contacts: [],
+    partManuals: {},
     projects: [],
     boards: [],
     workspaceVersion: 0,
@@ -1487,6 +1496,8 @@ const routes = {
         invitableRoles: invitableRoles(user),
       },
       roleLabels: ROLE_LABELS,
+      contacts: company.contacts,
+      partManuals: company.partManuals,
       stock: stockEntries(company, withCosts),
       movements: [...company.movements]
         .sort((a, b) => b.date.localeCompare(a.date))
@@ -2236,6 +2247,69 @@ const routes = {
     sendJSON(res, 200, { project });
   },
 
+  /** Add a customer or a company to the archive by hand.
+   *
+   * The archive is otherwise built from the names on projects and boards, which
+   * means a customer you have not raised any work for yet cannot be recorded.
+   * These fill that gap; everything derived keeps working as it did.
+   */
+  "POST /api/contacts": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add customers.");
+    const body = await readBody(req);
+    const name = String(body.name || "").trim().slice(0, 160);
+    const kind = body.kind === "company" ? "company" : "customer";
+    if (!name) return fail(res, 400, "Enter a name.");
+
+    // Derived names count as taken: adding "Electra" a second time would put
+    // two cards with one name on the page.
+    const taken = kind === "company"
+      ? company.boards.map((board) => board.company)
+      : [...company.projects.map((project) => project.customer), ...company.boards.map((board) => board.customer)];
+    const clash = [...taken, ...company.contacts.filter((c) => c.kind === kind).map((c) => c.name)]
+      .some((value) => String(value || "").trim().toLowerCase() === name.toLowerCase());
+    if (clash) {
+      return fail(res, 409, kind === "company" ? "That company is already listed." : "That customer is already listed.");
+    }
+
+    const contact = {
+      id: id("contact"),
+      name,
+      kind,
+      note: String(body.note || "").trim().slice(0, 400),
+      colorHex: /^#[0-9a-f]{6}$/i.test(body.colorHex || "") ? body.colorHex.toUpperCase() : "#5E78FF",
+      createdAt: new Date().toISOString(),
+    };
+    company.contacts.push(contact);
+    await save();
+    sendJSON(res, 200, { contact });
+  },
+
+  /** Remove one that was added by hand.
+   *
+   * Only ever removes the typed-in record. A name that a project or board also
+   * carries stays on the page because the work still names it, so deleting is
+   * refused rather than appearing to do nothing.
+   */
+  "POST /api/contact-delete": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can remove customers.");
+    const { contactID } = await readBody(req);
+    const contact = company.contacts.find((item) => item.id === contactID);
+    if (!contact) return fail(res, 404, "That customer is not in the archive.");
+    const key = contact.name.trim().toLowerCase();
+    const used = contact.kind === "company"
+      ? company.boards.some((board) => String(board.company || "").trim().toLowerCase() === key)
+      : company.projects.some((project) => String(project.customer || "").trim().toLowerCase() === key)
+        || company.boards.some((board) => String(board.customer || "").trim().toLowerCase() === key);
+    if (used) {
+      return fail(res, 409, "This name is on a project or a board, so it stays in the archive.");
+    }
+    company.contacts = company.contacts.filter((item) => item.id !== contactID);
+    await save();
+    sendJSON(res, 200, { ok: true, contactID });
+  },
+
   "POST /api/boards": async (req, res, session) => {
     const { company, user } = session;
     if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can create boards.");
@@ -2323,9 +2397,10 @@ const routes = {
 
   "POST /api/board-update": async (req, res, session) => {
     const { company, user } = session;
-    const { boardID, status, assignedTo, qaAssignedTo } = await readBody(req);
+    const { boardID, status, assignedTo, qaAssignedTo, mainBreakerType, mainBreakerModel, mainBreakerAmpere } = await readBody(req);
     const board = company.boards.find((b) => b.id === boardID);
     if (!board) return fail(res, 404, "Board not found.");
+    const breakerChanged = mainBreakerType !== undefined || mainBreakerModel !== undefined || mainBreakerAmpere !== undefined;
 
     if (status !== undefined) {
       return fail(res, 400, "Board status is automatic from assignment and checklist progress.");
@@ -2342,6 +2417,9 @@ const routes = {
         return fail(res, 400, "Unknown QA reviewer.");
       }
     }
+    if (breakerChanged && !canUpdateBoard(user, board)) {
+      return fail(res, 403, "Only the assigned builder or a manager can update this board's main breaker.");
+    }
     const previous = {
       checklistSignature: checklistSignature(board),
       qaAssignedTo: board.qaAssignedTo,
@@ -2350,9 +2428,27 @@ const routes = {
       board.assignedTo = assignedTo || null;
     }
     if (qaAssignedTo !== undefined) board.qaAssignedTo = qaAssignedTo || null;
+    if (breakerChanged) {
+      const type = String(mainBreakerType ?? board.mainBreakerType ?? "Main Breaker").trim().slice(0, 100);
+      const model = String(mainBreakerModel ?? board.mainBreakerModel ?? "").trim().slice(0, 180);
+      const ampere = String(mainBreakerAmpere ?? board.mainBreakerAmpere ?? board.ampere ?? "").trim().toUpperCase().slice(0, 40);
+      board.mainBreakerType = type || "Main Breaker";
+      board.mainBreakerModel = model;
+      board.mainBreakerAmpere = ampere;
+      if (ampere) board.ampere = ampere;
+    }
     reconcileBoardQA(company, board, previous);
     touchWorkspaceEntity(company, "board", board);
-    recordAudit(company, user, "board.assignment_updated", "board", board.id, { assignedTo, qaAssignedTo });
+    if (assignedTo !== undefined || qaAssignedTo !== undefined) {
+      recordAudit(company, user, "board.assignment_updated", "board", board.id, { assignedTo, qaAssignedTo });
+    }
+    if (breakerChanged) {
+      recordAudit(company, user, "board.main_breaker_updated", "board", board.id, {
+        mainBreakerType: board.mainBreakerType,
+        mainBreakerModel: board.mainBreakerModel,
+        mainBreakerAmpere: board.mainBreakerAmpere,
+      });
+    }
     await save();
     const syncedBoard = workspacePayload(company).boards.find((item) => item.id === board.id);
     sendJSON(res, 200, { ok: true, board: syncedBoard, ...boardProgressPayload(board) });
@@ -2541,6 +2637,87 @@ const routes = {
     res.end(bytes);
   },
 
+  /** Keep a part's manual with the part.
+   *
+   * One per part, replacing whatever was there — a datasheet has a current
+   * revision, not a history, and a list of near-identical PDFs would be worse
+   * than one that is right. Works for a built-in catalog part as much as a
+   * custom one, since the manual hangs off the company, not the part record.
+   */
+  "POST /api/part-manual": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can add manuals.");
+    const { partID, fileName, mimeType, data } = await readBody(req);
+    const part = partFor(company, String(partID || "").trim());
+    if (!part) return fail(res, 404, "That part is not in the catalog.");
+    if (!ATTACHMENT_MIME_TYPES.has(mimeType)) return fail(res, 400, "Upload a PDF or supported image.");
+    if (!/^[a-z0-9+/]*={0,2}$/i.test(String(data || ""))) return fail(res, 400, "The uploaded file is invalid.");
+    let bytes;
+    try {
+      bytes = Buffer.from(String(data || ""), "base64");
+    } catch {
+      return fail(res, 400, "The uploaded file is invalid.");
+    }
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Manuals must be 6 MB or smaller.");
+
+    const manualID = id("manual");
+    const objectPath = `${company.code}/manuals/${part.id}/${manualID}-${safeAttachmentName(fileName)}`;
+    const manual = {
+      id: manualID,
+      partID: part.id,
+      name: String(fileName || "manual").trim().slice(0, 140),
+      mimeType,
+      size: bytes.length,
+      objectPath,
+      createdAt: new Date().toISOString(),
+      uploadedBy: user.id,
+    };
+    await storage.uploadAttachment(objectPath, bytes, mimeType);
+    const previous = company.partManuals[part.id];
+    try {
+      company.partManuals[part.id] = manual;
+      await save();
+    } catch (error) {
+      await storage.deleteAttachment(objectPath).catch(() => {});
+      throw error;
+    }
+    // Only once the replacement is safely recorded.
+    if (previous?.objectPath) {
+      await storage.deleteAttachment(previous.objectPath).catch((error) => {
+        console.error(`PanelVault manual cleanup failed: ${error.message}`);
+      });
+    }
+    sendJSON(res, 200, { ok: true, manual });
+  },
+
+  "GET /api/part-manual": async (req, res, session) => {
+    const partID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("partID");
+    const manual = session.company.partManuals[String(partID || "")];
+    if (!manual) return fail(res, 404, "No manual for that part.");
+    const bytes = await storage.downloadAttachment(manual.objectPath);
+    res.writeHead(200, {
+      "Content-Type": manual.mimeType,
+      "Content-Length": bytes.length,
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(manual.name)}`,
+      "Cache-Control": "private, max-age=300",
+    });
+    res.end(bytes);
+  },
+
+  "POST /api/part-manual-delete": async (req, res, session) => {
+    const { company, user } = session;
+    if (!isAdmin(user)) return fail(res, 403, "Only the boss or a manager can remove manuals.");
+    const { partID } = await readBody(req);
+    const manual = company.partManuals[String(partID || "")];
+    if (!manual) return fail(res, 404, "No manual for that part.");
+    delete company.partManuals[manual.partID];
+    await save();
+    await storage.deleteAttachment(manual.objectPath).catch((error) => {
+      console.error(`PanelVault manual cleanup failed: ${error.message}`);
+    });
+    sendJSON(res, 200, { ok: true, partID: manual.partID });
+  },
+
   "POST /api/board-attachment-delete": async (req, res, session) => {
     const { company, user } = session;
     const { boardID, attachmentID } = await readBody(req);
@@ -2705,7 +2882,9 @@ const READ_ONLY_POST_ROUTES = new Set([
 ]);
 
 /** POST routes allowed to carry a base64 document. */
-const LARGE_BODY_ROUTES = new Set(["POST /api/ai/board-scheme", "POST /api/board-attachment"]);
+const LARGE_BODY_ROUTES = new Set([
+  "POST /api/ai/board-scheme", "POST /api/board-attachment", "POST /api/part-manual",
+]);
 
 const OPEN_ROUTES = new Set([
   "GET /api/health",

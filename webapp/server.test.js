@@ -21,6 +21,9 @@ test("new and edited boards show one clickable main-breaker device slot", () => 
   assert.match(browserApp, /function mainBreakerSelectionSlot\(/);
   assert.match(browserApp, /section\("Main breaker"[\s\S]*mainBreakerSlot\)/);
   assert.match(browserApp, /Select the actual main breaker/);
+  assert.match(browserApp, /addTab\("breaker", "Main Breaker"/);
+  assert.match(browserApp, /function renderBoardMainBreakerTab\(board, canEditBoard\)/);
+  assert.match(browserApp, /main-breaker-choice/);
   assert.match(managerApp, /struct MainBreakerSelectionSlot: View/);
   assert.match(managerApp, /struct MainBreakerEditorSheet: View/);
   assert.match(managerApp, /BoardEditPickerSheet[\s\S]*case mainBreaker/);
@@ -29,7 +32,18 @@ test("new and edited boards show one clickable main-breaker device slot", () => 
 test("the website board manufacturer picker includes Tamhash and preserves new AI names", () => {
   const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
   assert.match(browserApp, /BOARD_MANUFACTURERS[\s\S]*"Tamhash"/);
-  assert.match(browserApp, /manufacturer\.select\.append\(new Option\(aiManufacturer/);
+  // The dropdown became a grid of brand logos, so a name the picker has never
+  // carried is kept by setting the field rather than by appending an option.
+  assert.match(browserApp, /manufacturer\.set\(matchedManufacturer \|\| aiManufacturer\)/);
+});
+
+test("the board manufacturer is chosen from a grid of brand logos", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /function manufacturerPickerField\(labelText, initial\)/);
+  assert.match(browserApp, /async function openManufacturerPicker\(selected, onPick\)/);
+  assert.match(browserApp, /manufacturerPickerField\("Board manufacturer", "Generic"\)/);
+  // The board's own page shows the same mark instead of a generic icon.
+  assert.match(browserApp, /brandTile\(board\.manufacturer, "sm"\)/);
 });
 
 test("the board Components tab keeps model variants together with highest ampere first", () => {
@@ -327,6 +341,21 @@ test("projects and boards use the same creation contract as the app", async () =
     assert.equal(createdBoard.body.board.components[0].curve, "C");
     assert.equal(createdBoard.body.board.componentDrafts.length, 1);
     assert.equal(createdBoard.body.board.componentDrafts[0].description, "Siemens 5SY C10");
+
+    const changedBreaker = await json(server.baseURL, "/api/board-update", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        boardID: createdBoard.body.board.id,
+        mainBreakerType: "Changeover Switch",
+        mainBreakerModel: "Socomec ATyS r",
+        mainBreakerAmpere: "1600A",
+      }),
+    });
+    assert.equal(changedBreaker.response.status, 200);
+    assert.equal(changedBreaker.body.board.mainBreakerType, "Changeover Switch");
+    assert.equal(changedBreaker.body.board.mainBreakerModel, "Socomec ATyS r");
+    assert.equal(changedBreaker.body.board.mainBreakerAmpere, "1600A");
+    assert.equal(changedBreaker.body.board.ampere, "1600A");
 
     const assigned = await json(server.baseURL, "/api/board-update", {
       method: "POST", headers,

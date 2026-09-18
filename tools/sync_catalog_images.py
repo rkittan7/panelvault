@@ -153,12 +153,32 @@ def image_files(directory):
     )
 
 
+# A part sold in several pole counts is one catalog row with one picture per
+# pole: abb-tmax-xt4d-3p.png and abb-tmax-xt4d-4p.png both belong to
+# abb-tmax-xt4d, and the apps switch between them.
+POLE_SUFFIX = re.compile(r"^(?P<base>.+)-(?P<pole>[1-4]p)$")
+DEFAULT_POLE_ORDER = ("3p", "4p", "1p", "2p")
+
+
+def pole_variant(key, exact_ids):
+    """(base id, pole) when this key is a pole variant of a real part."""
+    found = POLE_SUFFIX.match(key)
+    if not found:
+        return None, None
+    base = found.group("base")
+    return (base, found.group("pole")) if base in exact_ids else (None, None)
+
+
 def resolve(name, exact_ids, aliases):
     """(id, reason) for a filename, or (None, reason) when it cannot be placed."""
     stem, _ = os.path.splitext(name)
 
     if slug(stem) in exact_ids:
         return slug(stem), "id"
+
+    base, pole = pole_variant(slug(stem), exact_ids)
+    if base:
+        return f"{base}-{pole}", f"{pole.upper()} of {base}"
 
     key = strip_noise(stem)
     if not key:
@@ -210,6 +230,17 @@ def collect(directory, kind, exact_ids, aliases, rename):
 
         claimed[resolved] = filename
         manifest[resolved] = f"{kind}/{filename}"
+
+    # A part photographed per pole has no picture under its own id, so the
+    # default pole stands in for it — every reader that knows nothing about
+    # poles still finds a picture.
+    for pole in DEFAULT_POLE_ORDER:
+        for key, path in list(manifest.items()):
+            found = POLE_SUFFIX.match(key)
+            base = found.group("base") if found else None
+            if (found and found.group("pole") == pole and base in exact_ids
+                    and base not in manifest):
+                manifest[base] = path
 
     return dict(sorted(manifest.items())), problems
 

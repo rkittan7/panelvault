@@ -7153,7 +7153,7 @@ struct ComponentTypeCatalogSheet: View {
   }
 
   private func manufacturer(for name: String) -> ManufacturerItem? {
-    manufacturers.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+    syncedManufacturer(named: name, in: manufacturers)
   }
 
   /// A photo of this part: the one taken on this device if there is one, and
@@ -7998,13 +7998,24 @@ struct SearchView: View {
     [
       SearchFilterSection(title: "Ampere", symbol: "bolt.fill", options: AmpereRating.all),
       SearchFilterSection(title: "Main Breaker", symbol: "bolt.shield.fill", options: ["MCB", "RCBO", "MCCB", "ACB", "Switch Disconnector", "Fuse Switch", "XT1", "XT2", "XT3", "XT4", "XT5", "XT6", "XT7", "XT7 M", "NSX", "S203"]),
-      SearchFilterSection(title: "Brand", symbol: "tag.fill", options: ["ABB", "Schneider", "Siemens", "Eaton"]),
+      SearchFilterSection(title: "Brand", symbol: "tag.fill", options: brandFilterOptions),
       SearchFilterSection(title: "Build Format", symbol: "square.grid.2x2.fill", options: ["Panels", "Plate"]),
       SearchFilterSection(title: "Component Type", symbol: "shippingbox.fill", options: EquipmentTypeCatalog.all),
       SearchFilterSection(title: "Board Type", symbol: "rectangle.3.group.fill", options: boardTypes.map(\.name)),
       SearchFilterSection(title: "Project", symbol: "folder.fill", options: projects.map(\.name)),
       SearchFilterSection(title: "Customer", symbol: "person.crop.circle.fill", options: Array(Set((projects.map(\.customer) + boards.map(\.customer)).filter { !$0.isEmpty })).sorted())
     ]
+  }
+
+  /// Every brand the user has plus the built-in ones, so a brand added to the
+  /// catalog can be filtered on without also being added here. "Generic" is
+  /// left out: it is a placeholder, not a brand anyone searches for.
+  private var brandFilterOptions: [String] {
+    var seen: Set<String> = []
+    return (manufacturers + ManufacturerItem.defaults)
+      .map(\.name)
+      .filter { $0.localizedCaseInsensitiveCompare("Generic") != .orderedSame }
+      .filter { seen.insert($0.lowercased()).inserted }
   }
 
   private var visibleFilterSections: [SearchFilterSection] {
@@ -10773,11 +10784,13 @@ enum ComponentIcon {
     if lowered.contains("ats controller") { return "arrow.left.arrow.right.circle.fill" }
     if lowered.contains("changeover") { return "arrow.left.arrow.right" }
     if lowered.contains("isolator") { return "power" }
+    if lowered.contains("cam switch") { return "dial.medium.fill" }
     if lowered.contains("interlock") { return "lock.fill" }
     if lowered.contains("emergency stop") { return "exclamationmark.octagon.fill" }
 
     // Measurement, control and I/O.
     if lowered.contains("analyzer") { return "chart.xyaxis.line" }
+    if lowered.contains("phasor") { return "waveform.path.ecg" }
     if lowered.contains("rcm") { return "magnifyingglass.circle.fill" }
     if lowered.contains("test block") { return "cable.connector" }
     if lowered.contains("meter") { return "gauge.with.dots.needle.67percent" }
@@ -10874,6 +10887,10 @@ struct ComponentDetailSheet: View {
   @State private var selectedItem: PhotosPickerItem?
   @State private var previewImage: ImagePreviewItem?
   @State private var editorImage: ImagePreviewItem?
+  /// Which pole count is being looked at, for a part sold in several.
+  @State private var selectedPole: String
+  /// Which breaking-capacity class, for a part sold in several of those.
+  @State private var selectedClass: String
 
   init(
     theme: PanelTheme,
@@ -10889,6 +10906,15 @@ struct ComponentDetailSheet: View {
     self.onSaveImage = onSaveImage
     self.onRemoveImage = onRemoveImage
     _selectedImage = State(initialValue: image)
+    _selectedPole = State(initialValue: component.poleOptions.first ?? "")
+    _selectedClass = State(initialValue: component.classOptions.first?.letter ?? "")
+  }
+
+  /// The picture for the pole being looked at: the one taken on this device
+  /// first, then the catalog photo for that pole, then the part's own.
+  private var displayedImage: UIImage? {
+    selectedImage ?? CatalogImageLibrary.componentImage(
+      ids: component.imageLookupIDs(pole: selectedPole, class: selectedClass))
   }
 
   private var manufacturerColor: Color {
@@ -10901,6 +10927,31 @@ struct ComponentDetailSheet: View {
     case "Siemens": return Color(hex: 0x18D4E8)
     case "Eaton": return Color(hex: 0x5E78FF)
     default: return theme.primary
+    }
+  }
+
+  /// A part sold in more than one pole count is one part with one picture per
+  /// pole, so the poles are switched here rather than split into rows that
+  /// would each need their own stock line.
+  @ViewBuilder
+  private var poleSwitch: some View {
+    let poles = component.poleOptions
+    let classes = component.classOptions
+    if poles.count > 1 || classes.count > 1 {
+      VStack(spacing: 8) {
+        if classes.count > 1 {
+          Picker("Class", selection: $selectedClass) {
+            ForEach(classes) { Text($0.letter).tag($0.letter) }
+          }
+          .pickerStyle(.segmented)
+        }
+        if poles.count > 1 {
+          Picker("Poles", selection: $selectedPole) {
+            ForEach(poles, id: \.self) { Text($0) }
+          }
+          .pickerStyle(.segmented)
+        }
+      }
     }
   }
 
@@ -10942,7 +10993,14 @@ struct ComponentDetailSheet: View {
             VStack(alignment: .leading, spacing: 10) {
               InfoLine(title: "Type", value: component.type)
               InfoLine(title: "Rating", value: component.rating)
-              InfoLine(title: "Poles / Phase", value: component.poles)
+              if let picked = component.classOptions.first(where: { $0.letter == selectedClass }),
+                 component.classOptions.count > 1 {
+                InfoLine(title: "Class", value: picked.label)
+              }
+              InfoLine(title: "Poles / Phase",
+                       value: component.poleOptions.count > 1 && !selectedPole.isEmpty
+                         ? "\(selectedPole) — sold as \(component.poles)"
+                         : component.poles)
               if !component.serialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 InfoLine(title: "Serial Number", value: component.serialNumber)
               }
@@ -10978,11 +11036,12 @@ struct ComponentDetailSheet: View {
 
   private var componentPhotoSection: some View {
     VStack(alignment: .leading, spacing: 10) {
-      if let selectedImage {
+      poleSwitch
+      if let displayedImage {
         Button {
-          previewImage = ImagePreviewItem(image: selectedImage)
+          previewImage = ImagePreviewItem(image: displayedImage)
         } label: {
-          Image(uiImage: selectedImage)
+          Image(uiImage: displayedImage)
             .resizable()
             .scaledToFit()
             .frame(maxWidth: .infinity)
@@ -10995,7 +11054,7 @@ struct ComponentDetailSheet: View {
 
         HStack(spacing: 14) {
           Button {
-            previewImage = ImagePreviewItem(image: selectedImage)
+            previewImage = ImagePreviewItem(image: displayedImage)
           } label: {
             Label("View", systemImage: "photo.fill")
               .font(.caption.bold())
@@ -11003,7 +11062,7 @@ struct ComponentDetailSheet: View {
           .buttonStyle(.plain)
 
           Button {
-            editorImage = ImagePreviewItem(image: selectedImage)
+            editorImage = ImagePreviewItem(image: displayedImage)
           } label: {
             Label("Edit", systemImage: "crop")
               .font(.caption.bold())
@@ -11768,7 +11827,7 @@ struct ComponentCatalogView: View {
   }
 
   private func manufacturer(for name: String) -> ManufacturerItem? {
-    manufacturers.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+    syncedManufacturer(named: name, in: manufacturers)
   }
 
   private func manufacturerImage(for name: String) -> UIImage? {
@@ -13247,6 +13306,9 @@ struct ManufacturerItem: Identifiable {
     ManufacturerItem(id: "phoenix", name: "Phoenix", colorHex: 0xFF9F0A),
     ManufacturerItem(id: "danfoss", name: "Danfoss", colorHex: 0xE2231A),
     ManufacturerItem(id: "socomec", name: "Socomec", colorHex: 0x00A0DF),
+    ManufacturerItem(id: "allen-bradley", name: "Allen-Bradley", colorHex: 0xE4002B),
+    ManufacturerItem(id: "salzer", name: "Salzer", colorHex: 0x2F80ED),
+    ManufacturerItem(id: "satec", name: "Satec", colorHex: 0x00B3A6),
     ManufacturerItem(id: "generic", name: "Generic", colorHex: 0xAEB4BC)
   ]
 }
@@ -13393,6 +13455,7 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "abb-s204-4p", manufacturer: "ABB", type: "MCB", model: "S204", rating: "0.5-63A", poles: "4P", curve: "B/C/D Curve", about: "Four-pole MCB breaking three phases plus neutral, used where the neutral must be isolated, such as on generator or changeover circuits."),
       PanelComponent(id: "abb-sn201-1pn", manufacturer: "ABB", type: "MCB", model: "SN201", rating: "0.5-63A", poles: "1P+N", curve: "B/C Curve", about: "One pole plus switched neutral in a single module width, the usual choice for apartment and lighting boards where DIN space is tight."),
       PanelComponent(id: "abb-s300-p", manufacturer: "ABB", type: "MCB", model: "S300 P", rating: "Set A", poles: "1P-4P", curve: "Industrial", about: "Industrial-grade MCB with a higher breaking capacity than domestic ranges. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA device can clear."),
+      PanelComponent(id: "abb-s304-p", manufacturer: "ABB", type: "MCB", model: "S304 P", rating: "Set A", poles: "4P", curve: "Industrial", about: "Four-pole industrial MCB from the S300 P range, tripping all four poles together. Specify where the prospective short-circuit current at the board exceeds what a standard 6kA domestic device can clear."),
       PanelComponent(id: "abb-su200", manufacturer: "ABB", type: "MCB", model: "SU200", rating: "Set A", poles: "1P-4P", curve: "UL/CSA", about: "MCB built to UL and CSA ratings for panels destined for North American markets or for machinery exported there."),
       PanelComponent(id: "schneider-ic60n", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60N", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Standard Acti9 MCB at 6kA breaking capacity, suitable for most commercial final circuits. Pairs with Vigi add-on blocks if earth-leakage protection is needed later."),
       PanelComponent(id: "schneider-ic60h", manufacturer: "Schneider", type: "MCB", model: "Acti9 iC60H", rating: "Set A", poles: "1P-4P", curve: "B/C/D", about: "Higher breaking capacity version of the iC60 for boards closer to the transformer where fault levels are greater."),
@@ -13408,7 +13471,8 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "abb-ds200", manufacturer: "ABB", type: "RCBO", model: "DS200", rating: "up to 63A", poles: "1P+N/3P+N", curve: "30-300mA, 10kA", about: "Higher breaking capacity RCBO range for boards with elevated fault levels where a standard 6kA device would be inadequate."),
       PanelComponent(id: "schneider-acti9-rcbo", manufacturer: "Schneider", type: "RCBO", model: "Acti9 iDPN Vigi", rating: "Set A", poles: "1P+N", curve: "B/C + RCD", about: "Acti9 RCBO in one module width, giving each circuit its own earth-leakage protection so a single fault does not trip an entire board section."),
       PanelComponent(id: "generic-rccb", manufacturer: "Generic", type: "RCD/RCCB", model: "Residual Current Device", rating: "Set A", poles: "2P/4P", curve: "30-300mA", about: "Residual current circuit breaker detecting earth leakage but offering no overload protection, so it always sits behind or above separate overcurrent devices. Choose the type by load: AC for simple resistive, A where electronics are present, B where drives or DC components can produce smooth residual currents."),
-      PanelComponent(id: "abb-f200", manufacturer: "ABB", type: "RCD/RCCB", model: "F200", rating: "25-125A", poles: "2P/4P", curve: "30-500mA, Type AC/A", about: "Residual current circuit breaker protecting a group of circuits against earth leakage. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section."),
+      PanelComponent(id: "abb-f202", manufacturer: "ABB", type: "RCD/RCCB", model: "F202", rating: "25-125A", poles: "2P", curve: "30-500mA, Type AC/A", about: "Two-pole residual current circuit breaker for a single-phase group of circuits, breaking line and neutral together. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section."),
+      PanelComponent(id: "abb-f204", manufacturer: "ABB", type: "RCD/RCCB", model: "F204", rating: "25-125A", poles: "4P", curve: "30-500mA, Type AC/A", about: "Four-pole residual current circuit breaker for a three-phase group of circuits, breaking the three phases and the neutral together. At 30mA it provides additional protection against electric shock; at 300mA it is normally used for fire protection on a whole section."),
       PanelComponent(id: "schneider-iid", manufacturer: "Schneider", type: "RCD/RCCB", model: "Acti9 iID", rating: "25-100A", poles: "2P/4P", curve: "30-300mA, Type AC/A/B", about: "Acti9 residual current device available in Type A and Type B. Type B is required where variable speed drives can produce smooth DC residual current that would blind a Type AC device."),
       PanelComponent(id: "siemens-5sv", manufacturer: "Siemens", type: "RCD/RCCB", model: "SENTRON 5SV", rating: "25-125A", poles: "2P/4P", curve: "30-300mA", about: "SENTRON RCCB for group earth-leakage protection. Consider splitting circuits across several RCCBs so one nuisance trip does not take out an entire board.")
     ]),
@@ -13458,13 +13522,20 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "generic-isolator", manufacturer: "Generic", type: "Isolator", model: "Load break switch", rating: "Set A", poles: "3P/4P", curve: "Door-coupled", about: "Load break switch providing a visible, lockable point of isolation so a board or section can be worked on safely. Rated for making and breaking load current, unlike a plain disconnector."),
       PanelComponent(id: "abb-ot", manufacturer: "ABB", type: "Isolator", model: "OT switch disconnector", rating: "16-3150A", poles: "3P/4P", curve: "Door or base mount", about: "Switch disconnector for main isolation or outgoing feeders, available with door-coupled rotary handles that can be padlocked off for safe working."),
       PanelComponent(id: "schneider-ins", manufacturer: "Schneider", type: "Isolator", model: "Interpact INS", rating: "40-2500A", poles: "3P/4P", curve: "Load break", about: "Load break switch for isolation duty on incomers and outgoing feeders where switching capability without protection is required."),
+      PanelComponent(id: "eaton-p1", manufacturer: "Eaton", type: "Isolator", model: "P1 main switch", rating: "25-40A", poles: "3P/4P", curve: "Door or base mount", about: "Eaton Moeller P1 switch-disconnector used as a main or maintenance switch on small boards and machines. Red-yellow handles make it an emergency-off main switch; check the handle colour, padlock option and whether a neutral pole is fitted."),
+      PanelComponent(id: "eaton-p3", manufacturer: "Eaton", type: "Isolator", model: "P3 main switch", rating: "63-100A", poles: "3P/4P", curve: "Door or base mount", about: "Eaton Moeller P3 switch-disconnector for larger machine and board incomers. Same handle and interlock options as the P1 range, in a bigger frame for heavier feeders."),
+      PanelComponent(id: "eaton-t0", manufacturer: "Eaton", type: "Cam Switch", model: "T0 rotary switch", rating: "20A", poles: "1-6 contact units", curve: "Control and load duty", about: "Eaton Moeller T0 cam switch used as an on-off, changeover, step or ammeter/voltmeter selector. The function is set by the switching programme number, so record it with the part rather than just the frame size."),
+      PanelComponent(id: "eaton-t3", manufacturer: "Eaton", type: "Cam Switch", model: "T3 rotary switch", rating: "32A", poles: "1-6 contact units", curve: "Control and load duty", about: "Eaton Moeller T3 cam switch, the heavier frame of the T range for motor switching and small load changeover. Match the switching programme and the front plate legend to the drawing."),
+      PanelComponent(id: "allen-bradley-194e", manufacturer: "Allen-Bradley", type: "Isolator", model: "194E load switch", rating: "16-1200A", poles: "3P/6P", curve: "Door, base or DIN mount", about: "Allen-Bradley Bulletin 194E IEC load switch for local motor isolation and machine disconnect duty. Extra poles, neutral and earth terminals and auxiliary contacts clip on; it shares its operating handles with the 194L range."),
+      PanelComponent(id: "allen-bradley-194l", manufacturer: "Allen-Bradley", type: "Cam Switch", model: "194L control and load switch", rating: "10-100A", poles: "Multi-stage", curve: "Door, base or DIN mount", about: "Allen-Bradley Bulletin 194L cam switch used as a manual motor controller, changeover or selector. The contact programme defines what it does, so keep the full catalogue number with the installed switch."),
+      PanelComponent(id: "allen-bradley-194r", manufacturer: "Allen-Bradley", type: "Isolator", model: "194R disconnect switch", rating: "20-1250A", poles: "3P", curve: "Fused or non-fused", about: "Allen-Bradley Bulletin 194R rotary disconnect with a flange or door-mounted handle, available fused and non-fused. Record the fuse class and size on fused versions; up to six auxiliary contacts can be added."),
       PanelComponent(id: "abb-tmax-xt1d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT1D", rating: "IEC 160A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT1 frame, to 160A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt2d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT2D", rating: "IEC 160A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT2 frame, to 160A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt3d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT3D", rating: "IEC 250A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT3 frame, to 250A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt4d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT4D", rating: "IEC 250A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT4 frame, to 250A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt5d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT5D", rating: "IEC 630A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT5 frame, to 630A. No trip unit: it will not clear a fault and needs protection upstream."),
       PanelComponent(id: "abb-tmax-xt6d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT6D", rating: "IEC 1000A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT6 frame, to 1000A. No trip unit: it will not clear a fault and needs protection upstream."),
-      PanelComponent(id: "abb-tmax-xt7d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D", rating: "IEC 1600A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT7 frame, to 1600A. No trip unit: it will not clear a fault and needs protection upstream."),
+      PanelComponent(id: "abb-tmax-xt7d", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D", rating: "IEC 1600A frame", poles: "3P/4P", curve: "No automatic protection", about: "Switch-disconnector in the XT7 frame, to 1600A, in three-pole and four-pole versions. No trip unit: it isolates and switches on load but will not clear a fault, so protection sits upstream."),
       PanelComponent(id: "abb-tmax-xt7dm", manufacturer: "ABB", type: "Switch-Disconnector", model: "SACE Tmax XT7D M", rating: "IEC 1600A frame", poles: "3P/4P", curve: "Stored-energy, no protection", about: "Switch-disconnector in the XT7 frame with a stored-energy mechanism. No trip unit: it needs protection upstream."),
       PanelComponent(id: "generic-changeover", manufacturer: "Generic", type: "Changeover Switch", model: "Manual changeover", rating: "Set A", poles: "4P", curve: "I-0-II", about: "Manual changeover switch selecting between two supplies, typically utility and generator. The I-0-II arrangement mechanically prevents both sources being connected at once."),
       PanelComponent(id: "socomec-sirco", manufacturer: "Socomec", type: "Legacy Changeover Switch", model: "SIRCO MOT", rating: "125-3200A", poles: "3P/4P", curve: "Motorised - verify reference", about: "Legacy motorised switching family still found in installed panels. Record the full reference and control voltage; for a new IEC transfer scheme compare the current ATyS r, g and p ranges rather than assuming accessories or ratings carry over."),
@@ -13514,13 +13585,19 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "generic-fuse", manufacturer: "Generic", type: "Fuse", model: "NH fuse link", rating: "Set A", poles: "1P", curve: "gG/gL", about: "NH fuse link giving very high breaking capacity in a compact body, often used ahead of large feeders or where the fault level exceeds what a breaker can handle economically. gG is for general cable protection, aM for motor circuits."),
       PanelComponent(id: "generic-fuse-holder", manufacturer: "Generic", type: "Fuse Holder", model: "DIN fuse holder", rating: "Set A", poles: "1P/3P", curve: "10x38/NH", about: "DIN rail fuse carrier holding cartridge or NH fuse links, giving isolation when the carrier is withdrawn. Confirm the fuse size it accepts and whether a blown-fuse indicator is required."),
       PanelComponent(id: "abb-e9f", manufacturer: "ABB", type: "Fuse Link", model: "E9F cylindrical", rating: "1-125A, to 690V", poles: "Per circuit", curve: "gG, aM and gPV", about: "Cylindrical fuse links in 8.5x31.5, 10x38, 14x51 and 22x58mm. Class decides the duty: gG is full range, aM is short circuit only and needs a separate overload relay."),
-      PanelComponent(id: "abb-e90", manufacturer: "ABB", type: "Fuse Holder", model: "E90 holder/disconnector", rating: "20-125A class", poles: "1P-4P", curve: "Cylindrical fuses", about: "DIN-rail fuse holder and disconnector for cylindrical links, E91 to E94 by pole count. The holder class is its maximum, not the fitted fuse: an E93/32 may hold 16A links."),
+      PanelComponent(id: "abb-e91", manufacturer: "ABB", type: "Fuse Holder", model: "E91", rating: "20-125A class", poles: "1P", curve: "Cylindrical fuses", about: "Single-pole DIN-rail fuse holder and disconnector for cylindrical links. The holder class is its maximum, not the fitted fuse: an E91/32 may hold 16A links."),
+      PanelComponent(id: "abb-e92", manufacturer: "ABB", type: "Fuse Holder", model: "E92", rating: "20-125A class", poles: "2P", curve: "Cylindrical fuses", about: "Two-pole DIN-rail fuse holder and disconnector for cylindrical links. The holder class is its maximum, not the fitted fuse: an E92/32 may hold 16A links."),
+      PanelComponent(id: "abb-e93", manufacturer: "ABB", type: "Fuse Holder", model: "E93", rating: "20-125A class", poles: "3P", curve: "Cylindrical fuses", about: "Three-pole DIN-rail fuse holder and disconnector for cylindrical links. The holder class is its maximum, not the fitted fuse: an E93/32 may hold 16A links."),
+      PanelComponent(id: "abb-e94", manufacturer: "ABB", type: "Fuse Holder", model: "E94", rating: "20-125A class", poles: "4P", curve: "Cylindrical fuses", about: "Four-pole DIN-rail fuse holder and disconnector for cylindrical links. The holder class is its maximum, not the fitted fuse: an E94/32 may hold 16A links."),
       PanelComponent(id: "abb-e90-pv", manufacturer: "ABB", type: "Fuse Holder", model: "E90 PV / PV1500", rating: "To 1500V DC", poles: "1P-2P", curve: "PV DC strings", about: "PV fuse disconnector for photovoltaic strings, the PV1500 version rated to 1500V DC. Do not fit an AC-rated holder or link to a PV circuit."),
       PanelComponent(id: "abb-ofa", manufacturer: "ABB", type: "Fuse Link", model: "OFA NH/HRC", rating: "2-1250A, 500/690V", poles: "Per circuit", curve: "NH000 to NH4a", about: "Knife-blade HRC fuse links for distribution and industrial protection, high breaking capacity and strongly current limiting. Current does not follow from NH size alone."),
       PanelComponent(id: "abb-ofa-base", manufacturer: "ABB", type: "Fuse Base", model: "OFAZ / OFAX", rating: "NH fuse links", poles: "1P-3P", curve: "Open or IP20", about: "Fixed base for NH fuse links, open or IP20 protected. A base protects nothing on its own: protection comes from the link fitted to it."),
       PanelComponent(id: "abb-os", manufacturer: "ABB", type: "Switch Fuse", model: "OS switch fuse", rating: "By frame and fuse", poles: "3P/4P", curve: "Manual operation", about: "Switch fuse combining load switching, isolation and fuse protection in one device. Record frame current, fuse size and the current of the link actually fitted."),
       PanelComponent(id: "abb-osm", manufacturer: "ABB", type: "Switch Fuse", model: "OSM motor-operated", rating: "By frame and fuse", poles: "3P/4P", curve: "Remote operation", about: "Motor-operated switch fuse for remote or automatic operation in transfer and process schemes. Motor control voltage is separate from the power-circuit voltage."),
-      PanelComponent(id: "abb-xlp", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "EasyLine XLP", rating: "NH by frame", poles: "3P", curve: "Distribution boards", about: "Compact fuse-switch disconnector for distribution boards, taking NH links according to frame. Optional fuse monitoring."),
+      PanelComponent(id: "abb-xlp-1p", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "EasyLine XLP 1P", rating: "NH by frame", poles: "1P", curve: "Distribution boards", about: "Single-pole fuse-switch disconnector for distribution boards, taking NH links according to frame size. One phase through one fuse. Optional fuse monitoring."),
+      PanelComponent(id: "abb-xlp-2p", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "EasyLine XLP 2P", rating: "NH by frame", poles: "2P", curve: "Distribution boards", about: "Two-pole fuse-switch disconnector for distribution boards, taking NH links according to frame size. Phase and neutral, or two poles of a DC circuit. Optional fuse monitoring."),
+      PanelComponent(id: "abb-xlp-3p", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "EasyLine XLP 3P", rating: "NH by frame", poles: "3P", curve: "Distribution boards", about: "Three-pole fuse-switch disconnector for distribution boards, taking NH links according to frame size. The usual three-phase board incomer or outgoing way. Optional fuse monitoring."),
+      PanelComponent(id: "abb-xlp-4p", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "EasyLine XLP 4P", rating: "NH by frame", poles: "4P", curve: "Distribution boards", about: "Four-pole fuse-switch disconnector for distribution boards, taking NH links according to frame size. Three phases and a switched neutral. Optional fuse monitoring."),
       PanelComponent(id: "abb-inline2", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "InLine II", rating: "NH by frame", poles: "3P", curve: "Busbar mounted", about: "Busbar-mounted fuse-switch disconnector in a vertical arrangement, for cable distribution and industrial boards. Electronic fuse monitoring available."),
       PanelComponent(id: "abb-slimline-xr", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "SlimLine XR", rating: "NH by frame", poles: "3P", curve: "Switchboards", about: "Switch-disconnector-fuse for distribution and industrial switchboards, compact on busbar installations."),
       PanelComponent(id: "abb-slimline-xrg", manufacturer: "ABB", type: "Fuse-Switch Disconnector", model: "SlimLine XRG", rating: "Elevated voltage", poles: "3P", curve: "PV and high-voltage AC", about: "High-performance fusegear for PV and elevated-voltage applications. Verify the exact AC or DC rating against the product record before applying it."),
@@ -13684,6 +13761,33 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "schneider-pm2000", manufacturer: "Schneider", type: "Power Analyzer", model: "PowerLogic PM2000", rating: "230/400V", poles: "3PH", curve: "Panel mount", about: "Panel-mounted power meter measuring energy, demand and basic power quality, suited to tenant metering and energy management."),
       PanelComponent(id: "siemens-pac4200", manufacturer: "Siemens", type: "Power Analyzer", model: "SENTRON PAC4200", rating: "230/400V", poles: "3PH", curve: "Harmonics + logging", about: "Advanced meter adding harmonic analysis and data logging, used where power quality has to be proven rather than assumed."),
       PanelComponent(id: "abb-m2m", manufacturer: "ABB", type: "Power Analyzer", model: "M2M network analyzer", rating: "230/400V", poles: "3PH", curve: "Modbus", about: "Network analyser recording power quality and harmonic content, typically fitted where drives and non-linear loads dominate."),
+      PanelComponent(id: "satec-pm130p-plus", manufacturer: "Satec", type: "Meter", model: "PM130P PLUS", rating: "230/400V", poles: "3PH", curve: "Power, LED panel", about: "SATEC PM130 PLUS panel meter with an LED display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi or Profibus modules, and DC metering through a shunt. The P version measures voltage, current, power and frequency, with control set points, but no energy."),
+      PanelComponent(id: "satec-pm130e-plus", manufacturer: "Satec", type: "Meter", model: "PM130E PLUS", rating: "230/400V", poles: "3PH", curve: "Energy, LED panel", about: "SATEC PM130 PLUS panel meter with an LED display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi or Profibus modules, and DC metering through a shunt. The E version adds energy measurement and data logging to the P."),
+      PanelComponent(id: "satec-pm130eh-plus", manufacturer: "Satec", type: "Meter", model: "PM130EH PLUS", rating: "230/400V", poles: "3PH", curve: "Energy + harmonics, LED panel", about: "SATEC PM130 PLUS panel meter with an LED display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi or Profibus modules, and DC metering through a shunt. The EH version adds individual harmonic analysis up to the 40th to the E."),
+      PanelComponent(id: "satec-pm135p", manufacturer: "Satec", type: "Meter", model: "PM135P", rating: "230/400V", poles: "3PH", curve: "Power, LCD panel", about: "SATEC PM135 panel meter with an LCD display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi, cellular or Profibus modules. Current inputs come as 5A, 1A or 40mA for HACS sensors, so record which one is fitted. The P version measures voltage, current, power and frequency, but no energy."),
+      PanelComponent(id: "satec-pm135e", manufacturer: "Satec", type: "Meter", model: "PM135E", rating: "230/400V", poles: "3PH", curve: "Energy, LCD panel", about: "SATEC PM135 panel meter with an LCD display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi, cellular or Profibus modules. Current inputs come as 5A, 1A or 40mA for HACS sensors, so record which one is fitted. The E version adds energy measurement and data logging to the P."),
+      PanelComponent(id: "satec-pm135eh", manufacturer: "Satec", type: "Meter", model: "PM135EH", rating: "230/400V", poles: "3PH", curve: "Energy + harmonics, LCD panel", about: "SATEC PM135 panel meter with an LCD display, fitting a 92x92mm square or 4-inch round cut-out, class 0.5S, RS485 built in with Ethernet, Wi-Fi, cellular or Profibus modules. Current inputs come as 5A, 1A or 40mA for HACS sensors, so record which one is fitted. The EH version adds individual harmonic analysis up to the 40th to the E."),
+      PanelComponent(id: "satec-pm172p", manufacturer: "Satec", type: "Meter", model: "PM172P", rating: "230/400V", poles: "3PH", curve: "Power, panel mount", about: "SATEC PM172 series panel-mounted feeder meter with set-point driven event and data logging and a choice of serial, Ethernet, modem or Profibus communication. The P version covers power measurement without energy."),
+      PanelComponent(id: "satec-pm172e", manufacturer: "Satec", type: "Meter", model: "PM172E", rating: "230/400V", poles: "3PH", curve: "Energy, panel mount", about: "SATEC PM172 series panel-mounted feeder meter with set-point driven event and data logging and a choice of serial, Ethernet, modem or Profibus communication. The E version adds revenue-class energy and long-term logging."),
+      PanelComponent(id: "satec-pm172eh", manufacturer: "Satec", type: "Meter", model: "PM172EH", rating: "230/400V", poles: "3PH", curve: "Energy + harmonics, panel mount", about: "SATEC PM172 series panel-mounted feeder meter with set-point driven event and data logging and a choice of serial, Ethernet, modem or Profibus communication. The EH version adds harmonic analysis to the E."),
+      PanelComponent(id: "satec-pm172-pro", manufacturer: "Satec", type: "Meter", model: "PM172 PRO", rating: "230/400V", poles: "3PH", curve: "Class 0.2S, panel mount", about: "Part of the SATEC PM17x PRO series: class 0.2S revenue accuracy per IEC 62053-22, with an IRIG-B time input and a fourth voltage input for reference. The PM172 PRO is the high-accuracy power meter of the range, with power quality analysis but without the EN 50160 or IEEE 1159 reports."),
+      PanelComponent(id: "satec-pm174-pro", manufacturer: "Satec", type: "Power Analyzer", model: "PM174 PRO", rating: "230/400V", poles: "3PH", curve: "IEEE 1159, Class A", about: "Part of the SATEC PM17x PRO series: class 0.2S revenue accuracy per IEC 62053-22, with an IRIG-B time input and a fourth voltage input for reference. The PM174 PRO is the North American model: a Class A (IEC 61000-4-30 Ed. 3.1) analyser with IEEE 1159 reports."),
+      PanelComponent(id: "satec-pm175-pro", manufacturer: "Satec", type: "Power Analyzer", model: "PM175 PRO", rating: "230/400V", poles: "3PH", curve: "EN 50160, Class A", about: "Part of the SATEC PM17x PRO series: class 0.2S revenue accuracy per IEC 62053-22, with an IRIG-B time input and a fourth voltage input for reference. The PM175 PRO is the European model: a Class A (IEC 61000-4-30 Ed. 3.1) analyser with EN 50160 reports."),
+      PanelComponent(id: "satec-rpm07x-pro", manufacturer: "Satec", type: "Power Analyzer", model: "RPM07x PRO transducer", rating: "230/400V", poles: "3PH", curve: "DIN, no display", about: "Part of the SATEC PM17x PRO series: class 0.2S revenue accuracy per IEC 62053-22, with an IRIG-B time input and a fourth voltage input for reference. The RPM07x PRO is the transducer version with no screen, mounted on DIN rail and read over communications."),
+      PanelComponent(id: "satec-pm174", manufacturer: "Satec", type: "Power Analyzer", model: "PM174", rating: "230/400V", poles: "3PH", curve: "IEEE 1159 power quality", about: "SATEC panel-mounted power quality analyser reporting to IEEE 1159, with 6-channel waveform capture, built-in digital I/O and a detachable display module. The North American counterpart of the PM175."),
+      PanelComponent(id: "satec-pm335", manufacturer: "Satec", type: "Power Analyzer", model: "PM335", rating: "230/400V", poles: "3PH", curve: "PRO series, panel mount", about: "SATEC PRO series analyser for a 92x92mm panel cut-out: class 0.2S, Class A power quality, IEC 61850, dual Ethernet, 16GB memory and waveform recording. Takes up to four I/O extension cards. Electrically the same as the DIN-rail EM235."),
+      PanelComponent(id: "satec-em235", manufacturer: "Satec", type: "Power Analyzer", model: "EM235", rating: "230/400V", poles: "3PH", curve: "PRO series, DIN rail", about: "SATEC PRO series analyser for DIN rail: class 0.2S, Class A power quality, IEC 61850, dual Ethernet, 16GB memory and waveform recording, with DC current measurement. Takes up to four I/O extension cards. Electrically the same as the panel-mount PM335."),
+      PanelComponent(id: "satec-em132", manufacturer: "Satec", type: "Meter", model: "EM132", rating: "230/400V", poles: "3PH", curve: "DIN rail transducer", about: "SATEC DIN-rail power meter and smart transducer for SCADA and industrial monitoring: PM130P PLUS functions plus energy, in an anti-tamper case. Not MID certified; use the EM133 where the reading is billed."),
+      PanelComponent(id: "satec-em720", manufacturer: "Satec", type: "Meter", model: "EM720 eXpertMeter", rating: "230/400V", poles: "3PH", curve: "Revenue + PQ, IEC", about: "SATEC eXpertMeter revenue meter and power quality analyser in one, the IEC version for wall or panel mounting. Used at utility and large-customer intake points where billing and PQ evidence come from the same device."),
+      PanelComponent(id: "satec-em920", manufacturer: "Satec", type: "Meter", model: "EM920 eXpertMeter", rating: "230/400V", poles: "3PH", curve: "Revenue + PQ, ANSI socket", about: "SATEC eXpertMeter revenue meter and power quality analyser, the ANSI socket-mount version of the EM720."),
+      PanelComponent(id: "satec-bfm136", manufacturer: "Satec", type: "Multi-Circuit Meter", model: "BFM136 branch feeder monitor", rating: "230/400V", poles: "1PH/3PH", curve: "Up to 36 channels, HACS", about: "SATEC multi-circuit meter with up to 36 current channels (12 three-phase or 36 single-phase circuits, or a mix), read through HACS sensors. Suited to tenant billing on a whole board from one device."),
+      PanelComponent(id: "satec-bfm-ii", manufacturer: "Satec", type: "Multi-Circuit Meter", model: "BFM-II branch feeder monitor", rating: "230/400V", poles: "1PH/3PH", curve: "Up to 54 channels", about: "SATEC second-generation branch feeder monitor with up to 54 current channels (18 three-phase or 54 single-phase circuits, or a mix), with demand, energy, logging and TOU tariffs. Works for new boards and retrofits."),
+      PanelComponent(id: "satec-bfm-dfr", manufacturer: "Satec", type: "Multi-Circuit Meter", model: "BFM-DFR fault recorder", rating: "230/400V", poles: "1PH/3PH", curve: "40-channel fault recording", about: "SATEC multi-circuit fault recorder for substation retrofits, recording waveforms on 40 channels at up to 40 times nominal current."),
+      PanelComponent(id: "satec-pmu-pro", manufacturer: "Satec", type: "Phasor Measurement Unit", model: "PMU PRO", rating: "230/400V", poles: "3PH", curve: "IEEE C37.118.1", about: "SATEC phasor measurement unit to IEEE C37.118.1 for wide-area grid monitoring. Needs an accurate time source; confirm the synchronisation input before installing."),
+      PanelComponent(id: "satec-edl180", manufacturer: "Satec", type: "Portable Power Analyzer", model: "EDL180", rating: "230/400V", poles: "3PH", curve: "Portable, Class A", about: "SATEC portable Class A power quality analyser based on the PM180, for temporary surveys before a filter, capacitor bank or fixed analyser is specified."),
+      PanelComponent(id: "satec-em133", manufacturer: "Satec", type: "Meter", model: "EM133", rating: "230/400V", poles: "3PH", curve: "DIN, MID class 0.5S", about: "SATEC DIN-rail energy meter certified for revenue metering, with plug-in communication and I/O modules. Use it where a meter must bill tenants rather than just indicate."),
+      PanelComponent(id: "satec-pm175", manufacturer: "Satec", type: "Power Analyzer", model: "PM175", rating: "230/400V", poles: "3PH", curve: "EN 50160 power quality", about: "SATEC panel-mounted power quality analyser reporting to EN 50160, with event and waveform logging. Suited to main incomers where supply quality has to be recorded."),
+      PanelComponent(id: "satec-pm180", manufacturer: "Satec", type: "Power Analyzer", model: "PM180", rating: "230/400V", poles: "3PH", curve: "Modular, hot-swap cards", about: "SATEC flagship power quality analyser with plug-in I/O and communication cards. Specify it on main switchboards and critical supplies where detailed logging and fault recording are needed."),
       PanelComponent(id: "generic-ct", manufacturer: "Generic", type: "Current Transformer", model: "Split or solid core CT", rating: "50-5000A", poles: "1PH each", curve: "Class 0.5-1", about: "Current transformer scaling feeder current down to a meter input, usually 5A or 1A. Match the ratio and accuracy class to the meter, and never leave the secondary open circuit while primary current flows."),
       PanelComponent(id: "generic-test-block", manufacturer: "Generic", type: "Test Block", model: "CT test block", rating: "5A", poles: "Panel mount", curve: "Shorting type", about: "Test block allowing meters and protection relays to be tested or replaced without breaking the CT secondary, which it shorts automatically as the plug is withdrawn.")
     ]),
@@ -13749,6 +13853,23 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "allen-bradley-800t-pilot-light", manufacturer: "Allen-Bradley", type: "Pilot Light", model: "800T pilot light", rating: "30.5mm", poles: "LED/lamp module", curve: "Voltage and color specific", about: "Allen-Bradley Bulletin 800T heavy-duty pilot light. Record lens color, illumination technology and supply voltage exactly; those details are not interchangeable."),
       PanelComponent(id: "allen-bradley-800t-estop", manufacturer: "Allen-Bradley", type: "Emergency Stop", model: "800T emergency stop", rating: "30.5mm mounting", poles: "NC contact blocks", curve: "Heavy-duty mushroom", about: "Allen-Bradley Bulletin 800T emergency-stop operator. Preserve release action, mushroom style and contact arrangement and verify the complete safety function separately."),
       PanelComponent(id: "allen-bradley-802t-door-switch", manufacturer: "Allen-Bradley", type: "Door Switch", model: "802T standard limit switch", rating: "NEMA 4/13", poles: "2/4 circuit", curve: "Lever or push actuator", about: "Allen-Bradley Bulletin 802T oiltight position/limit switch sometimes used to sense an enclosure or machine door. Match the exact actuator and contact action; it is not automatically a safety guard switch."),
+      PanelComponent(id: "allen-bradley-800fp-push-button", manufacturer: "Allen-Bradley", type: "Push Button", model: "800FP push button", rating: "22.5mm", poles: "NO/NC blocks", curve: "Plastic, momentary", about: "Allen-Bradley Bulletin 800FP plastic push-button operator, a lighter-duty sibling of the metal 800F that uses the same 22.5mm cut-out. Record colour, legend and contact blocks with the installed assembly."),
+      PanelComponent(id: "allen-bradley-800fp-selector", manufacturer: "Allen-Bradley", type: "Selector Switch", model: "800FP selector switch", rating: "22.5mm", poles: "2/3 position", curve: "Maintained or spring return", about: "Allen-Bradley Bulletin 800FP plastic selector operator. Position count, return action and contact blocks decide the function, so match them to the control scheme."),
+      PanelComponent(id: "allen-bradley-800fp-pilot-light-red", manufacturer: "Allen-Bradley", type: "Pilot Light", model: "800FP pilot light, red", rating: "22.5mm", poles: "LED module", curve: "Voltage and color specific", about: "Allen-Bradley Bulletin 800FP plastic pilot light. Record the LED module voltage; the head alone is not a complete orderable lamp. Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "allen-bradley-800fp-pilot-light-green", manufacturer: "Allen-Bradley", type: "Pilot Light", model: "800FP pilot light, green", rating: "22.5mm", poles: "LED module", curve: "Voltage and color specific", about: "Allen-Bradley Bulletin 800FP plastic pilot light. Record the LED module voltage; the head alone is not a complete orderable lamp. Green lens, used on the door for ready, healthy or stopped."),
+      PanelComponent(id: "eaton-m22-push-button", manufacturer: "Eaton", type: "Push Button", model: "M22 push button", rating: "22.5mm", poles: "NO/NC blocks", curve: "Momentary or maintained", about: "Eaton Moeller RMQ-Titan M22 push button for door-mounted start, stop and reset commands. The actuator can be switched between momentary and maintained, and contact elements are ordered separately."),
+      PanelComponent(id: "eaton-m22-selector", manufacturer: "Eaton", type: "Selector Switch", model: "M22 selector switch", rating: "22.5mm", poles: "2/3 position", curve: "Maintained or spring return", about: "Eaton Moeller RMQ-Titan M22 selector or key-selector for hand-off-auto and mode selection. Record the position count, return action and contact elements fitted behind it."),
+      PanelComponent(id: "eaton-m22-pilot-light-red", manufacturer: "Eaton", type: "Pilot Light", model: "M22 pilot light, red", rating: "22.5mm", poles: "LED element", curve: "Voltage and color specific", about: "Eaton Moeller RMQ-Titan M22 indicator light. The lens and the LED element are separate parts; record the element voltage (12-30V, 85-264V and so on). Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "eaton-m22-pilot-light-green", manufacturer: "Eaton", type: "Pilot Light", model: "M22 pilot light, green", rating: "22.5mm", poles: "LED element", curve: "Voltage and color specific", about: "Eaton Moeller RMQ-Titan M22 indicator light. The lens and the LED element are separate parts; record the element voltage (12-30V, 85-264V and so on). Green lens, used on the door for ready, healthy or stopped."),
+      PanelComponent(id: "eaton-m22-estop", manufacturer: "Eaton", type: "Emergency Stop", model: "M22 emergency stop", rating: "22.5mm", poles: "NC contact blocks", curve: "Pull or twist release", about: "Eaton Moeller RMQ-Titan M22 emergency-stop mushroom with positively driven NC contacts. Keep the release type, mushroom size and yellow backing plate with the installed assembly."),
+      PanelComponent(id: "salzer-pl16-22d-red", manufacturer: "Salzer", type: "Indicator Light", model: "PL16-22D LED indicator, red", rating: "6-380V", poles: "22mm", curve: "LED, short body", about: "Salzer 22mm short-body LED indicator lamp for supply, run and trip indication. It also fits 25mm holes without an adapter; the voltage is fixed per part, so record it. Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "salzer-pl16-22d-green", manufacturer: "Salzer", type: "Indicator Light", model: "PL16-22D LED indicator, green", rating: "6-380V", poles: "22mm", curve: "LED, short body", about: "Salzer 22mm short-body LED indicator lamp for supply, run and trip indication. It also fits 25mm holes without an adapter; the voltage is fixed per part, so record it. Green lens, used on the door for ready, healthy or stopped."),
+      PanelComponent(id: "salzer-sz22-red", manufacturer: "Salzer", type: "Indicator Light", model: "SZ22 LED pilot lamp, red", rating: "24-240V", poles: "22mm", curve: "LED", about: "Salzer SZ22 series 22mm LED pilot lamp, common on distribution board doors for phase and supply-healthy indication. Order by supply voltage. Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "salzer-sz22-green", manufacturer: "Salzer", type: "Indicator Light", model: "SZ22 LED pilot lamp, green", rating: "24-240V", poles: "22mm", curve: "LED", about: "Salzer SZ22 series 22mm LED pilot lamp, common on distribution board doors for phase and supply-healthy indication. Order by supply voltage. Green lens, used on the door for ready, healthy or stopped."),
+      PanelComponent(id: "salzer-led16-red", manufacturer: "Salzer", type: "Indicator Light", model: "16mm LED indicator, red", rating: "6-380V", poles: "16mm", curve: "Solder or screw terminals", about: "Salzer compact 16mm LED indicator for crowded doors and small control stations. Short and long bodies come with solder or screw terminals, so check the depth behind the door. Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "salzer-led16-green", manufacturer: "Salzer", type: "Indicator Light", model: "16mm LED indicator, green", rating: "6-380V", poles: "16mm", curve: "Solder or screw terminals", about: "Salzer compact 16mm LED indicator for crowded doors and small control stations. Short and long bodies come with solder or screw terminals, so check the depth behind the door. Green lens, used on the door for ready, healthy or stopped."),
+      PanelComponent(id: "salzer-buzzer-22-red", manufacturer: "Salzer", type: "Indicator Light", model: "22mm LED buzzer indicator, red", rating: "12-380V", poles: "22mm", curve: "Flashing + 80dB buzzer", about: "Salzer 22mm indicator combining a flashing LED with an intermittent buzzer, used for alarm and fault annunciation on the board door. Red lens, used on the door for supply present, running or a fault."),
+      PanelComponent(id: "salzer-buzzer-22-green", manufacturer: "Salzer", type: "Indicator Light", model: "22mm LED buzzer indicator, green", rating: "12-380V", poles: "22mm", curve: "Flashing + 80dB buzzer", about: "Salzer 22mm indicator combining a flashing LED with an intermittent buzzer, used for alarm and fault annunciation on the board door. Green lens, used on the door for ready, healthy or stopped."),
       PanelComponent(id: "schneider-xb4", manufacturer: "Schneider", type: "Push Button", model: "Harmony XB4", rating: "22mm", poles: "NO/NC blocks", curve: "Metal bezel", about: "Metal-bezel control station range for doors, with a wide selection of heads and contact blocks that share one mounting cut-out."),
       PanelComponent(id: "siemens-3su1", manufacturer: "Siemens", type: "Push Button", model: "SIRIUS ACT 3SU1", rating: "22mm", poles: "NO/NC blocks", curve: "Plastic or metal", about: "Modular door control range with plastic and metal versions, and connection options from screw terminals to an integrated bus module."),
       PanelComponent(id: "generic-selector", manufacturer: "Generic", type: "Selector Switch", model: "Selector switch", rating: "22mm", poles: "2/3 position", curve: "Panel door", about: "Panel door selector switch giving a positive two or three position choice such as hand-off-auto. Confirm the contact arrangement matches the control logic before drilling the door."),
@@ -13757,6 +13878,21 @@ struct ComponentGroup: Identifiable {
       PanelComponent(id: "generic-selector-ammeter", manufacturer: "Generic", type: "Selector Switch", model: "Ammeter selector switch", rating: "Via CT", poles: "3PH+off", curve: "Shorting type", about: "Ammeter selector letting one meter read each phase in turn. It must be the CT-shorting type so the transformer secondary is never opened while switching.")
     ])
   ]
+}
+
+/// One breaking-capacity class of a part: the letter printed on the breaker and
+/// the kA it stands for, where the catalog states it.
+struct ComponentClass: Identifiable, Hashable {
+  let letter: String
+  let interrupting: Int?
+
+  var id: String { letter }
+
+  /// "N — 36kA at 415V", or just the letter where no rating is stated.
+  var label: String {
+    guard let interrupting else { return "Class \(letter)" }
+    return "\(letter) — \(interrupting)kA at 415V"
+  }
 }
 
 struct PanelComponent: Identifiable {
@@ -13778,6 +13914,78 @@ struct PanelComponent: Identifiable {
 
   var imageStorageID: String {
     sourceID.isEmpty ? id : sourceID
+  }
+
+  /// The pole counts this part is sold in, read from the `poles` field the
+  /// catalog already carries: "3P/4P" is two of them, "1P-4P" is four, and a
+  /// part built one way only ("3P", "1P+N", "DIN") has none to choose between.
+  /// The picture, the stock line and the order all follow this choice, so it
+  /// belongs on the part rather than in a note about it.
+  var poleOptions: [String] {
+    let field = poles.uppercased().replacingOccurrences(of: " ", with: "")
+    let pole = { (text: String) -> Int? in
+      guard text.count == 2, text.hasSuffix("P"), let count = Int(text.dropLast()) else { return nil }
+      return (1...4).contains(count) ? count : nil
+    }
+    if field.contains("/") {
+      let listed = field.split(separator: "/").compactMap { pole(String($0)) }
+      return listed.count > 1 ? listed.map { "\($0)P" } : []
+    }
+    if field.contains("-") {
+      let ends = field.split(separator: "-").compactMap { pole(String($0)) }
+      guard ends.count == 2, let low = ends.first, let high = ends.last, low < high else { return [] }
+      return (low...high).map { "\($0)P" }
+    }
+    return []
+  }
+
+  /// The breaking-capacity classes this part is sold in, with the kA each one
+  /// stands for. An MCCB's class letter is not a trip curve — it sets how much
+  /// fault current the breaker can interrupt — so an XT1 N and an XT1 H are the
+  /// same breaker rated 36kA and 70kA. The catalog states them in the part's own
+  /// description, which is where these are read from.
+  var classOptions: [ComponentClass] {
+    guard let sentence = about.range(of: "Classes[^.]*\\.", options: .regularExpression) else { return [] }
+    // "Classes: N 36, S 50, H 70 kA at 415V" reads as letter-then-rating pairs;
+    // "Classes B, C, N and L set short-circuit performance" states the letters
+    // on their own. Both are walked as words rather than matched with a pattern,
+    // which keeps this readable and free of a regex dialect.
+    let words = String(about[sentence])
+      .dropFirst("Classes".count)
+      .split { !$0.isLetter && !$0.isNumber }
+      .map(String.init)
+    let isClassLetter = { (word: String) -> Bool in
+      word.count == 1 && (word.first?.isUppercase ?? false)
+    }
+
+    var paired: [ComponentClass] = []
+    var seen: Set<String> = []
+    for (index, word) in words.enumerated() where isClassLetter(word) {
+      guard index + 1 < words.count, let rating = Int(words[index + 1]) else { continue }
+      guard seen.insert(word).inserted else { continue }
+      paired.append(ComponentClass(letter: word, interrupting: rating))
+    }
+    if paired.count > 1 { return paired }
+
+    var letters: [ComponentClass] = []
+    seen.removeAll()
+    for word in words where isClassLetter(word) {
+      guard seen.insert(word).inserted else { continue }
+      letters.append(ComponentClass(letter: word, interrupting: nil))
+    }
+    return letters.count > 1 ? letters : []
+  }
+
+  /// Image id for one variant of this part, most specific first. Falls back to
+  /// the part itself, which is what a part photographed once resolves to.
+  func imageLookupIDs(pole: String? = nil, class classLetter: String? = nil) -> [String] {
+    let pole = (pole ?? "").lowercased()
+    let letter = (classLetter ?? "").lowercased()
+    var suffixes: [String] = []
+    if !letter.isEmpty && !pole.isEmpty { suffixes.append("-\(letter)-\(pole)") }
+    if !pole.isEmpty { suffixes.append("-\(pole)") }
+    if !letter.isEmpty { suffixes.append("-\(letter)") }
+    return suffixes.flatMap { suffix in imageLookupIDs.map { $0 + suffix } } + imageLookupIDs
   }
 
   var imageLookupIDs: [String] {
@@ -14310,6 +14518,15 @@ enum CatalogImageLibrary {
 
   static func componentThumbnail(id: String) -> UIImage? {
     thumbnail(at: manifest.components?[id])
+  }
+
+  /// The first of `ids` that has a photo, full size. Used for a pole variant,
+  /// where the list is the pole's own id followed by the part's.
+  static func componentImage(ids: [String]) -> UIImage? {
+    for id in ids {
+      if let image = image(at: manifest.components?[id]) { return image }
+    }
+    return nil
   }
 
   /// The first of `ids` that has a photo. Catalog parts carry both an `id` and

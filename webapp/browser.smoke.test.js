@@ -75,7 +75,7 @@ test("password recovery dialog has keyboard-safe focus behavior", async ({ page 
   await expect(trigger).toBeFocused();
 });
 
-test("an owner can sign up, navigate, and create a project", async ({ page }) => {
+test("an owner can create work and select the board's actual main breaker", async ({ page }) => {
   const failures = [];
   page.on("console", (message) => {
     if (message.type() === "error") failures.push(`console: ${message.text()}`);
@@ -100,5 +100,44 @@ test("an owner can sign up, navigate, and create a project", async ({ page }) =>
   await page.getByRole("textbox", { name: "Customer", exact: true }).fill("Browser Customer");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("dialog", { name: "Browser Tower" })).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+
+  const createdBoard = await page.request.post(`${baseURL}/api/boards`, {
+    data: {
+      number: "PV-100-1",
+      name: "Browser Main Board",
+      customer: "Browser Customer",
+      project: "Browser Tower",
+      manufacturer: "ABB",
+      type: "MDB",
+      subtype: "Form 3b",
+      mainBreakerType: "MCCB",
+      mainBreakerModel: "ABB Tmax XT7",
+      mainBreakerAmpere: "630A",
+    },
+  });
+  expect(createdBoard.status()).toBe(200);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open Boards", exact: true }).click();
+  await page.getByRole("button", { name: /PV-100-1 — Browser Main Board/ }).click();
+  const manufacturerLogo = page.locator(".board-property .manufacturer-logo");
+  await expect(manufacturerLogo).toHaveCSS("width", "34px");
+  await expect(manufacturerLogo).toHaveCSS("height", "34px");
+
+  await page.getByRole("tab", { name: "Main Breaker" }).click();
+  await expect(page.getByRole("button", { name: "Edit selected main breaker" })).toContainText("ABB Tmax XT7");
+  await page.getByLabel("Search breakers").fill("ATyS r");
+  const changeover = page.locator(".main-breaker-choice").filter({ hasText: "ATyS r" }).first();
+  await expect(changeover).toBeVisible();
+  await changeover.click();
+  const editor = page.getByRole("dialog", { name: "Select the actual main breaker" });
+  await expect(editor.getByLabel("Main breaker type")).toHaveValue("Changeover Switch");
+  await editor.getByLabel("Main breaker ampere").fill("1600A");
+  await editor.getByRole("button", { name: "Save main breaker" }).click();
+  await expect(page.getByRole("button", { name: "Edit selected main breaker" })).toContainText("ATyS r");
+  await expect(page.getByRole("button", { name: "Edit selected main breaker" })).toContainText("1600A");
+  await page.setViewportSize({ width: 390, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(failures).toEqual([]);
 });
