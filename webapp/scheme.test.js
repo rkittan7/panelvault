@@ -493,3 +493,55 @@ test("the prompt asks for a lamp colour without inventing one", () => {
   assert.match(BOARD_SCHEME_INSTRUCTION, /lens color is stock-defining/);
   assert.match(boardSchemePrompt("board.pdf"), /lens colour is stock-defining/);
 });
+
+// The real catalog, so a Hager reference is proven to reach its row among
+// every other brand's models, not just in a hand-picked list.
+const FULL_CATALOG = require("./catalog.json");
+
+test("a printed Hager order reference finds its catalog family", () => {
+  const cases = [
+    [{ manufacturer: "HAGER", model: "EPN524", type: "Impulse relay" }, "hager-epn"],
+    [{ manufacturer: "Hager", model: "EPN 510", type: "Teleruptor" }, "hager-epn"],
+    [{ manufacturer: "", model: "EPN546", type: "Relay" }, "hager-epn"],
+    [{ manufacturer: "HAGER", model: "EPS450B", type: "" }, "hager-eps"],
+    [{ manufacturer: "", model: "EPS410B", type: "" }, "hager-eps"],
+    [{ manufacturer: "HAGER", model: "60060", type: "Load shedder" }, "hager-load-shed"],
+    [{ manufacturer: "HAGER", model: "ED183", type: "" }, "hager-load-shed"],
+    [{ manufacturer: "HAGER", model: "EZM100", type: "Time relay" }, "hager-ezm100"],
+    [{ manufacturer: "", model: "EZD100", type: "Timer" }, "hager-ezd100"],
+    [{ manufacturer: "HAGER", model: "EZF100", type: "" }, "hager-ezf100"],
+    [{ manufacturer: "HAGER", model: "EZL100", type: "" }, "hager-ezl100"],
+    [{ manufacturer: "HAGER", model: "EMN001", type: "Staircase timer" }, "hager-emn001"],
+    [{ manufacturer: "HAGER", model: "EEN101", type: "Photocell" }, "hager-een100"],
+    [{ manufacturer: "", model: "EEN100", type: "Twilight switch" }, "hager-een100"],
+  ];
+  for (const [part, id] of cases) {
+    assert.equal(matchCatalogPart(FULL_CATALOG, part)?.id, id, `${part.model} should be ${id}`);
+  }
+});
+
+test("Hager accessories and other brands are not read as Hager devices", () => {
+  // A spare cell and a latching-relay add-on are accessories, not the device.
+  assert.equal(matchCatalogPart(FULL_CATALOG, { manufacturer: "HAGER", model: "EEN002" }), null);
+  assert.equal(matchCatalogPart(FULL_CATALOG, { manufacturer: "HAGER", model: "EPN051" }), null);
+  assert.ok(!modelKeys("EEN003").includes("hagereen"));
+  // A Hager reference printed under another brand is a question, not a match.
+  assert.equal(matchCatalogPart(FULL_CATALOG, { manufacturer: "ABB", model: "EPN524" }), null);
+  // "een" sits inside "green": the Hager key must not reach a green lamp.
+  assert.equal(
+    matchCatalogPart(FULL_CATALOG, { manufacturer: "Salzer", model: "SZ22", type: "Pilot light", curve: "green" })?.id,
+    "salzer-sz22-green",
+  );
+});
+
+test("every catalog row still finds itself by brand and model", () => {
+  const lost = FULL_CATALOG
+    .filter((row) => matchCatalogPart(FULL_CATALOG, { manufacturer: row.manufacturer, model: row.model, type: row.type })?.id !== row.id)
+    .map((row) => row.id);
+  const hagerLost = lost.filter((id) => id.startsWith("hager-"));
+  assert.deepEqual(hagerLost, []);
+});
+
+test("the prompt asks for Hager's printed order reference", () => {
+  assert.match(BOARD_SCHEME_INSTRUCTION, /Hager modular devices print a full order reference/);
+});

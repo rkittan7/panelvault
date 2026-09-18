@@ -270,8 +270,29 @@ function modelKeys(value) {
   // are the variant, so they alone must still find it rather than tie with EH.
   const satecPlus = withoutRangeWords.match(/^(pm130(?:p|e|eh))plus$/);
   if (satecPlus) keys.add(satecPlus[1]);
+  for (const token of String(value).toLowerCase().split(/[^a-z0-9]+/)) {
+    const family = HAGER_FAMILIES.find(([pattern]) => pattern.test(token));
+    if (family) keys.add(family[1]);
+  }
   return [...keys].filter((key) => key.length >= 3);
 }
+
+/** A drawing prints Hager's full order reference (EPN524, EPS450B, EEN101),
+ * while the catalog row is the family, so each reference reads as a family key
+ * that only that row also carries. The key is prefixed so that no substring
+ * match can reach another brand's model ("een" is inside "green").
+ *
+ * The EPN050-053 add-ons and the EEN002/003 spare cells are accessories and
+ * deliberately left out: a spare cell on a drawing is not a second switch.
+ * The EZ timers and the EMN001 need no entry, because their reference is
+ * already the catalog model. */
+const HAGER_FAMILIES = [
+  [/^epn5\d\d$/, "hagerepn"],
+  [/^epn$/, "hagerepn"],
+  [/^eps4[15]0b?$/, "hagereps"],
+  [/^(?:60060|ed183)$/, "hagerloadshed"],
+  [/^een10[01]$/, "hagereen"],
+];
 
 /** Canonical current carried by a breaker callout. This deliberately requires
  * the A to follow the number directly, so 6kA breaking capacity is never
@@ -323,6 +344,10 @@ function typeKey(value) {
   if (["selectorswitch", "selector", "keyswitch", "keyselectorswitch"].includes(key)) return "selectorswitch";
   if (["emergencystop", "emergencystopbutton", "emergencystopoperator", "estop", "estopbutton"].includes(key)) return "emergencystop";
   if (["doorswitch", "doorpositionswitch", "limitswitch", "doorlimitswitch"].includes(key)) return "doorswitch";
+  if (["latchingrelay", "impulserelay", "teleruptor", "impulseswitch", "remoteswitch", "bistablerelay", "steprelay"].includes(key)) return "latchingrelay";
+  if (["timer", "timerelay", "timedelayrelay", "timingrelay", "staircasetimer", "staircaseswitch", "staircasetimelagswitch", "timelagswitch"].includes(key)) return "timer";
+  if (["twilightswitch", "photocell", "photocellswitch", "lightsensitiveswitch", "dusksensor", "daylightswitch"].includes(key)) return "twilightswitch";
+  if (["loadsheddingrelay", "loadshedder", "loadshedding", "intensityrelay"].includes(key)) return "loadsheddingrelay";
   return key;
 }
 

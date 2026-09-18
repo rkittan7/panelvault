@@ -1,0 +1,110 @@
+[
+ {
+  "id": "hager-epn",
+  "manufacturer": "Hager",
+  "type": "Latching Relay",
+  "model": "EPN latching relay",
+  "rating": "16A AC1",
+  "poles": "1NO-4NO",
+  "curve": "Coil 12/24/48/230V",
+  "about": "Impulse relay (teleruptor): each pulse from a push button toggles the contacts, so one lighting circuit can be switched from several places. 1NO (1 module) to 4NO or 2NO+2NC (2 modules). Add-on auxiliaries EPN050-053 add central control.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "hager-eps",
+  "manufacturer": "Hager",
+  "type": "Latching Relay",
+  "model": "EPS410B / EPS450B electronic",
+  "rating": "16A AC1",
+  "poles": "1NO",
+  "curve": "230V, silent",
+  "about": "Silent electronic impulse relay in 1 module with quick-connect terminals. The EPS450B adds a switch-off timer, adjustable from 5 minutes to 1 hour.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "hager-load-shed",
+  "manufacturer": "Hager",
+  "type": "Load-Shedding Relay",
+  "model": "60060 / ED183 load shedding",
+  "rating": "7-39A setting",
+  "poles": "DIN",
+  "curve": "Priority load shedding",
+  "about": "Keeps a supply under its subscribed current by switching off non-priority loads such as a water heater or an AC unit. The 60060 is a 3-channel universal load shedder, 3 modules; the ED183 is a 1-module intensity relay.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "hager-ezm100",
+  "manufacturer": "Hager",
+  "type": "Timer",
+  "model": "EZM100 multifunction",
+  "rating": "8A AC1",
+  "poles": "1CO",
+  "curve": "12-240V AC/DC, 50ms-100h",
+  "about": "Multifunction time relay with a universal 12-240V AC/DC supply and a range from 50ms to 100h, 1 module. One reference covers most timing jobs in a panel.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ },
+ {
+  "id": "hager-ezd100",
+  "manufacturer": "Hager",
+  "type": "Timer",
+  "model": "EZD100 on-delay",
+  "rating": "8A AC1",
+  "poles": "1CO",
+  "curve": "24-240V AC/DC, 50ms-100h",
+  "about": "On-delay time relay with a universal 24-240V AC/DC supply, 1 module.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ },
+ {
+  "id": "hager-ezf100",
+  "manufacturer": "Hager",
+  "type": "Timer",
+  "model": "EZF100 off-delay",
+  "rating": "8A AC1",
+  "poles": "1CO",
+  "curve": "24-240V AC/DC, 50ms-100h",
+  "about": "Off-delay time relay with a control input, 24-240V AC/DC, 1 module. Keeps a fan running on after the load stops, for example.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ },
+ {
+  "id": "hager-ezl100",
+  "manufacturer": "Hager",
+  "type": "Timer",
+  "model": "EZL100 emergency light tester",
+  "rating": "8A AC1",
+  "poles": "1CO",
+  "curve": "230V AC, 10-180 min",
+  "about": "Drops the supply to emergency luminaires for a set 10-180 minute test, so the battery duration can be checked without switching off the lighting circuit.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ },
+ {
+  "id": "hager-emn001",
+  "manufacturer": "Hager",
+  "type": "Timer",
+  "model": "EMN001 staircase timer",
+  "rating": "16A",
+  "poles": "1NO",
+  "curve": "230V, 30s-10min",
+  "about": "Staircase time-lag switch, 30s to 10min, 1 module. Detects 3- or 4-wire push-button wiring automatically.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ },
+ {
+  "id": "hager-een100",
+  "manufacturer": "Hager",
+  "type": "Twilight Switch",
+  "model": "EEN100 / EEN101",
+  "rating": "10A AC1",
+  "poles": "1NO",
+  "curve": "5-2000 lx",
+  "about": "1-module DIN-rail twilight switch with a remote light cell, surface (EEN100) or flush (EEN101). Switches outdoor lighting at dusk. Spare cells: EEN002 and EEN003.",
+  "group": "control-automation",
+  "groupName": "Control & Automation"
+ }
+]
