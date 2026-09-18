@@ -1298,12 +1298,6 @@ img.brand-logo {
 .scheme-upload-zone.dragging { border-style: solid; border-color: var(--primary); background: var(--primary-dim); transform: scale(1.005); }
 .scheme-upload-zone:disabled { cursor: default; }
 .scheme-file-status { margin-top: 9px; color: var(--ink-3); font-size: 11px; text-align: center; }
-.scheme-size-notice {
-  margin-top: 9px; padding: 9px 11px; border-radius: var(--r-sm);
-  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line));
-  background: color-mix(in srgb, var(--warning) 8%, transparent);
-  color: var(--ink-2); font-size: 11px; line-height: 1.45;
-}
 /* Gemini gets two minutes on a multi-page A1 drawing. Without a spinner and a
    running count the page simply looks hung for that whole time. */
 .scheme-progress {

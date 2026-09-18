@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createGeminiClient, DEFAULT_MODEL, resolveModel } = require("./gemini");
+const { MAX_DOCUMENT_BASE64, createGeminiClient, DEFAULT_MODEL, resolveModel } = require("./gemini");
 
 test("Gemini client keeps the key in a header and returns generated text", async () => {
   let request;
@@ -130,9 +130,15 @@ test("reading a document rejects unsupported types and oversized files", async (
     { statusCode: 415 },
   );
   await assert.rejects(
-    () => client.readDocument({ data: "A".repeat(11_000_001), mimeType: "application/pdf", prompt: "x" }),
+    () => client.readDocument({ data: "A".repeat(MAX_DOCUMENT_BASE64 + 1), mimeType: "application/pdf", prompt: "x" }),
     { statusCode: 413 },
   );
+});
+
+test("a 14 MB scheme fits under the read limit, and Gemini's 20 MB request cap", () => {
+  const encoded = Math.ceil(14_000_000 / 3) * 4;
+  assert.ok(encoded <= MAX_DOCUMENT_BASE64);
+  assert.ok(MAX_DOCUMENT_BASE64 < 20_000_000);
 });
 
 test("a malformed reading is reported rather than returned half-parsed", async () => {

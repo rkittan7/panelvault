@@ -1845,8 +1845,8 @@ function pickPartManual(partID, onChanged) {
   input.addEventListener("change", async () => {
     const file = input.files?.[0];
     if (!file) return;
-    if (file.size > 6_000_000) {
-      window.alert("Manuals must be 6 MB or smaller.");
+    if (file.size > MAX_FILE_BYTES) {
+      window.alert("Manuals must be 14 MB or smaller.");
       return;
     }
     try {
@@ -2011,8 +2011,8 @@ function uploadBoardAttachment(board, kind) {
   input.addEventListener("change", () => {
     const file = input.files?.[0];
     if (!file) return;
-    if (file.size > 6_000_000) {
-      window.alert("Files must be 6 MB or smaller.");
+    if (file.size > MAX_FILE_BYTES) {
+      window.alert("Files must be 14 MB or smaller.");
       return;
     }
     const reader = new FileReader();
@@ -2064,7 +2064,7 @@ function boardAttachmentSection(board, kind, title, description) {
     empty.disabled = !canEdit;
     empty.append(chipIcon(kind === "scheme" ? "note" : "board", "var(--primary)"),
       el("strong", null, kind === "scheme" ? "Upload the electrical scheme" : "Add board photos"),
-      el("span", null, kind === "scheme" ? "PDF or image · up to 6 MB" : "JPG, PNG, WebP or HEIC · up to 6 MB"));
+      el("span", null, kind === "scheme" ? "PDF or image · up to 14 MB" : "JPG, PNG, WebP or HEIC · up to 14 MB"));
     if (canEdit) empty.addEventListener("click", () => uploadBoardAttachment(board, kind));
     section.append(empty);
     return section;
@@ -4031,14 +4031,11 @@ function fileAsBase64(file) {
   });
 }
 
-/** What the AI reader will accept. Anything bigger is refused before the
-    upload, so a drawing is never sent only to bounce off the body limit. */
-const SCHEME_READ_LIMIT = 8_000_000;
-/** What the board can keep afterwards — the server refuses attachments above
-    this (MAX_ATTACHMENT_BYTES in server.js). The two limits differ, so the
-    panel says so at the moment a file is picked rather than dropping the
-    drawing without a word once the board exists. */
-const SCHEME_ATTACH_LIMIT = 6_000_000;
+/** What the AI reader will accept, and what a board or part can keep: one
+    number, matching ATTACHMENT_SIZE_LIMIT in storage.js. Anything bigger is
+    refused before the upload, so a file is never sent only to bounce off the
+    server's limit. */
+const MAX_FILE_BYTES = 14_000_000;
 const SCHEME_MIME_TYPES = [
   "application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
 ];
@@ -4056,7 +4053,7 @@ function schemeIntakePanel(kind, onComplete) {
   head.append(chipIcon("scan", "var(--primary)"));
   const copy = el("div");
   copy.append(el("span", "eyebrow", "AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
-    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 8 MB. Drag one in or choose a file. Nothing is created until you review and confirm it."));
+    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 14 MB. Drag one in or choose a file. Nothing is created until you review and confirm it."));
   head.append(copy);
   panel.append(head);
 
@@ -4068,7 +4065,6 @@ function schemeIntakePanel(kind, onComplete) {
   drop.type = "button";
   drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "or drop a PDF or image here"));
   const status = el("div", "scheme-file-status", "No file selected");
-  const notice = el("div", "scheme-size-notice hidden");
   const error = el("div", "form-error hidden");
 
   const progress = el("div", "scheme-progress hidden");
@@ -4117,13 +4113,12 @@ function schemeIntakePanel(kind, onComplete) {
   const acceptFile = (file) => {
     if (!file) return;
     error.classList.add("hidden");
-    notice.classList.add("hidden");
     if (!isSchemeFile(file)) {
       showError("Attach a PDF, PNG, JPG, WebP or HEIC drawing.");
       return;
     }
-    if (file.size > SCHEME_READ_LIMIT) {
-      showError("The scheme must be 8 MB or smaller.");
+    if (file.size > MAX_FILE_BYTES) {
+      showError("The scheme must be 14 MB or smaller.");
       input.value = "";
       selectedFile = null;
       scan.disabled = true;
@@ -4131,10 +4126,6 @@ function schemeIntakePanel(kind, onComplete) {
     }
     selectedFile = file;
     status.textContent = `${file.name} · ${Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB`;
-    if (file.size > SCHEME_ATTACH_LIMIT) {
-      notice.textContent = "Over 6 MB: PanelVault will read this drawing, but it is too big to keep on the board afterwards. Export a lighter PDF to store it as well.";
-      notice.classList.remove("hidden");
-    }
     drop.classList.add("selected");
     scan.disabled = false;
   };
@@ -4199,7 +4190,7 @@ function schemeIntakePanel(kind, onComplete) {
   });
 
   actions.append(cancel, scan);
-  panel.append(input, drop, status, notice, progress, error, actions);
+  panel.append(input, drop, status, progress, error, actions);
   return panel;
 }
 
@@ -4879,7 +4870,7 @@ function renderBoardCreate() {
         componentDrafts: boardSchemeReading?.unmatched || [],
       });
       const followups = [];
-      if (boardSchemeUpload && boardSchemeUpload.size <= SCHEME_ATTACH_LIMIT) {
+      if (boardSchemeUpload && boardSchemeUpload.size <= MAX_FILE_BYTES) {
         followups.push(api("/api/board-attachment", {
           boardID: board.id,
           kind: "scheme",

@@ -1,6 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+/** Largest file a board or a part can keep: a scheme, a photo or a manual.
+ * Set by what the AI reader can take, since a scheme is read before it is
+ * kept: Gemini caps an inline request at 20 MB, and 14 MB of file is about
+ * 18.7 MB once base64 encoded. One number, so a drawing that can be read can
+ * always be kept as well. */
+const ATTACHMENT_SIZE_LIMIT = 14_000_000;
+
 const STATE_ID = "primary";
 
 function emptyState() {
@@ -183,13 +190,29 @@ class SupabaseStorage {
           id: this.attachmentBucket,
           name: this.attachmentBucket,
           public: false,
-          file_size_limit: 6_000_000,
+          file_size_limit: ATTACHMENT_SIZE_LIMIT,
           allowed_mime_types: ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"],
         }),
       });
     } else if (!response.ok) {
       const detail = (await response.text()).slice(0, 500);
       throw new Error(`Supabase returned ${response.status}${detail ? `: ${detail}` : ""}`);
+    } else {
+      // The cap is set when the bucket is created, so a bucket made under an
+      // older, smaller limit keeps refusing files the server now accepts.
+      // Raise it to match; never lower it.
+      const bucket = await response.json().catch(() => ({}));
+      const current = Number(bucket.file_size_limit) || 0;
+      if (current && current < ATTACHMENT_SIZE_LIMIT) {
+        await this.request(`${this.url}/storage/v1/bucket/${this.attachmentBucket}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            public: Boolean(bucket.public),
+            file_size_limit: ATTACHMENT_SIZE_LIMIT,
+            allowed_mime_types: bucket.allowed_mime_types || ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"],
+          }),
+        });
+      }
     }
     this.attachmentBucketReady = true;
   }
@@ -236,4 +259,4 @@ function createStorage({ dataDir, env = process.env, fetchImplementation } = {})
   return new LocalJSONStorage(dataDir);
 }
 
-module.exports = { LocalJSONStorage, SupabaseStorage, canonicalJSON, createStorage, normalizeState };
+module.exports = { ATTACHMENT_SIZE_LIMIT, LocalJSONStorage, SupabaseStorage, canonicalJSON, createStorage, normalizeState };

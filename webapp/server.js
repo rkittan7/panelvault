@@ -14,7 +14,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { readJSONBody } = require("./body");
-const { createStorage } = require("./storage");
+const { ATTACHMENT_SIZE_LIMIT, createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
 const {
   BOARD_SCHEME_INSTRUCTION,
@@ -31,9 +31,10 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const SECRET_FILE = path.join(DATA_DIR, "secret");
 
-/** Base64 inflates by a third; this leaves room for an 8 MB scheme PDF. */
-const MAX_DOCUMENT_BODY = 12_000_000;
-const MAX_ATTACHMENT_BYTES = 6_000_000;
+/** Base64 inflates by a third; this leaves room for a 14 MB scheme PDF
+ * (about 18.7 MB encoded) plus the JSON around it. */
+const MAX_DOCUMENT_BODY = 20_000_000;
+const MAX_ATTACHMENT_BYTES = ATTACHMENT_SIZE_LIMIT;
 
 /** Shared with the iPhone apps — see assets/catalog/README.md. */
 const CATALOG_IMAGE_DIR = path.resolve(__dirname, "..", "assets", "catalog");
@@ -1056,7 +1057,7 @@ function readBody(req) {
   // A megabyte is generous for the JSON every other route sends; the routes
   // that carry a base64 document raise it for themselves in the dispatcher.
   // This is an inactivity timeout, not a deadline for the entire upload. A
-  // scheme near the 8 MB file limit becomes almost 11 MB once JSON/base64
+  // scheme near the 14 MB file limit becomes almost 19 MB once JSON/base64
   // encoded and can legitimately take longer than ten seconds to arrive.
   return readJSONBody(req, {
     limit: req.panelVaultBodyLimit || 1_000_000,
@@ -2592,7 +2593,7 @@ const routes = {
     } catch {
       return fail(res, 400, "The uploaded file is invalid.");
     }
-    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Files must be 6 MB or smaller.");
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Files must be 14 MB or smaller.");
     const attachmentID = id("attachment");
     const objectPath = `${company.code}/${board.id}/${kind}/${attachmentID}-${safeAttachmentName(fileName)}`;
     const attachment = {
@@ -2658,7 +2659,7 @@ const routes = {
     } catch {
       return fail(res, 400, "The uploaded file is invalid.");
     }
-    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Manuals must be 6 MB or smaller.");
+    if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return fail(res, 400, "Manuals must be 14 MB or smaller.");
 
     const manualID = id("manual");
     const objectPath = `${company.code}/manuals/${part.id}/${manualID}-${safeAttachmentName(fileName)}`;

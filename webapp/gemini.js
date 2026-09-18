@@ -32,7 +32,9 @@ function geminiErrorMessage(result) {
 }
 
 /** Inline document parts are base64, which is 4 characters per 3 bytes. */
-const MAX_DOCUMENT_BASE64 = 11_000_000; // ~8 MB of file
+// 14 MB of file is about 18.7 MB encoded, which keeps the whole request under
+// Gemini's 20 MB inline limit.
+const MAX_DOCUMENT_BASE64 = 19_000_000; // ~14 MB of file
 const DOCUMENT_READ_TIMEOUT_MS = 150_000;
 
 /** An AutoCAD export is a PDF; the image types are for a photo of a printout. */
@@ -138,7 +140,7 @@ function createGeminiClient({
         throw error;
       }
       if (data.length > MAX_DOCUMENT_BASE64) {
-        const error = new Error("That file is too large to read. Keep it under 8 MB.");
+        const error = new Error("That file is too large to read. Keep it under 14 MB.");
         error.statusCode = 413;
         throw error;
       }

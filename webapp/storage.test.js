@@ -85,3 +85,27 @@ test("Supabase service-role transport rejects non-loopback HTTP", () => {
     /SUPABASE_URL must use HTTPS/
   );
 });
+
+test("an attachment bucket made under the old 6 MB cap is raised, never lowered", async () => {
+  const { ATTACHMENT_SIZE_LIMIT } = require("./storage");
+  const calls = [];
+  const fakeFetch = (bucket) => async (url, options = {}) => {
+    calls.push({ method: options.method || "GET", url, body: options.body ? JSON.parse(options.body) : null });
+    const body = options.method === "PUT" ? { message: "Successfully updated" } : bucket;
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  const old = new SupabaseStorage("https://example.supabase.co", "key",
+    fakeFetch({ id: "panelvault-attachments", public: false, file_size_limit: 6_000_000, allowed_mime_types: ["application/pdf"] }));
+  await old.ensureAttachmentBucket();
+  const update = calls.find((call) => call.method === "PUT");
+  assert.equal(update.body.file_size_limit, ATTACHMENT_SIZE_LIMIT);
+  assert.equal(update.body.public, false);
+  assert.deepEqual(update.body.allowed_mime_types, ["application/pdf"]);
+
+  calls.length = 0;
+  const bigger = new SupabaseStorage("https://example.supabase.co", "key",
+    fakeFetch({ id: "panelvault-attachments", public: false, file_size_limit: 50_000_000 }));
+  await bigger.ensureAttachmentBucket();
+  assert.equal(calls.some((call) => call.method === "PUT"), false);
+});
