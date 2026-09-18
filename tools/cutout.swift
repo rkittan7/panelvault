@@ -15,6 +15,12 @@
 //
 //     swiftc -O tools/cutout.swift -o /tmp/cutout
 //     /tmp/cutout in.jpg out.png [--max 1400]
+//     /tmp/cutout in.png out.png --trim     # already cut out: drop strays, crop
+//
+// `--trim` is for a photo that is already a cut-out. It keeps the alpha it has
+// instead of cutting again, so a white body that the first cut got right is
+// never put at risk; it only drops floating islands and crops the empty canvas
+// around the part, which is what shrinks a part to a sliver in a 40px chip.
 //
 // Reads anything ImageIO reads, including HEIC and WebP.
 
@@ -77,7 +83,7 @@ struct Bitmap {
     }
 }
 
-func load(_ path: String) -> Bitmap? {
+func load(_ path: String, flatten: Bool = true) -> Bitmap? {
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
     let width = image.width, height = image.height
@@ -88,8 +94,10 @@ func load(_ path: String) -> Bitmap? {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
     // Anything already transparent composites over white first, so a source
     // that is half cut out already is treated the same as a flat photo.
-    context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    if flatten {
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    }
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
     return Bitmap(width: width, height: height, pixels: pixels)
 }
@@ -404,9 +412,26 @@ var wantsProbe = false
 if let at = arguments.firstIndex(of: "--probe") { wantsProbe = true; arguments.remove(at: at) }
 var wantsPlain = false
 if let at = arguments.firstIndex(of: "--plain") { wantsPlain = true; arguments.remove(at: at) }
+var wantsTrim = false
+if let at = arguments.firstIndex(of: "--trim") { wantsTrim = true; arguments.remove(at: at) }
 guard arguments.count == 2 else {
-    FileHandle.standardError.write("usage: cutout <in> <out.png> [--max 1400]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: cutout <in> <out.png> [--max 1400] [--trim]\n".data(using: .utf8)!)
     exit(2)
+}
+if wantsTrim {
+    guard var trimmed = load(arguments[0], flatten: false) else {
+        FileHandle.standardError.write("cannot read \(arguments[0])\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let islands = islandShare > 0 ? dropIslands(&trimmed, share: islandShare) : 0
+    let box = contentBox(trimmed)
+    guard write(trimmed, crop: box, maxSide: maxSide, to: arguments[1]) else {
+        FileHandle.standardError.write("cannot write \(arguments[1])\n".data(using: .utf8)!)
+        exit(1)
+    }
+    print("\(arguments[0]) -> \(arguments[1]) \(Int(box.width))x\(Int(box.height)) trimmed"
+          + (islands > 0 ? " \(islands) island(s) dropped" : ""))
+    exit(0)
 }
 guard var probeBitmap = load(arguments[0]) else {
     FileHandle.standardError.write("cannot read \(arguments[0])\n".data(using: .utf8)!)

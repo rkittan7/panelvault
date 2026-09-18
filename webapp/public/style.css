@@ -830,8 +830,12 @@ input:focus, select:focus, textarea:focus {
 /* A part photo in the chip slot. `contain` rather than `cover`: a breaker
    photographed against a white sweep must not be cropped into an unreadable
    detail just to fill a 30px square. */
-.chip-icon.chip-photo { background: var(--wash-1); padding: 2px; }
-.chip-icon.chip-photo img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }
+/* The track is pinned to the chip. `.chip-icon` is a grid with an auto row,
+   and an auto row sizes to its content: the img's 100% height then resolved
+   against the photo's own height, so a tall photo (EasyLine XLP 1P) or a wide
+   one (S304 P) spilled out of the chip and over the card below. */
+.chip-icon.chip-photo { background: var(--wash-1); padding: 2px; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.chip-icon.chip-photo img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; border-radius: 6px; }
 
 /* ---- brand tinting: TransparentImageBubble and the catalog row ----
 
