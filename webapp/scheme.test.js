@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   BOARD_SCHEME_INSTRUCTION,
+  houseDefaultPart,
   BOARD_SCHEME_SCHEMA,
   ampereRating,
   boardSchemePrompt,
@@ -454,4 +455,41 @@ test("Moeller on a drawing is Eaton", () => {
 test("a SATEC variant printed without PLUS still finds its own row", () => {
   const hit = matchCatalogPart(LAMP_CATALOG, { manufacturer: "SATEC", model: "PM130E", type: "Meter" });
   assert.equal(hit?.id, "satec-pm130e-plus");
+});
+
+const HOUSE_CATALOG = LAMP_CATALOG.concat([
+  { id: "salzer-sz22-red", manufacturer: "Salzer", model: "SZ22 LED pilot lamp, red", type: "Indicator Light", rating: "24-240V", poles: "22mm" },
+  { id: "salzer-sz22-green", manufacturer: "Salzer", model: "SZ22 LED pilot lamp, green", type: "Indicator Light", rating: "24-240V", poles: "22mm" },
+  { id: "salzer-pl16-22d-red", manufacturer: "Salzer", model: "PL16-22D LED indicator, red", type: "Indicator Light", rating: "6-380V", poles: "22mm" },
+]);
+
+test("a lamp with no brand printed is the house lamp in the colour shown", () => {
+  const onCurve = matchCatalogPart(HOUSE_CATALOG, { manufacturer: "", model: "", type: "Pilot Light", curve: "red" });
+  assert.equal(onCurve?.id, "salzer-sz22-red");
+  // The colour is often only in the position label, not a variant field.
+  const onReference = matchCatalogPart(HOUSE_CATALOG, {
+    manufacturer: "", model: "", type: "Indicator Lamp", reference: "Door 2 row 1 position 4 - green RUN lamp",
+  });
+  assert.equal(onReference?.id, "salzer-sz22-green");
+});
+
+test("the house lamp is never assumed over something the drawing actually says", () => {
+  // A brand is printed: not ours to assume.
+  assert.equal(houseDefaultPart(HOUSE_CATALOG, { manufacturer: "Eaton", type: "Pilot Light", curve: "red" }), null);
+  // A model is printed but unmatched: a question for a person, not an assumption.
+  assert.equal(houseDefaultPart(HOUSE_CATALOG, { manufacturer: "", model: "XB7EV04BP", type: "Pilot Light", curve: "red" }), null);
+  // No colour: which part to order is still unknown, so it stays in review.
+  assert.equal(houseDefaultPart(HOUSE_CATALOG, { manufacturer: "", model: "", type: "Pilot Light", curve: "" }), null);
+  // Not a lamp.
+  assert.equal(houseDefaultPart(HOUSE_CATALOG, { manufacturer: "", model: "", type: "Push Button", curve: "red" }), null);
+});
+
+test("an unbranded lamp is left alone when the house lamp is not in the catalog", () => {
+  const withoutSalzer = HOUSE_CATALOG.filter((part) => !part.id.startsWith("salzer-sz22"));
+  assert.equal(matchCatalogPart(withoutSalzer, { manufacturer: "", model: "", type: "Pilot Light", curve: "red" }), null);
+});
+
+test("the prompt asks for a lamp colour without inventing one", () => {
+  assert.match(BOARD_SCHEME_INSTRUCTION, /lens color is stock-defining/);
+  assert.match(boardSchemePrompt("board.pdf"), /lens colour is stock-defining/);
 });

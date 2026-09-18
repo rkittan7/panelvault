@@ -160,7 +160,10 @@ visible positions before answering. Never stop after the first switch or lamp.
 Include every selector, rotary or key switch; push button; illuminated button;
 emergency stop; pilot/indicator lamp; buzzer; main handle; and door-position
 switch. Include color and function labels such as RUN, TRIP, HEALTHY, START,
-STOP, RESET, TEST, HAND/OFF/AUTO, LOCAL/REMOTE and ON/OFF in rawText. When no
+STOP, RESET, TEST, HAND/OFF/AUTO, LOCAL/REMOTE and ON/OFF in rawText. For a
+pilot or indicator lamp the lens color is stock-defining, because red and
+green are ordered as different parts: whenever a color is visible or named,
+return it in curve, and never infer one that is not shown. When no
 device tag is printed, reference must identify the physical position stably,
 for example `Door 2 row 1 position 4 - green RUN lamp`. When only the symbol,
 color or function is readable, still return the position with empty

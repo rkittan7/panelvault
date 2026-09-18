@@ -223,6 +223,7 @@ function boardSchemePrompt(fileName) {
     "Read the complete electrical board document and extract the relevant title block,",
     "main incomer and every component actually used across the schematic and installed-equipment layout pages. Include the main incomer itself once in components.",
     "Count quantity from unique physical device references or labelled installed positions in board-specific door/control-station layouts, not from the final-page parts list.",
+    "A pilot or indicator lamp's lens colour is stock-defining: red and green are different parts, so return the visible colour in curve whenever one is shown, and never infer one that is not.",
     "Fill doorDevices using a dedicated exhaustive door-layout pass. Sweep every target-board door and control station left-to-right and top-to-bottom; return every switch, button and lamp position, including positions whose manufacturer or model is unreadable. Never stop after the first recognized operator. A labelled door elevation is valid installation evidence.",
     "Use components for the remaining installed devices. If a door device also appears in the schematic, keep its physical tag in doorDevices so the server can merge it instead of counting it twice.",
     "Before returning JSON, perform one final document-wide aggregation: identical manufacturer + model + rating + poles + curve + sensitivity must be one component row with the total unique-device quantity across every target-board page. sourcePage is traceability only and must never create a separate row.",
@@ -360,6 +361,35 @@ function sameModel(left, right) {
   return leftKeys.some((key) => rightKeys.includes(key));
 }
 
+/** Lamps are bought as one house brand, so an unbranded lamp on a drawing is
+ * not really unknown — it is whatever the shop fits. The assumption lives here
+ * rather than in the prompt: the reading stays an honest record of what is
+ * printed, and what PanelVault does with a blank brand stays deterministic,
+ * visible in one place and testable.
+ *
+ * It applies only when the drawing names neither brand nor model. A printed
+ * model that fails to match is a genuine question for a person, never this.
+ * Colour is still required, because it decides which lamp is ordered. */
+const HOUSE_DEFAULTS = [
+  { type: "pilotlight", family: "salzer-sz22", byColour: true },
+];
+
+function houseDefaultPart(catalog, part) {
+  if (manufacturerKey(part.manufacturer)) return null;
+  if (modelKeys(part.model).length) return null;
+  const requestedType = typeKey(part.type);
+  const preference = HOUSE_DEFAULTS.find((entry) => entry.type === requestedType);
+  if (!preference) return null;
+
+  let id = preference.family;
+  if (preference.byColour) {
+    const colour = lensColour(part.curve, part.rawText, part.reference);
+    if (!colour) return null;
+    id = `${preference.family}-${colour}`;
+  }
+  return catalog.find((candidate) => candidate.id === id) || null;
+}
+
 /** Best catalog part for something read off a drawing, or null.
  *
  * Deliberately conservative: a wrong match silently puts the wrong part on a
@@ -430,7 +460,7 @@ function matchCatalogPart(catalog, part) {
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
 
-  if (!scored.length) return null;
+  if (!scored.length) return houseDefaultPart(catalog, part);
   // A tie between two different parts is not a match; it is a question.
   if (scored.length > 1
     && scored[0].score === scored[1].score
@@ -731,6 +761,7 @@ module.exports = {
   ampereRating,
   breakerCurve,
   consolidateComponents,
+  houseDefaultPart,
   matchCatalogPart,
   modelKeys,
   normalizeReading,
