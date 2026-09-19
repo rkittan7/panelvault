@@ -740,13 +740,13 @@ function statusBadge(status) {
 
 function movementRow(m) {
   const row = el("div", "row");
-  const inbound = m.kind !== "consume";
+  const delta = m.kind === "consume" ? -m.quantity : m.quantity;
+  const inbound = delta >= 0;
   row.append(chipIcon(inbound ? "arrowIn" : "arrowOut", inbound ? "var(--positive)" : "var(--secondary)"));
   const main = el("div", "row-main");
   main.append(el("div", "row-title", m.partName));
   const when = new Date(m.date).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
-  main.append(el("div", "row-sub", [m.reference, m.userName, when].filter(Boolean).join(" · ")));
-  const delta = m.kind === "consume" ? -m.quantity : m.quantity;
+  main.append(el("div", "row-sub", [m.kind === "adjust" ? "Correction" : "", m.reference, m.userName, when].filter(Boolean).join(" · ")));
   row.append(main, el("div", `delta ${delta >= 0 ? "pos" : "neg"}`, delta >= 0 ? `+${delta}` : `${delta}`));
   return row;
 }
@@ -1141,7 +1141,7 @@ function renderStock() {
       return;
     }
     rows.forEach((s) => {
-      const row = el("div", "row");
+      const row = el("div", "row stock-row");
       row.append(partChip(s.part));
       const main = el("div", "row-main");
       main.append(el("div", "row-title", partTitle(s.part)));
@@ -1177,6 +1177,7 @@ function renderStock() {
         rowActions.append(
           smallBtn("In", "accent", "arrowIn", () => openMovementModal(s, "receive")),
           smallBtn("Out", "", "arrowOut", () => openMovementModal(s, "consume")),
+          smallBtn("Correction", "", "sliders", () => openMovementModal(s, "adjust")),
         );
         const settings = el("button", "icon-btn");
         settings.title = "Part settings";
@@ -2826,14 +2827,21 @@ function partModalHead(part, note, lead = false) {
 
 function openMovementModal(entry, kind) {
   openModal((modal, close) => {
-    modal.append(el("h3", null, kind === "receive" ? "Stock in" : "Stock out"));
+    const isCorrection = kind === "adjust";
+    const title = kind === "receive" ? "Stock in" : kind === "consume" ? "Stock out" : "Stock correction";
+    modal.append(el("h3", null, title));
     modal.append(partModalHead(entry.part, `${entry.onHand} on hand`));
-    const qty = field("Quantity", "e.g. 10", "number");
-    const ref = field(kind === "consume" ? "Board number" : "Delivery note / reference", "optional");
+    const qty = field(isCorrection ? "Change (+/-)" : "Quantity", isCorrection ? "e.g. -3 or +2" : "e.g. 10", "number");
+    qty.input.step = "1";
+    if (!isCorrection) qty.input.min = "1";
+    const ref = field(isCorrection ? "Reason / reference" : kind === "consume" ? "Board number" : "Delivery note / reference", isCorrection ? "Why the count changed" : "optional");
     modal.append(qty.label, ref.label);
-    modal.append(modalActions(close, "Save", async () => {
+    if (isCorrection) {
+      modal.append(el("p", "hint", "This adds an audited correction. Existing stock records are never changed."));
+    }
+    modal.append(modalActions(close, isCorrection ? "Save correction" : "Save", async () => {
       const quantity = parseInt(qty.input.value, 10);
-      if (!quantity || quantity <= 0) return;
+      if (!quantity || (!isCorrection && quantity <= 0)) return;
       await api("/api/movements", { partID: entry.part.id, kind, quantity, reference: ref.input.value });
       close();
       await refresh();
