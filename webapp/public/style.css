@@ -1017,8 +1017,14 @@ img.brand-logo {
    minimum collapsed to it and the picture painted straight over the switches
    underneath once it arrived. A fixed box also puts the switch and the title in
    the same place on every part, whatever shape the photograph is. */
+/* flex-shrink: 0 is what keeps that height real. The modal is a flex column,
+   so its children shrink by default, and a sheet with a long description and a
+   full specification squeezed this box from 268px to 57px — the photograph
+   still drew at its full size and `overflow: hidden` cut 91px off the top and
+   bottom of it, leaving a band across the middle of the part. */
 .part-hero {
   display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
   height: 268px;
   padding: 14px;
   margin-bottom: 2px;
@@ -1508,7 +1514,13 @@ img.brand-logo {
 .board-progress-dial span { margin-top: 4px; color: var(--ink-3); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .board-progress-track { height: 12px; margin-top: 16px; overflow: hidden; border-radius: 99px; background: var(--wash-3); }
 .board-progress-track i { display: block; height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--secondary), var(--positive)); box-shadow: 0 0 16px color-mix(in srgb, var(--positive) 35%, transparent); transition: width .56s cubic-bezier(.22, .8, .28, 1); }
-.board-stage-tracker { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); margin-top: 22px; overflow-x: auto; padding: 4px 2px 8px; }
+/* The padding is the room the stage markers' rings need, not decoration:
+   overflow-x scrolls the tracker on a narrow screen, which makes the browser
+   clip the vertical axis too, and the rings are drawn outside the marker box.
+   A marker needs 8px for its ring, 11px while hovered because it also lifts
+   3px, and the current stage sits 2px higher again. With the old 4px the
+   current stage's halo was cut flat and every circle chopped on hover. */
+.board-stage-tracker { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); margin-top: 12px; overflow-x: auto; padding: 14px 10px 10px; }
 .board-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px; min-height: 72px; padding: 0 8px; color: inherit; text-align: center; border: 0; background: transparent; font: inherit; cursor: pointer; transition: transform .42s cubic-bezier(.2, .8, .25, 1), opacity .42s ease; }
 .board-stage:not(:disabled):hover { transform: translateY(-3px); }
 .board-stage:not(:disabled):hover .stage-marker { border-color: var(--primary); box-shadow: 0 0 0 5px var(--panel), 0 0 0 8px color-mix(in srgb, var(--primary) 11%, transparent); }
@@ -1997,6 +2009,9 @@ img.brand-logo {
 .num.muted { color: var(--ink-3); font-weight: 500; }
 
 .modal.part-sheet { max-width: 440px; }
+/* Same reason as the main-breaker sheet below: the modal scrolls, so nothing
+   inside it may be squeezed to make the content fit instead. */
+.part-sheet > * { flex-shrink: 0; }
 /* The main-breaker sheet is the part sheet's content inside the drill-down
    modal: photo, specification, what the drawing said, then the other boards
    carrying it. Its own stack, so the sections do not run together. */
