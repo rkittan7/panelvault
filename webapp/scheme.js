@@ -399,6 +399,32 @@ function ampereRange(value) {
     ? { minimum, maximum } : null;
 }
 
+/** Model keys for a printed line rather than for a model on its own.
+ *
+ * `modelKeys` squeezes everything it is given into a single key, which is what
+ * a model field needs ("SACE Tmax XT1" -> "sacetmaxxt1") and useless for a
+ * callout: "QC200 ABB AF38 38A" would become one key that matches nothing. So
+ * the line is read token by token, and each token is also split on the
+ * separators inside an order code, because AF38-30-00 is an AF38. */
+function modelKeysFromText(value) {
+  const tokens = String(value || "").split(/[^A-Za-z0-9.\-/]+/).filter(Boolean);
+  const keys = new Set();
+  for (let index = 0; index < tokens.length; index += 1) {
+    for (const piece of [tokens[index], ...tokens[index].split(/[-/]/)]) {
+      for (const key of modelKeys(piece)) keys.add(key);
+    }
+    // A catalog model of several words squeezes into a single key — "OT switch
+    // disconnector" becomes "otswitchdisconnector" — so neighbouring words on
+    // the line are joined the same way before they are compared.
+    let joined = tokens[index];
+    for (let span = 1; span < 4 && index + span < tokens.length; span += 1) {
+      joined += ` ${tokens[index + span]}`;
+      for (const key of modelKeys(joined)) keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 function sameModel(left, right) {
   const leftKeys = modelKeys(left);
   const rightKeys = modelKeys(right);
@@ -457,16 +483,19 @@ function matchCatalogPart(catalog, part) {
   const requestedAmpere = ampereRating(part.rating, part.rawText);
   const requestedColour = lensColour(part.curve, part.model, part.rawText);
 
-  const scored = catalog
+  const scoreCatalog = (wanted, exactOnly) => catalog
     .map((candidate) => {
       const candidateModels = modelKeys(candidate.model);
       if (!candidateModels.length) return null;
 
       let score = 0;
-      for (const model of models) {
+      for (const model of wanted) {
         for (const candidateModel of candidateModels) {
           if (candidateModel === model) score = Math.max(score, 3);
-          else if (candidateModel.includes(model) || model.includes(candidateModel)) score = Math.max(score, 2);
+          // A key read out of a whole printed line has to be the model, not a
+          // fragment of one: loose matching there would let "abb" or a rating
+          // reach a family nobody printed.
+          else if (!exactOnly && (candidateModel.includes(model) || model.includes(candidateModel))) score = Math.max(score, 2);
         }
       }
       const modelMatched = score > 0;
@@ -523,14 +552,54 @@ function matchCatalogPart(catalog, part) {
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
 
-  if (!scored.length) return houseDefaultPart(catalog, part);
-  // A tie between two different parts is not a match; it is a question.
-  if (scored.length > 1
-    && scored[0].score === scored[1].score
-    && scored[0].candidate.id !== scored[1].candidate.id) {
-    return null;
+  // `ambiguous` distinguishes "two parts answered and neither wins" from
+  // "nothing answered". A tie is a question for a person, so a later, weaker
+  // pass must not go on to answer it.
+  const resolve = (wanted, exactOnly = false) => {
+    const scored = scoreCatalog(wanted, exactOnly);
+    if (!scored.length) return { part: null, ambiguous: false };
+    if (scored.length > 1
+      && scored[0].score === scored[1].score
+      && scored[0].candidate.id !== scored[1].candidate.id) {
+      return { part: null, ambiguous: true };
+    }
+    return { part: scored[0].candidate, ambiguous: false };
+  };
+
+  /* Evidence is taken in the order of how much it proves, because the model
+     field of a schematic line is not always a model: first that field naming a
+     catalog model outright, then a model printed elsewhere on the line, and
+     only then a partial resemblance to the model field. That last step is where
+     a tag does real damage — "F12" sits inside "AF12", so a tag could quietly
+     select a contactor nobody drew — so a model actually printed on the line
+     now outranks it. */
+  const exact = resolve(models, true);
+  if (exact.part) return exact.part;
+  // A tie here is not decisive the way a tie on a printed model is: when the
+  // model field holds a tag, nothing in this pass matched a model at all, and
+  // the candidates only tied on brand, type and poles. The line still deserves
+  // its turn.
+
+  /* Nothing answered to the model field. On a schematic that field often holds
+     the circuit tag — QC200, KM3, -Q1 — because the tag is what is printed at
+     the symbol, while the device itself is named beside it or in the schedule.
+     So read the models out of the whole printed line and try those.
+
+     Only exact keys count here, and every other gate still applies: the brand
+     the drawing names must agree, as must type, poles and current, and a tie is
+     still refused. A line that prints no model at all stays unmatched. */
+  const printed = modelKeysFromText(`${part.model || ""} ${part.rawText || ""}`)
+    .filter((key) => !models.includes(key));
+  if (printed.length) {
+    const fromLine = resolve(printed, true);
+    if (fromLine.part) return fromLine.part;
+    if (fromLine.ambiguous) return null;
   }
-  return scored[0].candidate;
+
+  const resembling = resolve(models);
+  if (resembling.part) return resembling.part;
+
+  return houseDefaultPart(catalog, part);
 }
 
 const text = (value, max) => String(value ?? "").trim().slice(0, max);

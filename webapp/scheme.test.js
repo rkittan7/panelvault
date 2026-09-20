@@ -283,6 +283,49 @@ test("ABB MS116 matches its catalog family even when Gemini puts the order code 
   }
 });
 
+/* A schematic labels a device by its circuit tag — QC200, KM3, -Q1 — and the
+   model itself is printed beside the symbol or in the schedule. When the tag
+   lands in the model field, matching it as a model finds nothing, and the line
+   comes back for a person to place by hand. */
+test("a circuit tag in the model position falls back to the model printed in the callout", () => {
+  const catalog = [
+    { id: "abb-af30", manufacturer: "ABB", model: "AF30", type: "Contactor", rating: "32A AC-3, 15kW", poles: "3P" },
+    { id: "abb-af38", manufacturer: "ABB", model: "AF38", type: "Contactor", rating: "38A AC-3, 18.5kW", poles: "3P" },
+  ];
+  const cases = [
+    { model: "QC200", rawText: "QC200 ABB AF38 38A AC-3" },
+    { model: "QC200", rawText: "ABB AF38-30-00 contactor" },
+    { model: "-KM3", rawText: "-KM3 / AF38 / 3P" },
+  ];
+  for (const { model, rawText } of cases) {
+    const part = { manufacturer: "ABB", model, type: "Contactor", poles: "3P", reference: model, rawText };
+    assert.equal(matchCatalogPart(catalog, part)?.id, "abb-af38", JSON.stringify(part));
+  }
+});
+
+test("a tag with no model anywhere on the line is still handed back, not guessed", () => {
+  const catalog = [
+    { id: "abb-af30", manufacturer: "ABB", model: "AF30", type: "Contactor", rating: "32A AC-3, 15kW", poles: "3P" },
+    { id: "abb-af38", manufacturer: "ABB", model: "AF38", type: "Contactor", rating: "38A AC-3, 18.5kW", poles: "3P" },
+  ];
+  const part = {
+    manufacturer: "ABB", model: "QC200", type: "Contactor", poles: "3P",
+    reference: "QC200", rawText: "QC200 pump starter",
+  };
+  assert.equal(matchCatalogPart(catalog, part), null);
+});
+
+test("a model printed in the callout still obeys the brand the drawing names", () => {
+  const catalog = [
+    { id: "abb-af38", manufacturer: "ABB", model: "AF38", type: "Contactor", rating: "38A AC-3, 18.5kW", poles: "3P" },
+  ];
+  const part = {
+    manufacturer: "Siemens", model: "QC200", type: "Contactor", poles: "3P",
+    reference: "QC200", rawText: "QC200 AF38 38A",
+  };
+  assert.equal(matchCatalogPart(catalog, part), null);
+});
+
 test("the extracted main breaker is present in components with its ampere", () => {
   const mainCatalog = [
     { id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB", rating: "IEC 160A frame", poles: "3P/4P" },
