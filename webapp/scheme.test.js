@@ -303,6 +303,42 @@ test("a circuit tag in the model position falls back to the model printed in the
   }
 });
 
+/* A catalog row that spans a whole frame range used to beat every row that is
+   one device: the range states "9-260A" and scored for covering the current,
+   while AF190's "190A AC-3, 90kW" was not read as a current at all. Every ABB
+   contactor on a drawing therefore landed on the AX range whatever its size. */
+test("a contactor is matched to its own frame, not to the range that spans it", () => {
+  const catalog = [
+    { id: "abb-af96", manufacturer: "ABB", model: "AF96", type: "Contactor", rating: "96A AC-3, 45kW", poles: "3P" },
+    { id: "abb-af190", manufacturer: "ABB", model: "AF190", type: "Contactor", rating: "190A AC-3, 90kW", poles: "3P" },
+    { id: "abb-ax", manufacturer: "ABB", model: "AX range (AX09-AX260)", type: "Contactor", rating: "9-260A", poles: "3P" },
+  ];
+  const line = (rating, reference) => ({
+    manufacturer: "ABB", model: reference, type: "Contactor", poles: "3P", rating, reference,
+    rawText: `${reference} ABB ${rating} 3P`,
+  });
+  assert.equal(matchCatalogPart(catalog, line("190A", "QC300")).id, "abb-af190");
+  assert.equal(matchCatalogPart(catalog, line("96A", "QCU")).id, "abb-af96");
+  // No frame in this catalog is exactly 16A, so the range that covers it is
+  // the honest answer rather than the nearest frame.
+  assert.equal(matchCatalogPart(catalog, line("16A", "QC189")).id, "abb-ax");
+});
+
+test("a frame printed on the drawing finds the range row that carries it", () => {
+  const catalog = [
+    { id: "abb-af190", manufacturer: "ABB", model: "AF190", type: "Contactor", rating: "190A AC-3, 90kW", poles: "3P" },
+    { id: "abb-ax", manufacturer: "ABB", model: "AX range (AX09-AX260)", type: "Contactor", rating: "9-260A", poles: "3P" },
+  ];
+  // AX185 resembles nothing in the range row's name, and being exactly 190A
+  // once made AF190 outscore it. A printed model outranks a guess from brand,
+  // type and poles however well the guess scores.
+  const part = {
+    manufacturer: "ABB", model: "AX185", type: "Contactor", poles: "3P", rating: "185A",
+    reference: "QC300", rawText: "QC300 ABB AX185 185A",
+  };
+  assert.equal(matchCatalogPart(catalog, part).id, "abb-ax");
+});
+
 test("a tag with no model anywhere on the line is still handed back, not guessed", () => {
   const catalog = [
     { id: "abb-af30", manufacturer: "ABB", model: "AF30", type: "Contactor", rating: "32A AC-3, 15kW", poles: "3P" },

@@ -140,8 +140,18 @@ safe destination for uncertainty; silent omission is not.
   label closely enough that a reviewer can find it again.
 - manufacturer: exact printed brand, such as ABB, Schneider, Siemens, HAGER,
   KLEMSAN or SATEC. Do not substitute a different catalog brand.
-- model: exact printed model/series. Preserve significant letters and digits;
-  XT1C, XT1D and XT1N are different. Preserve iC60N casing when readable.
+- model: exact printed manufacturer model/series, and nothing else. Preserve
+  significant letters and digits; XT1C, XT1D and XT1N are different. Preserve
+  iC60N casing when readable.
+  A circuit tag is not a model. QC200, QC211, SH211, -Q1, KM3, F12 and the like
+  identify the position on the drawing, not the device: return them in
+  reference and leave model empty unless the device's own model is printed.
+  A current, a pole notation or a function label is not a model either: 3X40A
+  is rating 40A with poles 3P, and a label such as PUMP 1 or FIRL belongs in
+  rawText. An empty model is expected and useful; a tag or a rating in this
+  field sends the line to be matched by hand.
+  When the symbol carries only a tag and a schedule elsewhere gives that tag's
+  model, return that model and keep the tag in reference.
   Hager modular devices print a full order reference, such as EPN524,
   EPS450B, EZM100, EMN001, EEN101, ED183 or 60060. Return that reference as
   the model, exactly as printed, and return HAGER as the manufacturer only

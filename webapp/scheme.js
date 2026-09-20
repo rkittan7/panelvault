@@ -148,7 +148,7 @@ const BOARD_SCHEME_SCHEMA = {
         properties: {
           rawText: { type: "string", description: "Representative schematic callout or device label transcribed from the source." },
           manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
-          model: { type: "string", description: "Model/series exactly as printed, preserving significant suffixes." },
+          model: { type: "string", description: "Manufacturer model/series exactly as printed, preserving significant suffixes. Never a circuit tag, a current or a pole notation; empty when no model is printed." },
           type: { type: "string", description: "Printed device type such as MCB, MCCB, contactor or meter." },
           rating: { type: "string", description: "Device current including A, separated from curve and poles; for example C16 or 6A + N must return 16A or 6A." },
           poles: { type: "string", description: "Pole count normalized from the device callout, for example 6A + N means 1P+N." },
@@ -177,7 +177,7 @@ const BOARD_SCHEME_SCHEMA = {
         properties: {
           rawText: { type: "string", description: "Visible label, function, color and callout identifying this door position; required even when brand/model are unreadable." },
           manufacturer: { type: "string", description: "Manufacturer exactly as printed; empty when absent." },
-          model: { type: "string", description: "Model/series exactly as printed; empty when unreadable." },
+          model: { type: "string", description: "Manufacturer model/series exactly as printed; never a circuit tag, a current or a pole notation; empty when unreadable or unprinted." },
           type: { type: "string", description: "Push Button, Selector Switch, Pilot Light, Emergency Stop, Door Switch, Buzzer, Main Handle or the visible operator type." },
           rating: { type: "string", description: "Operator voltage or rating exactly as printed; empty when absent." },
           poles: { type: "string", description: "Contact arrangement such as 1NO, 1NC or 1NO+1NC; empty when absent." },
@@ -279,7 +279,7 @@ function modelKeys(value) {
   const abbMotorStarter = String(value).toLowerCase().match(/(?:^|[^a-z0-9])ms\s*[- ]?(116|132)(?=$|[^a-z0-9])/);
   if (abbMotorStarter) keys.add(`ms${abbMotorStarter[1]}`);
   for (const token of String(value).toLowerCase().split(/[^a-z0-9]+/)) {
-    const family = HAGER_FAMILIES.find(([pattern]) => pattern.test(token));
+    const family = [...HAGER_FAMILIES, ...FRAME_FAMILIES].find(([pattern]) => pattern.test(token));
     if (family) keys.add(family[1]);
   }
   return [...keys].filter((key) => key.length >= 3);
@@ -300,6 +300,15 @@ const HAGER_FAMILIES = [
   [/^eps4[15]0b?$/, "hagereps"],
   [/^(?:60060|ed183)$/, "hagerloadshed"],
   [/^een10[01]$/, "hagereen"],
+];
+
+/** Some catalog rows are a frame range rather than one device — ABB's
+ * "AX range (AX09-AX260)" stands for every AX frame. A drawing prints the
+ * frame it uses, AX95 or AX185, which resembles nothing in that row's name, so
+ * the row could only ever be reached by guessing from brand and poles. Both
+ * sides now read as one family key, and the row is found by what is printed. */
+const FRAME_FAMILIES = [
+  [/^ax\d{2,3}$/, "abbax"],
 ];
 
 /** Canonical current carried by a breaker callout. This deliberately requires
@@ -384,9 +393,19 @@ function lensColour(...values) {
   return found.size === 1 ? [...found][0] : "";
 }
 
+/** The single current a catalog row states outright, as opposed to a range.
+ *
+ * A contactor row states its duty after the current — "190A AC-3, 90kW" — and
+ * requiring the whole string to be the current meant no such row ever counted
+ * as exact. A range row like the AX frames' "9-260A" then scored for covering
+ * the current while AF190 scored nothing for being it, so every ABB contactor
+ * on a drawing landed on the range row whatever its size. The current has to
+ * lead the string: "IEC 160A frame" is a frame size, not a rating. */
 function exactAmpereRating(value) {
   const source = String(value || "").trim();
-  return /^\d+(?:\.\d+)?\s*A$/i.test(source) ? ampereRating(source) : "";
+  if (ampereRange(source)) return "";
+  const leading = source.match(/^(\d+(?:\.\d+)?)\s*A\b/i);
+  return leading ? ampereRating(`${leading[1]}A`) : "";
 }
 
 function ampereRange(value) {
@@ -547,7 +566,7 @@ function matchCatalogPart(catalog, part) {
       // nothing: a colour must not lift a weaker model match into a tie.
       const candidateColour = lensColour(candidate.model);
       if (requestedColour && candidateColour && requestedColour !== candidateColour) return null;
-      return { candidate, score };
+      return { candidate, score, modelMatched };
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
@@ -556,7 +575,13 @@ function matchCatalogPart(catalog, part) {
   // "nothing answered". A tie is a question for a person, so a later, weaker
   // pass must not go on to answer it.
   const resolve = (wanted, exactOnly = false) => {
-    const scored = scoreCatalog(wanted, exactOnly);
+    const all = scoreCatalog(wanted, exactOnly);
+    /* A model that is actually printed outranks one inferred from brand, type
+       and poles, however well the inference scores. Without this an ABB
+       contactor drawn as AX185 could be answered with AF190, because being
+       exactly 190A scored higher than being the AX range it names. */
+    const named = all.filter((entry) => entry.modelMatched);
+    const scored = named.length ? named : all;
     if (!scored.length) return { part: null, ambiguous: false };
     if (scored.length > 1
       && scored[0].score === scored[1].score
