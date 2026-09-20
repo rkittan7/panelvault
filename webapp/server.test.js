@@ -83,6 +83,15 @@ test("the desktop dashboard aligns Production stages with Awaiting QA", () => {
   assert.match(browserApp, /activity\.classList\.add\("dashboard-activity-panel"\)/);
 });
 
+test("PDF scheme intake submits and polls the audited Claude extractor", () => {
+  const browserApp = fs.readFileSync(path.join(webapp, "public", "app.js"), "utf8");
+  assert.match(browserApp, /function readSchemeWithClaude\(/);
+  assert.match(browserApp, /api\("\/api\/ai\/scheme-extract", upload/);
+  assert.match(browserApp, /scheme-extract\?job=/);
+  assert.match(browserApp, /job\.result\?\.board_draft/);
+  assert.match(browserApp, /isPDF[\s\S]*readSchemeWithClaude\(upload/);
+});
+
 async function startServer(extraEnv = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "panelvault-cloud-test-"));
   const child = spawn(process.execPath, ["server.js"], {

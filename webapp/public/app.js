@@ -4204,6 +4204,59 @@ function fileAsBase64(file) {
   });
 }
 
+function waitForSchemePoll(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const error = new Error("Scheme reading cancelled.");
+      error.name = "AbortError";
+      reject(error);
+      return;
+    }
+    const cancelled = () => {
+      clearTimeout(timer);
+      const error = new Error("Scheme reading cancelled.");
+      error.name = "AbortError";
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", cancelled);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", cancelled, { once: true });
+  });
+}
+
+/** Submit a PDF to the auditable Claude pipeline and wait for its background
+ * job. The service returns the same board-draft contract as the original
+ * reader, so the human review and creation screens stay unchanged. */
+async function readSchemeWithClaude(upload, { signal, onProgress } = {}) {
+  const submitted = await api("/api/ai/scheme-extract", upload, { signal });
+  if (!submitted?.job_id) throw new Error("The Claude extractor did not return a job id.");
+
+  let job = submitted;
+  while (job.status === "queued" || job.status === "running") {
+    onProgress?.(job);
+    await waitForSchemePoll(2000, signal);
+    job = await api(`/api/ai/scheme-extract?job=${encodeURIComponent(submitted.job_id)}`, undefined, { signal });
+  }
+  onProgress?.(job);
+  if (job.status === "failed") {
+    throw new Error(job.error || "Claude could not finish reading this scheme.");
+  }
+  if (job.status !== "done" || !job.result?.board_draft) {
+    throw new Error("The Claude extractor returned an incomplete result.");
+  }
+  return {
+    ...job.result.board_draft,
+    extraction: {
+      jobID: job.job_id,
+      counts: job.result.counts || {},
+      cost: job.result.cost || {},
+      workbookURL: `/api/ai/scheme-extract-workbook?job=${encodeURIComponent(job.job_id)}`,
+    },
+  };
+}
+
 /** What the AI reader will accept, and what a board or part can keep: one
     number, matching ATTACHMENT_SIZE_LIMIT in storage.js. Anything bigger is
     refused before the upload, so a file is never sent only to bounce off the
@@ -4225,8 +4278,8 @@ function schemeIntakePanel(kind, onComplete) {
   const head = el("div", "scheme-intake-head");
   head.append(chipIcon("scan", "var(--primary)"));
   const copy = el("div");
-  copy.append(el("span", "eyebrow", "AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
-    el("p", null, "PDF, PNG, JPG, WebP or HEIC · up to 14 MB. Drag one in or choose a file. Nothing is created until you review and confirm it."));
+  copy.append(el("span", "eyebrow", "Audited AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
+    el("p", null, "PDFs use the new Claude extraction pipeline. PNG, JPG, WebP and HEIC photos use the image reader. Up to 14 MB; nothing is created until you review and confirm it."));
   head.append(copy);
   panel.append(head);
 
@@ -4243,7 +4296,8 @@ function schemeIntakePanel(kind, onComplete) {
   const progress = el("div", "scheme-progress hidden");
   const progressCopy = el("div", "scheme-progress-copy");
   const progressTitle = el("strong", null, "Reading the drawing");
-  progressCopy.append(progressTitle, el("small", null, "Most drawings finish in under two minutes. Dense multi-page schemes can take up to five minutes while PanelVault checks every page."));
+  const progressDetail = el("small", null, "Preparing the drawing for Claude. Multi-sheet sets can take several minutes while PanelVault checks every page.");
+  progressCopy.append(progressTitle, progressDetail);
   const elapsed = el("span", "scheme-elapsed", "0s");
   progress.append(el("span", "scheme-spinner"), progressCopy, elapsed);
 
@@ -4259,14 +4313,20 @@ function schemeIntakePanel(kind, onComplete) {
   let ticker = null;
 
   /** True while a read is in flight — the panel refuses everything else then,
-      so a second file cannot start a second Gemini call over the first. */
+      so a second file cannot start another extraction over the first. */
   const reading = () => Boolean(controller);
+
+  const scanLabel = () => {
+    const name = String(selectedFile?.name || "").toLowerCase();
+    const pdf = selectedFile?.type === "application/pdf" || name.endsWith(".pdf");
+    return pdf ? "Read scheme with Claude" : "Read image with AI";
+  };
 
   const setReading = (on) => {
     drop.disabled = on;
     drop.classList.toggle("reading", on);
     scan.disabled = on || !selectedFile;
-    scan.textContent = on ? "Reading…" : "Read scheme with AI";
+    scan.textContent = on ? "Reading…" : scanLabel();
     cancel.classList.toggle("hidden", !on);
     progress.classList.toggle("hidden", !on);
   };
@@ -4301,6 +4361,7 @@ function schemeIntakePanel(kind, onComplete) {
     status.textContent = `${file.name} · ${Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB`;
     drop.classList.add("selected");
     scan.disabled = false;
+    scan.textContent = scanLabel();
   };
 
   drop.addEventListener("click", () => {
@@ -4330,6 +4391,8 @@ function schemeIntakePanel(kind, onComplete) {
     controller = new AbortController();
     const startedAt = Date.now();
     elapsed.textContent = "0s";
+    progressTitle.textContent = "Reading the drawing";
+    progressDetail.textContent = "Preparing the drawing for Claude. Multi-sheet sets can take several minutes while PanelVault checks every page.";
     ticker = setInterval(() => {
       elapsed.textContent = `${Math.round((Date.now() - startedAt) / 1000)}s`;
     }, 1000);
@@ -4344,7 +4407,22 @@ function schemeIntakePanel(kind, onComplete) {
         data: await fileAsBase64(selectedFile),
         size: selectedFile.size,
       };
-      result = await api("/api/ai/board-scheme", upload, { signal: controller.signal });
+      const isPDF = upload.mimeType === "application/pdf" || upload.fileName.toLowerCase().endsWith(".pdf");
+      if (isPDF) {
+        result = await readSchemeWithClaude(upload, {
+          signal: controller.signal,
+          onProgress: (job) => {
+            const percent = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
+            progressTitle.textContent = `Reading with Claude · ${percent}%`;
+            progressDetail.textContent = job.stage || (job.status === "queued"
+              ? "Waiting for the extractor to start…"
+              : "Checking every sheet against the drawing…");
+          },
+        });
+      } else {
+        progressDetail.textContent = "Reading the image with Gemini…";
+        result = await api("/api/ai/board-scheme", upload, { signal: controller.signal });
+      }
     } catch (caught) {
       const aborted = caught.name === "AbortError";
       stopReading();

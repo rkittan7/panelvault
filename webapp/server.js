@@ -1363,10 +1363,18 @@ const routes = {
     sendJSON(res, 202, job);
   },
 
-  "GET /api/ai/scheme-extract": async (req, res) => {
+  "GET /api/ai/scheme-extract": async (req, res, session) => {
     const jobID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("job");
     if (!jobID) return fail(res, 400, "Which job?");
-    sendJSON(res, 200, await schemeExtractor.job(jobID));
+    const job = await schemeExtractor.job(jobID);
+    // The Python service returns a raw BOM-derived board draft. Match those
+    // lines to this company's catalog here, at the same trust boundary as the
+    // legacy reader, before the browser can import them into a board.
+    if (job.status === "done" && job.result?.board_draft) {
+      const catalog = [...CATALOG, ...(session.company.customParts || [])];
+      job.result.board_draft = normalizeReading(job.result.board_draft, catalog);
+    }
+    sendJSON(res, 200, job);
   },
 
   /** The reviewer's workbook: RTL sheets, per-sheet quantity breakdowns. */

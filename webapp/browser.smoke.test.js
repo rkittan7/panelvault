@@ -142,6 +142,78 @@ test("an owner can create work and select the board's actual main breaker", asyn
   expect(failures).toEqual([]);
 });
 
+test("a PDF board scan uses the Claude job and opens its review draft", async ({ page }) => {
+  let submitted = false;
+  let polled = false;
+  await page.route("**/api/ai/scheme-extract*", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      submitted = true;
+      const body = request.postDataJSON();
+      expect(body.fileName).toBe("claude-test.pdf");
+      expect(body.data).toBeTruthy();
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({ job_id: "job_browser", status: "queued" }),
+      });
+      return;
+    }
+    polled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        job_id: "job_browser",
+        status: "done",
+        progress: 1,
+        stage: "done",
+        result: {
+          board_draft: {
+            board: {
+              number: "CLAUDE-1",
+              name: "Claude Review Board",
+              customer: "Claude Customer",
+              project: "",
+              type: "MDB",
+              typeConfidence: "high",
+            },
+            components: [],
+            unmatched: [],
+            warnings: [],
+          },
+          counts: { devices: 12 },
+          cost: { total_usd: 0.08 },
+        },
+      }),
+    });
+  });
+
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.getByRole("tab", { name: "Sign up", exact: true }).click();
+  await page.getByRole("radio", { name: /Start a company/ }).click();
+  await page.locator('#signup-create input[name="companyName"]').fill("Claude Scan Panels");
+  await page.locator("#form-signup").getByLabel("Name").fill("Claude Owner");
+  await page.locator("#form-signup").getByLabel("Email").fill("claude-owner@example.com");
+  await page.locator("#form-signup").getByLabel("Password").fill("claude-secret-12");
+  await page.getByRole("button", { name: "Create account" }).click();
+
+  await page.getByRole("button", { name: "Open Boards", exact: true }).click();
+  await page.getByRole("button", { name: "New board", exact: true }).click();
+  await page.getByRole("button", { name: /Scan with AI/ }).click();
+  await page.locator('input[type="file"][accept*="application/pdf"]').setInputFiles({
+    name: "claude-test.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.7\n%%EOF"),
+  });
+  await page.getByRole("button", { name: "Read scheme with Claude" }).click();
+
+  await expect(page.getByLabel("Board number")).toHaveValue("CLAUDE-1", { timeout: 10_000 });
+  await expect(page.getByLabel("Board name")).toHaveValue("Claude Review Board");
+  expect(submitted).toBe(true);
+  expect(polled).toBe(true);
+});
+
 test("the main breaker card shows the part, its specification and the stage guard holds", async ({ page }) => {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.getByRole("tab", { name: "Sign up", exact: true }).click();
