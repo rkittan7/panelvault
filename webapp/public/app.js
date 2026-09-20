@@ -1675,7 +1675,15 @@ function renderStageTracker(board) {
     else if (stage.id !== board.currentStage?.id) copy.append(el("small", null, "Set stage"));
     item.append(marker, copy);
     if (!item.disabled && stage.id !== board.currentStage?.id) {
-      item.addEventListener("click", () => updateBoardStage(board, stage.id));
+      item.addEventListener("click", () => {
+        // Forward is the ordinary click and stays immediate. Going back undoes
+        // finished work — a board sitting at QA drops to In Progress — and the
+        // circles are close enough together that it happens by accident.
+        const current = (board.stages || []).findIndex((entry) => entry.id === board.currentStage?.id);
+        if (current > -1 && index < current
+          && !window.confirm(`Move this board back from ${board.currentStage?.label} to ${stage.label}? Its progress returns to that stage.`)) return;
+        updateBoardStage(board, stage.id);
+      });
     }
     tracker.append(item);
   });
@@ -2275,23 +2283,131 @@ function openProjectOverview(projectName) {
   });
 }
 
-function openBreakerOverview(sourceBoard) {
+/** The component line the incomer was read from, so the card can show what the
+ * drawing actually said rather than only the three fields the board stores.
+ *
+ * The scheme prompt asks for the incomer to appear in components as well, so
+ * this is usually there. A board can carry several lines of the same breaker,
+ * so the installed current decides between them before the model does. */
+function mainBreakerComponent(board, part) {
+  const rows = board.components || [];
+  const model = String(board.mainBreakerModel || "").trim().toLowerCase();
+  const ampere = exactAmperage(board.mainBreakerAmpere).replace(/\s+/g, "").toLowerCase();
+  const named = (component) => {
+    if (part && component.partID === part.id) return true;
+    if (!model) return false;
+    const full = [component.manufacturer, component.model].filter(Boolean).join(" ").trim().toLowerCase();
+    return full === model || String(component.model || "").trim().toLowerCase() === model;
+  };
+  const sameAmpere = (component) =>
+    !ampere || exactAmperage(component.rating).replace(/\s+/g, "").toLowerCase() === ampere;
+  return rows.find((component) => named(component) && sameAmpere(component))
+    || rows.find(named)
+    || null;
+}
+
+/** The board's incomer: its photograph and catalog specification, the line the
+ * AI read it from, and the other boards carrying the same breaker.
+ *
+ * It used to print three fields as bare text — type, model, ampere — which is
+ * no more than the tile that opens it already shows, and none of the reading
+ * behind it. */
+async function openBreakerOverview(sourceBoard) {
+  // The catalog is what carries the photograph and the specification, and it is
+  // fetched lazily: without this the card opens saying the breaker is unmatched
+  // whenever it is the first thing the user touches after signing in.
+  await ensureCatalog().catch(() => {});
   const breakerLabel = [sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel, sourceBoard.mainBreakerAmpere].filter(Boolean).join(" · ");
+  const part = selectedMainBreakerPart(sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel);
+  const component = mainBreakerComponent(sourceBoard, part);
   const matching = state.boards.filter((board) =>
     board.mainBreakerType === sourceBoard.mainBreakerType
       && board.mainBreakerModel === sourceBoard.mainBreakerModel
       && board.mainBreakerAmpere === sourceBoard.mainBreakerAmpere);
+  const canEditBoard = isAdmin() || sourceBoard.assignedTo === state.me.id;
   openModal((modal, close) => {
-    modal.classList.add("wide", "board-drilldown-modal");
-    modal.append(el("span", "eyebrow", "Main breaker"), el("h3", null, sourceBoard.mainBreakerModel || sourceBoard.mainBreakerType || "Not specified"));
+    tintByBrand(modal, part?.manufacturer || component?.manufacturer);
+    modal.classList.add("wide", "board-drilldown-modal", "main-breaker-sheet");
+
+    const url = partPhotoURL(part || { id: component?.partID });
+    if (url) {
+      const figure = el("div", "part-hero");
+      const img = el("img");
+      img.src = url;
+      img.alt = [part?.manufacturer, part?.model].filter(Boolean).join(" ") || "Main breaker";
+      img.addEventListener("error", () => figure.remove());
+      figure.append(img);
+      modal.append(figure);
+    }
+
+    modal.append(el("span", "eyebrow", "Main breaker"));
+    const brand = brandMark(part?.manufacturer || component?.manufacturer);
+    const heading = el("div", "main-breaker-sheet-title");
+    if (brand) heading.append(brand);
+    // The catalog name when there is one: the stored model is typed by hand and
+    // often already carries the brand, so gluing them gives "ABB ABB XT7".
+    const catalogName = part ? [part.manufacturer, part.model].filter(Boolean).join(" ") : "";
+    heading.append(el("h3", null, catalogName || sourceBoard.mainBreakerModel
+      || sourceBoard.mainBreakerType || "Not specified"));
+    modal.append(heading);
     modal.append(el("p", "modal-sub", breakerLabel || "No main-breaker details recorded."));
-    const specs = el("dl", "spec drilldown-spec");
-    [["Type", sourceBoard.mainBreakerType], ["Model", sourceBoard.mainBreakerModel], ["Ampere", sourceBoard.mainBreakerAmpere]]
-      .forEach(([label, value]) => specs.append(el("dt", null, label), el("dd", null, value || "Not set")));
-    modal.append(specs, el("div", "section-label", `Used on ${matching.length} board${matching.length === 1 ? "" : "s"}`));
+
+    modal.append(refSection("Installed on this board", "boltShield", infoLines([
+      ["Type", sourceBoard.mainBreakerType || "Not set"],
+      ["Model", sourceBoard.mainBreakerModel || "Not set"],
+      ["Installed ampere", sourceBoard.mainBreakerAmpere || "Not set"],
+      ["Poles", component?.poles],
+      ["Curve", component?.curve],
+      ["Sensitivity", component?.sensitivity],
+    ])));
+
+    if (part) {
+      modal.append(refSection("Catalog specification", "box", infoLines([
+        ["Catalog name", [part.manufacturer, part.model].filter(Boolean).join(" ")],
+        ["Device type", part.type],
+        ["Rating range", part.rating],
+        ["Poles offered", part.poles],
+        ["Class / curve", part.curve],
+      ])));
+      if (part.about) modal.append(refSection("Description", "note", el("p", "ref-body", part.about)));
+    } else if (sourceBoard.mainBreakerModel) {
+      modal.append(refSection("Catalog", "box",
+        el("p", "ref-body", "This breaker is not matched to a catalog part, so there is no photograph or specification to show. Pick it from the catalog in the Main Breaker tab.")));
+    }
+
+    if (component) {
+      const reading = infoLines([
+        ["Source", component.source === "ai" ? "Electrical scheme · AI extraction" : "Added manually"],
+        ["Drawing page", component.sourcePage ? `Page ${component.sourcePage}` : ""],
+        ["Reference", component.reference],
+        ["Quantity", component.quantity ? `× ${component.quantity}` : ""],
+      ]);
+      const body = el("div");
+      body.append(reading);
+      if (component.rawText) body.append(el("p", "ref-body", component.rawText));
+      modal.append(refSection("Read from the drawing", "scan", body));
+    }
+
+    modal.append(el("div", "section-label", `Used on ${matching.length} board${matching.length === 1 ? "" : "s"}`));
     const list = el("div", "board-drilldown-list");
     matching.forEach((board) => list.append(boardDrilldownRow(board, close)));
     modal.append(list);
+
+    const actions = el("div", "actions");
+    if (part) actions.append(smallBtn("Open catalog part", "", "box", () => { close(); openCatalogPartModal(part); }));
+    if (component) actions.append(smallBtn("Scheme source", "", "scan", () => { close(); openComponentSourceCard(sourceBoard, component); }));
+    if (canEditBoard) {
+      actions.append(smallBtn("Change breaker", "", "sliders", () => {
+        close();
+        selectedBoardTab = "breaker";
+        renderBoardDetail();
+      }));
+    }
+    const done = el("button", "btn-primary", "Done");
+    done.type = "button";
+    done.addEventListener("click", close);
+    actions.append(done);
+    modal.append(actions);
   });
 }
 

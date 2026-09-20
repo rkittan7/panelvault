@@ -141,3 +141,66 @@ test("an owner can create work and select the board's actual main breaker", asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(failures).toEqual([]);
 });
+
+test("the main breaker card shows the part, its specification and the stage guard holds", async ({ page }) => {
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.getByRole("tab", { name: "Sign up", exact: true }).click();
+  await page.getByRole("radio", { name: /Start a company/ }).click();
+  await page.locator('#signup-create input[name="companyName"]').fill("Breaker Card Panels");
+  await page.locator("#form-signup").getByLabel("Name").fill("Card Owner");
+  await page.locator("#form-signup").getByLabel("Email").fill("card-owner@example.com");
+  await page.locator("#form-signup").getByLabel("Password").fill("browser-secret-12");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
+
+  const created = await page.request.post(`${baseURL}/api/boards`, {
+    data: {
+      number: "PV-200-1", name: "Card Board", customer: "Card Customer", project: "No Project",
+      manufacturer: "ABB", type: "MDB",
+      mainBreakerType: "MCCB", mainBreakerModel: "ABB SACE Tmax XT7", mainBreakerAmpere: "630A",
+    },
+  });
+  expect(created.status()).toBe(200);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open Boards", exact: true }).click();
+  await page.getByRole("button", { name: /PV-200-1 — Card Board/ }).click();
+  await page.locator(".board-property").filter({ hasText: "Main breaker" }).click();
+
+  const card = page.locator(".modal.main-breaker-sheet");
+  await expect(card).toBeVisible();
+  // The photograph, and the catalog behind the model - not three bare fields.
+  const photo = card.locator(".part-hero img");
+  await expect(photo).toBeVisible();
+  const box = await photo.boundingBox();
+  expect(box.height).toBeLessThanOrEqual(240);
+  await expect(card).toContainText("Catalog specification");
+  await expect(card).toContainText("Installed ampere");
+  await expect(card).toContainText("630A");
+  await expect(card.getByRole("button", { name: "Open catalog part" })).toBeVisible();
+  // The card scrolls; nothing in it may be squeezed under the buttons.
+  const overlap = await page.evaluate(() => {
+    const sheet = document.querySelector(".modal.main-breaker-sheet");
+    const row = sheet.querySelector(".board-drilldown-row");
+    return row ? row.getBoundingClientRect().bottom - sheet.querySelector(".actions").getBoundingClientRect().top : -1;
+  });
+  expect(overlap).toBeLessThanOrEqual(0);
+  await page.setViewportSize({ width: 390, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(card.getByRole("button", { name: "Change breaker" })).toBeVisible();
+  await card.getByRole("button", { name: "Change breaker" }).click();
+  await expect(page.getByRole("button", { name: "Edit selected main breaker" })).toBeVisible();
+
+  // Forward is one click; going back asks first, and a refused prompt changes nothing.
+  await page.getByRole("tab", { name: "Overview" }).click();
+  const stage = (name) => page.locator(".board-stage").filter({ hasText: name }).first();
+  await stage("Mechanical Build").click();
+  await expect(page.locator(".board-progress-head h3")).toHaveText("Mechanical Build");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await stage("Design").click();
+  await expect(page.locator(".board-progress-head h3")).toHaveText("Mechanical Build");
+  page.once("dialog", (dialog) => dialog.accept());
+  await stage("Design").click();
+  await expect(page.locator(".board-progress-head h3")).toHaveText("Design");
+});

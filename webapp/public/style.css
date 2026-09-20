@@ -1979,3 +1979,22 @@ img.brand-logo {
 .num.muted { color: var(--ink-3); font-weight: 500; }
 
 .modal.part-sheet { max-width: 440px; }
+/* The main-breaker sheet is the part sheet's content inside the drill-down
+   modal: photo, specification, what the drawing said, then the other boards
+   carrying it. Its own stack, so the sections do not run together. */
+.modal.main-breaker-sheet { max-width: 480px; }
+.main-breaker-sheet { display: flex; flex-direction: column; gap: 11px; }
+/* The card scrolls, so nothing in it may be squeezed: a flex column shrinks
+   its children by default, and the board list was pressed under its own row,
+   which then painted over the buttons. */
+.main-breaker-sheet > * { flex-shrink: 0; }
+.main-breaker-sheet .part-hero { margin-bottom: -4px; }
+.main-breaker-sheet .eyebrow { margin-bottom: -6px; }
+.main-breaker-sheet h3 { margin: 0; }
+.main-breaker-sheet .modal-sub { margin: -4px 0 0; }
+.main-breaker-sheet .section-label { margin-top: 3px; }
+.main-breaker-sheet-title { display: flex; align-items: center; gap: 10px; }
+.main-breaker-sheet-title .brand-logo { width: 26px; height: 26px; object-fit: contain; flex-shrink: 0; }
+/* Four actions do not fit one row at this width, and the row does not scroll:
+   without wrapping the leftmost button is cut off by the card's edge. */
+.main-breaker-sheet .actions { flex-wrap: wrap; }
