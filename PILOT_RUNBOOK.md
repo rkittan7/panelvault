@@ -41,6 +41,8 @@ company data until every release gate below is complete.
   Chromium sign-in smoke test.
 - [ ] Confirm macOS CI builds the Manager (`Runner`), Worker, and Warehouse
   schemes for an iOS Simulator and runs the catalog/generated-source checks.
+- [ ] Confirm the same job type-checks all three apps
+  (`python3 tools/typecheck_swift.py`), so a type error fails before the build.
 - [ ] After deploy, open a private/cache-free browser at
   `https://cloud.panel-vault.com`; the **PanelVault Cloud** sign-in heading must
   appear and the browser console must contain no errors.

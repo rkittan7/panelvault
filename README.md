@@ -324,6 +324,13 @@ The generated Xcode project and source split are committed. Run
 `python3 tools/check_worker.py` after changing the manager or warehouse source
 to verify the generated Worker app structure.
 
+On a Mac, `python3 tools/typecheck_swift.py` type-checks the Manager, Worker and
+Warehouse sources against the iOS Simulator SDK in one pass, without building
+them. It is what CI runs, and it is the quickest way to find out whether a
+change compiles, because it stops before the parts of a build that take the
+time. Name an app to check just one, as in
+`python3 tools/typecheck_swift.py worker`.
+
 ## Run the PanelVault app
 
 Open `ios/Runner.xcodeproj` in Xcode, select the `Runner` scheme and choose an
