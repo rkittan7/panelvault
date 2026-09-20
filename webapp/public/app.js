@@ -1911,12 +1911,31 @@ async function openAddBoardComponentModal(board, draft = null) {
     const reference = field("Board reference", "e.g. QF1 or incoming breaker");
     reference.input.value = draft?.reference || "";
     search.input.value = draft
-      ? [draft.manufacturer, draft.model, draft.description, draft.type].filter(Boolean).join(" ")
+      ? [draft.manufacturer, draft.model, draft.type].filter(Boolean).join(" ")
       : "";
+    /* The search is scored word by word rather than as one string.
+
+       The box is seeded from the line that was read, so it holds several words
+       — "SOCOMEC 3X40A SH211" — and a single substring test asked the catalog
+       for that whole phrase, which nothing contains. The dialog then said "No
+       matching components" about a brand it carries 36 parts from, and the
+       line could not be placed at all.
+
+       Now every part matching any word is offered, ordered by how many words it
+       matches, so the exact device leads and the rest of the brand follows. */
     const drawChoices = () => {
-      const query = search.input.value.trim().toLowerCase();
-      const matches = catalog.filter((part) => !query || [part.manufacturer, part.model, part.type,
-        part.rating, part.poles, part.curve].filter(Boolean).join(" ").toLowerCase().includes(query)).slice(0, 200);
+      const words = search.input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const haystack = (part) => [part.manufacturer, part.model, part.type,
+        part.rating, part.poles, part.curve].filter(Boolean).join(" ").toLowerCase();
+      const matches = (words.length
+        ? catalog
+          .map((part) => ({ part, hits: words.filter((word) => haystack(part).includes(word)).length }))
+          .filter(({ hits }) => hits > 0)
+          .sort((left, right) => right.hits - left.hits
+            || `${left.part.manufacturer} ${left.part.model}`
+              .localeCompare(`${right.part.manufacturer} ${right.part.model}`, undefined, { numeric: true }))
+          .map(({ part }) => part)
+        : catalog).slice(0, 200);
       choice.replaceChildren(new Option(matches.length ? "Select a component" : "No matching components", ""));
       matches.forEach((part) => {
         const details = [part.type, part.rating, part.poles, part.curve].filter(Boolean).join(" · ");
