@@ -1793,6 +1793,24 @@ img.brand-logo {
   .sidebar-foot .skin { display: none; }
   .user-chip-text { display: none; }
   .content { padding: 16px 14px 44px; }
+  .stock-row {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 8px 10px;
+    align-items: center;
+  }
+  .stock-row > .chip-icon { grid-column: 1; grid-row: 1; }
+  .stock-row > .row-main { grid-column: 2; grid-row: 1; }
+  .stock-row > .qty-col:not(.money-col) { grid-column: 3; grid-row: 1; }
+  .stock-row > .money-col:nth-child(4) { grid-column: 2; grid-row: 2; text-align: left; }
+  .stock-row > .money-col:nth-child(5) { grid-column: 3; grid-row: 2; }
+  .stock-row > .row-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
   .view-head h2 { font-size: 18px; }
   .manager-dashboard-head { align-items: flex-start; flex-direction: column; gap: 12px; padding-bottom: 14px; }
   .manager-head-actions { width: 100%; }

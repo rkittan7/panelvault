@@ -204,3 +204,47 @@ test("the main breaker card shows the part, its specification and the stage guar
   await stage("Design").click();
   await expect(page.locator(".board-progress-head h3")).toHaveText("Design");
 });
+
+test("an administrator can record a signed stock correction from the stock screen", async ({ page }) => {
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.getByRole("tab", { name: "Sign up", exact: true }).click();
+  await page.getByRole("radio", { name: /Start a company/ }).click();
+  await page.locator('#signup-create input[name="companyName"]').fill("Correction Test Panels");
+  await page.locator("#form-signup").getByLabel("Name").fill("Correction Owner");
+  await page.locator("#form-signup").getByLabel("Email").fill("correction-owner@example.com");
+  await page.locator("#form-signup").getByLabel("Password").fill("correction-secret-12");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
+
+  const createdPart = await page.request.post(`${baseURL}/api/parts`, {
+    data: { manufacturer: "Test", type: "Accessory", model: "Correction Widget" },
+  });
+  expect(createdPart.status()).toBe(200);
+  const partID = (await createdPart.json()).part.id;
+  const openingStock = await page.request.post(`${baseURL}/api/movements`, {
+    data: { partID, kind: "receive", quantity: 10, reference: "Opening count" },
+  });
+  expect(openingStock.status()).toBe(200);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Stock", exact: true }).click();
+  const stockRow = page.locator("#view-stock .row").filter({ hasText: "Correction Widget" });
+  await expect(stockRow).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect(stockRow.locator(".row-title")).toContainText("Correction Widget");
+  await expect(stockRow.getByRole("button", { name: "In", exact: true })).toBeVisible();
+  await expect(stockRow.getByRole("button", { name: "Out", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await stockRow.getByRole("button", { name: "Correction" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Stock correction" });
+  await dialog.getByLabel("Change (+/-)").fill("-3");
+  await dialog.getByLabel("Reason / reference").fill("Cycle count");
+  await dialog.getByRole("button", { name: "Save correction" }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(stockRow.locator(".qty-col .num").first()).toHaveText("7");
+  const state = await (await page.request.get(`${baseURL}/api/state`)).json();
+  const correction = state.movements.find((movement) => movement.kind === "adjust");
+  expect(correction).toMatchObject({ partID, quantity: -3, reference: "Cycle count" });
+});

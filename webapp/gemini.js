@@ -35,7 +35,7 @@ function geminiErrorMessage(result) {
 // 14 MB of file is about 18.7 MB encoded, which keeps the whole request under
 // Gemini's 20 MB inline limit.
 const MAX_DOCUMENT_BASE64 = 19_000_000; // ~14 MB of file
-const DOCUMENT_READ_TIMEOUT_MS = 150_000;
+const DOCUMENT_READ_TIMEOUT_MS = 300_000;
 
 /** An AutoCAD export is a PDF; the image types are for a photo of a printout. */
 const SUPPORTED_DOCUMENT_TYPES = new Set([
@@ -151,20 +151,20 @@ function createGeminiClient({
           parts: [
             {
               inline_data: { mime_type: mimeType, data },
-              // Google's recommended PDF setting: enough resolution for dense
-              // document text without paying the latency of high-resolution
-              // image tokenisation on every page.
-              mediaResolution: { level: "MEDIA_RESOLUTION_MEDIUM" },
+              // Electrical drawings are not standard prose documents: device
+              // tags and order codes are small, spatially associated text.
+              // Give those labels the highest generally supported PDF detail.
+              mediaResolution: { level: "MEDIA_RESOLUTION_HIGH" },
             },
             { text: prompt },
           ],
         }],
         generationConfig: {
           responseMimeType: "application/json",
-          // Diagram extraction needs care, but not the model's default deep
-          // reasoning. Low materially reduces time-to-first-output while the
-          // explicit extraction rules continue to enforce the review contract.
-          thinkingConfig: { thinkingLevel: "low" },
+          // A complete multi-page inventory needs enough room for hundreds of
+          // traceable rows and a document-wide de-duplication pass.
+          maxOutputTokens: 65_536,
+          thinkingConfig: { thinkingLevel: "high" },
         },
       };
       if (systemInstruction) {
@@ -203,6 +203,11 @@ function createGeminiClient({
         .map((part) => part.text || "")
         .join("")
         .trim();
+      if (result.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+        const error = new Error("The diagram reading reached the model output limit before the inventory was complete. Split the PDF by board and scan again.");
+        error.statusCode = 502;
+        throw error;
+      }
       if (!text) {
         const error = new Error("Gemini could not read that document.");
         error.statusCode = 502;
