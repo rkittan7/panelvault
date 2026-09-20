@@ -81,7 +81,7 @@ const BOARD_SCHEME_SCHEMA = {
       required: [
         "number", "name", "customer", "project", "type", "typeConfidence", "typeEvidence", "manufacturer",
         "manufacturerRole", "manufacturerEvidence", "manufacturerCandidates",
-        "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "cabinetCount",
+        "mainBreakerType", "mainBreakerModel", "mainBreakerAmpere", "mainBreakerReference", "mainBreakerEvidence", "cabinetCount",
         "jobNumber", "revision", "supplyVoltage", "frequency", "earthingSystem",
         "ipRating", "formSeparation", "enclosureSize", "standards", "notes",
       ],
@@ -109,6 +109,8 @@ const BOARD_SCHEME_SCHEMA = {
         mainBreakerType: { type: "string", description: "Main incomer type, such as MCCB, ACB, MCB, changeover switch or isolator." },
         mainBreakerModel: { type: "string", description: "Exact manufacturer/model printed for the main incomer." },
         mainBreakerAmpere: { type: "string", description: "Main incomer current rating including unit." },
+        mainBreakerReference: { type: "string", description: "Exact tag/reference of the one board-level incoming device." },
+        mainBreakerEvidence: { type: "string", description: "Concise source-to-device-to-common-bus path proving why this is the board main rather than a sectional field main." },
         cabinetCount: { type: "integer", minimum: 0, maximum: 40, description: "Physical cabinets or sections; 0 when unstated." },
         jobNumber: { type: "string", description: "Job or order number exactly as printed." },
         revision: { type: "string", description: "Drawing revision/state exactly as printed." },
@@ -140,7 +142,7 @@ const BOARD_SCHEME_SCHEMA = {
         type: "object",
         required: [
           "rawText", "manufacturer", "model", "type", "rating", "poles",
-          "curve", "sensitivity", "quantity", "reference", "sourcePage", "boardNumber",
+          "curve", "sensitivity", "quantity", "reference", "sourcePage", "boardNumber", "supplyRole",
           "isMainBreaker",
         ],
         properties: {
@@ -156,6 +158,7 @@ const BOARD_SCHEME_SCHEMA = {
           reference: { type: "string", description: "Exact unique device tag(s) included in the quantity." },
           sourcePage: { type: "integer", minimum: 0, description: "First one-based schematic page using this device group; 0 when unknown." },
           boardNumber: { type: "string", description: "Exact board number whose schematic pages contain these counted references." },
+          supplyRole: { type: "string", description: "board_main, section_main, downstream or unknown according to the single-line supply hierarchy." },
           isMainBreaker: { type: "boolean", description: "True only for the board's main incoming breaker; false for every outgoing or downstream device." },
         },
       },
@@ -204,14 +207,14 @@ function boardSchemePrompt(fileName) {
     board: {
       number: "", name: "", customer: "", project: "", type: "", typeConfidence: "", typeEvidence: "", manufacturer: "",
       manufacturerRole: "", manufacturerEvidence: "", manufacturerCandidates: [{ name: "", role: "", evidence: "", sourcePage: 0 }],
-      mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", cabinetCount: 0,
+      mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", mainBreakerReference: "", mainBreakerEvidence: "", cabinetCount: 0,
       jobNumber: "", revision: "", supplyVoltage: "", frequency: "", earthingSystem: "",
       ipRating: "", formSeparation: "", enclosureSize: "", standards: [], notes: "",
     },
     pageBoards: [{ page: 1, boardNumber: "" }],
     components: [{
       rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
-      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "", isMainBreaker: false,
+      curve: "", sensitivity: "", quantity: 0, reference: "", sourcePage: 0, boardNumber: "", supplyRole: "unknown", isMainBreaker: false,
     }],
     doorDevices: [{
       rawText: "", manufacturer: "", model: "", type: "", rating: "", poles: "",
@@ -221,7 +224,7 @@ function boardSchemePrompt(fileName) {
   };
   return [
     "Read the complete electrical board document and extract the relevant title block,",
-    "main incomer and every component actually used across the schematic and installed-equipment layout pages. Include the main incomer itself once in components.",
+    "main incomer and every component actually used across the schematic and installed-equipment layout pages. Trace the external source path to the common board bus, distinguish the one board_main device from UPS/live/essential section_main devices, and include every one of them in components with the correct supplyRole.",
     "Count quantity from unique physical device references or labelled installed positions in board-specific door/control-station layouts, not from the final-page parts list.",
     "A pilot or indicator lamp's lens colour is stock-defining: red and green are different parts, so return the visible colour in curve whenever one is shown, and never infer one that is not.",
     "Fill doorDevices using a dedicated exhaustive door-layout pass. Sweep every target-board door and control station left-to-right and top-to-bottom; return every switch, button and lamp position, including positions whose manufacturer or model is unreadable. Never stop after the first recognized operator. A labelled door elevation is valid installation evidence.",
@@ -270,6 +273,11 @@ function modelKeys(value) {
   // are the variant, so they alone must still find it rather than tie with EH.
   const satecPlus = withoutRangeWords.match(/^(pm130(?:p|e|eh))plus$/);
   if (satecPlus) keys.add(satecPlus[1]);
+  // ABB manual motor starters often print the adjustable-range suffix or an
+  // order code beside the family: "MS116-16 / 1SAM...". The catalog stores
+  // the MS116 family, which is the stable identity across those variants.
+  const abbMotorStarter = String(value).toLowerCase().match(/(?:^|[^a-z0-9])ms\s*[- ]?(116|132)(?=$|[^a-z0-9])/);
+  if (abbMotorStarter) keys.add(`ms${abbMotorStarter[1]}`);
   for (const token of String(value).toLowerCase().split(/[^a-z0-9]+/)) {
     const family = HAGER_FAMILIES.find(([pattern]) => pattern.test(token));
     if (family) keys.add(family[1]);
@@ -339,6 +347,7 @@ function typeKey(value) {
   const key = partKey(value);
   if (key === "mcb" || key.includes("miniaturecircuitbreaker")) return "mcb";
   if (key === "mccb" || key.includes("mouldedcasecircuitbreaker") || key.includes("moldedcasecircuitbreaker")) return "mccb";
+  if (["mpcb", "manualmotorstarter", "motorprotectioncircuitbreaker", "motorprotectivecircuitbreaker"].includes(key)) return "mpcb";
   if (["button", "pushbutton", "pushbuttonoperator", "pushbuttonswitch", "momentarypushbutton"].includes(key)) return "pushbutton";
   if (["lamp", "pilot", "pilotlight", "pilotlightoperator", "pilotlamp", "indicator", "indicatorlight", "indicatorlamp", "signallamp", "controllamp"].includes(key)) return "pilotlight";
   if (["selectorswitch", "selector", "keyswitch", "keyselectorswitch"].includes(key)) return "selectorswitch";
@@ -378,6 +387,16 @@ function lensColour(...values) {
 function exactAmpereRating(value) {
   const source = String(value || "").trim();
   return /^\d+(?:\.\d+)?\s*A$/i.test(source) ? ampereRating(source) : "";
+}
+
+function ampereRange(value) {
+  const source = String(value || "").toUpperCase();
+  const match = source.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*A(?:$|[^A-Z])/);
+  if (!match) return null;
+  const minimum = Number(match[1]);
+  const maximum = Number(match[2]);
+  return Number.isFinite(minimum) && Number.isFinite(maximum) && minimum <= maximum
+    ? { minimum, maximum } : null;
 }
 
 function sameModel(left, right) {
@@ -424,6 +443,14 @@ function houseDefaultPart(catalog, part) {
  */
 function matchCatalogPart(catalog, part) {
   const models = modelKeys(part.model || part.rawText);
+  // A precise order code may occupy `model` while the family name appears in
+  // the representative callout. Preserve the conservative default, but carry
+  // recognized ABB motor-protection family keys over from rawText.
+  if (part.model && part.rawText) {
+    for (const key of modelKeys(part.rawText)) {
+      if (/^ms(?:116|132)$/.test(key) && !models.includes(key)) models.push(key);
+    }
+  }
   const manufacturer = manufacturerKey(part.manufacturer);
   const requestedType = typeKey(part.type);
   const requestedPoles = poleKey(part.poles, part.rawText, part.rating);
@@ -456,6 +483,7 @@ function matchCatalogPart(catalog, part) {
       const candidateType = typeKey(candidate.type);
       const candidatePoles = poleKey(candidate.poles);
       const candidateAmpere = exactAmpereRating(candidate.rating);
+      const candidateAmpereRange = ampereRange(candidate.rating);
 
       if (!modelMatched) {
         // A circuit/load label can occupy the model position in a schematic
@@ -469,12 +497,22 @@ function matchCatalogPart(catalog, part) {
 
       if (requestedType && requestedType === candidateType) score += 1;
       if (requestedPoles && candidatePoles) {
-        if (requestedPoles !== candidatePoles) return null;
+        const fixedABBMotorStarter = manufacturerKey(candidate.manufacturer) === "abb"
+          && candidateModels.some((key) => /^ms(?:116|132)$/.test(key))
+          && models.some((key) => candidateModels.includes(key));
+        // MS116/MS132 are intrinsically three-pole families. A one-line symbol
+        // is sometimes read as 1P even when the printed family is unambiguous;
+        // keep the exact family match and let its catalog row supply 3P.
+        if (requestedPoles !== candidatePoles && !fixedABBMotorStarter) return null;
         score += 2;
       }
       if (requestedAmpere && candidateAmpere) {
         if (requestedAmpere !== candidateAmpere) return null;
         score += 3;
+      } else if (requestedAmpere && candidateAmpereRange) {
+        const requested = Number(requestedAmpere.replace(/A$/i, ""));
+        if (requested < candidateAmpereRange.minimum || requested > candidateAmpereRange.maximum) return null;
+        score += 1;
       }
       // A lamp of the other colour is ruled out, but the right colour earns
       // nothing: a colour must not lift a weaker model match into a tie.
@@ -598,25 +636,50 @@ function consolidateComponents(lines) {
   });
 }
 
+function supplyRoleKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
 function findMainBreakerPart(parts, board) {
   const mainModel = text(board?.mainBreakerModel, 80);
+  const mainReference = partKey(board?.mainBreakerReference);
   const candidates = Array.isArray(parts) ? parts : [];
   const ranked = candidates
     .map((part, index) => {
       const wording = `${part?.reference || ""} ${part?.rawText || ""}`;
+      const role = supplyRoleKey(part?.supplyRole);
       const modelMatches = mainModel && sameModel(part?.model || part?.rawText, mainModel);
       let rank = 0;
-      if (part?.isMainBreaker === true) rank += 100;
+      if (role === "board_main") rank += 300;
+      if (role === "section_main") rank -= 300;
+      if (part?.isMainBreaker === true) rank += 150;
+      if (mainReference && referenceTokens(part?.reference).has(mainReference.toUpperCase())) rank += 140;
+      else if (mainReference && partKey(part?.reference) === mainReference) rank += 140;
       if (/main\s*(?:incomer|incoming|breaker)|incomer|incoming/i.test(wording)) rank += 50;
+      if (/common\s*(?:bus|busbar)|utility|transformer|generator|source\s*(?:1|2|i|ii)|normal\s*(?:and|\/|\+)\s*(?:emergency|generator)/i.test(wording)) rank += 60;
+      if (/(?:ups|live|essential|emergency)\s*(?:field|section)|sectional|sub[- ]?main|field\s*(?:main|incomer)/i.test(wording)) rank -= 90;
       if (modelMatches) rank += 20;
       if (Math.max(1, Math.trunc(Number(part?.quantity) || 1)) === 1) rank += 5;
       const ampere = ampereRating(part?.rating, part?.rawText);
       if (ampere) rank += 10;
-      return { part, index, rank, ampere };
+      return { part, index, rank, ampere, role };
     })
-    .filter((candidate) => candidate.rank >= 35 && candidate.ampere)
+    .filter((candidate) => candidate.rank >= 35 && candidate.role !== "section_main")
     .sort((left, right) => right.rank - left.rank || left.index - right.index);
   return ranked[0] || null;
+}
+
+function storedMainBreakerModel(part, fallback) {
+  const model = text(part?.model || fallback, 80);
+  const manufacturer = text(part?.manufacturer, 60);
+  if (!manufacturer || !model || partKey(model).startsWith(partKey(manufacturer))) return model;
+  return text(`${manufacturer} ${model}`, 120);
+}
+
+function canonicalMainBreakerType(part, fallback) {
+  const source = `${part?.type || ""} ${part?.model || ""}`;
+  if (/changeover|transfer\s*switch|\bATS\b|\bATyS\b|SIRCO|SIRCOVER|COMO\s+CS/i.test(source)) return "Changeover Switch";
+  return text(part?.type || fallback, 40);
 }
 
 /** Turn a raw model reading into the payload the phone consumes.
@@ -666,18 +729,23 @@ function normalizeReading(reading, catalog, options = {}) {
     }
     return true;
   });
-  const mainModel = text(board.mainBreakerModel, 80);
+  const declaredMainModel = text(board.mainBreakerModel, 80);
   const boardMainAmpere = ampereRating(board.mainBreakerAmpere);
   const mainBreakerPart = findMainBreakerPart(parts, board);
+  const mainModel = storedMainBreakerModel(mainBreakerPart?.part, declaredMainModel);
+  const mainType = canonicalMainBreakerType(mainBreakerPart?.part, board.mainBreakerType);
   const mainAmpere = mainBreakerPart?.ampere || boardMainAmpere;
+  if (mainBreakerPart?.part && declaredMainModel && !sameModel(mainBreakerPart.part.model || mainBreakerPart.part.rawText, declaredMainModel)) {
+    warnings.push(`Main incoming device was corrected from ${declaredMainModel} to ${mainModel} using the source-to-common-bus hierarchy.`);
+  }
   if (mainBreakerPart?.ampere && boardMainAmpere && mainBreakerPart.ampere !== boardMainAmpere) {
     warnings.push(`Main breaker current was corrected from ${boardMainAmpere} to ${mainBreakerPart.ampere} using its installed-device callout.`);
   }
-  if (readMatchesTarget && mainModel && !mainBreakerPart) {
+  if (readMatchesTarget && declaredMainModel && !mainBreakerPart) {
     parts.unshift({
-      rawText: [board.mainBreakerType, mainModel, mainAmpere].filter(Boolean).join(" "),
+      rawText: [board.mainBreakerType, declaredMainModel, mainAmpere].filter(Boolean).join(" "),
       manufacturer: "",
-      model: mainModel,
+      model: declaredMainModel,
       type: text(board.mainBreakerType, 60),
       rating: mainAmpere,
       poles: "",
@@ -699,7 +767,8 @@ function normalizeReading(reading, catalog, options = {}) {
   // because door positions intentionally receive first claim above.
   for (const part of parts) {
     const quantity = Math.min(Math.max(Math.trunc(Number(part.quantity) || 1), 1), 999);
-    const isMain = part === mainBreakerPart?.part || part?.isMainBreaker === true
+    const isMain = part === mainBreakerPart?.part || supplyRoleKey(part?.supplyRole) === "board_main"
+      || (part?.isMainBreaker === true && supplyRoleKey(part?.supplyRole) !== "section_main")
       || (mainModel && sameModel(part?.model || part?.rawText, mainModel)
         && /main|incomer|incoming/i.test(String(part?.reference || "")));
     const detectedAmpere = isMain ? mainAmpere || ampereRating(part.rating, part.rawText)
@@ -761,9 +830,11 @@ function normalizeReading(reading, catalog, options = {}) {
         ? String(safeBoard.typeConfidence).trim().toLowerCase() : "low",
       typeEvidence: text(safeBoard.typeEvidence, 240),
       manufacturer: resolveBoardManufacturer(safeBoard),
-      mainBreakerType: text(safeBoard.mainBreakerType, 40),
-      mainBreakerModel: text(safeBoard.mainBreakerModel, 80),
+      mainBreakerType: readMatchesTarget ? mainType : "",
+      mainBreakerModel: readMatchesTarget ? mainModel : "",
       mainBreakerAmpere: readMatchesTarget ? mainAmpere || text(safeBoard.mainBreakerAmpere, 20) : "",
+      mainBreakerReference: readMatchesTarget ? text(mainBreakerPart?.part?.reference || safeBoard.mainBreakerReference, 120) : "",
+      mainBreakerEvidence: readMatchesTarget ? text(safeBoard.mainBreakerEvidence, 300) : "",
       cabinetCount: Math.min(Math.max(Math.trunc(Number(safeBoard.cabinetCount) || 1), 1), 40),
       jobNumber: text(safeBoard.jobNumber, 60),
       revision: text(safeBoard.revision, 60),

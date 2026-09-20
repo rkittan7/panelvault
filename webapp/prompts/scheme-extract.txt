@@ -93,14 +93,27 @@ BOARD FIELDS
   that visible evidence/page. Apply the same rule to Yakir, Rittal and others.
 - manufacturerEvidence: short visible wording/logo that proves the enclosure
   brand. manufacturerRole must describe the selected name's actual role.
-- mainBreakerType, mainBreakerModel and mainBreakerAmpere: read the main
-  incomer, not a downstream feeder. Keep model spelling and the ampere unit.
-  A manual or motorised changeover at the head of the board is a Changeover
-  Switch and must be returned as the main breaker, not as a downstream device.
-  Read the printed current digit by digit and cross-check the incomer callout;
-  never calculate it from outgoing loads, cable sizes or protection settings.
-  Return that same main incomer once in components as an installed device; its
-  component rating must equal mainBreakerAmpere and isMainBreaker must be true.
+- mainBreakerType, mainBreakerModel and mainBreakerAmpere: identify the single
+  board-level incoming device by topology, not merely by a label containing
+  MAIN. Start at the external supply arrows on the first single-line page and
+  trace downstream through utility/transformer/generator/UPS sources to the
+  first device whose common output feeds the board's common bus or all major
+  fields. That device is the board main. A Socomec ATyS/SIRCO/SIRCOVER or other
+  manual/motorised transfer switch between two sources and the common bus is
+  the board main even though it is a switch rather than an overcurrent breaker.
+  Set mainBreakerReference to its exact tag and mainBreakerEvidence to a short
+  source -> device -> common-bus path from the drawing.
+- A board can contain LIVE, UPS, essential, emergency or other fields, each
+  with its own field incomer/main. Those are sectional mains downstream of the
+  common bus: include them in components with supplyRole `section_main`, but
+  never use them for board.mainBreaker* and never set isMainBreaker on them.
+  Exactly one component may have supplyRole `board_main` and isMainBreaker true.
+  Every ordinary downstream device has supplyRole `downstream`; use `unknown`
+  only when topology cannot be read safely.
+- Keep the main device model spelling and ampere unit. Read the printed current
+  digit by digit and cross-check its callout; never calculate it from outgoing
+  loads, cable sizes or protection settings. Return that same board main once
+  in components; its component rating must equal mainBreakerAmpere when shown.
 - cabinetCount: number of physical cabinets or sections. Return 0 when it is
   not explicitly shown; do not use the number of drawing pages.
 - jobNumber, revision, supplyVoltage, frequency, earthingSystem, ipRating,
@@ -153,6 +166,10 @@ safe destination for uncertainty; silent omission is not.
   used, or 0 if unknown.
 - boardNumber: exact target board number assigned to the counted schematic
   pages. Never use a component whose page belongs to another board.
+- supplyRole: board_main for the one device connecting the external source path
+  to the common board bus; section_main for a UPS/live/essential/other field
+  incomer downstream of that bus; downstream for ordinary devices; unknown
+  only when the topology cannot be established.
 - isMainBreaker: true only on the single main incomer component. Every outgoing
   or downstream breaker must return false.
 

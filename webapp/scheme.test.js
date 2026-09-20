@@ -49,7 +49,9 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /never use its summarized quantity\s+as the count/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /FIRL 6A \+ N/i);
-  assert.match(BOARD_SCHEME_INSTRUCTION, /main incomer once in components/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /same board main once\s+in components/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /source -> device -> common-bus path/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /sectional mains downstream of the\s+common bus/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /never omit a visibly installed device/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /final coverage pass page by page/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /door elevations, control\s+station layouts and operator-device schedules/i);
@@ -64,6 +66,7 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /dedicated exhaustive door-layout pass/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /never stop after the first recognized operator/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /closest supported PanelVault type/i);
+  assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /distinguish the one board_main device from UPS\/live\/essential section_main devices/i);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"components":\[\{/);
   assert.match(boardSchemePrompt("3918.24-12-1 MDB.pdf"), /"mainBreakerModel":""/);
 });
@@ -262,6 +265,24 @@ test("an exact scanned ampere chooses the matching catalog variant", () => {
   assert.equal(hit.id, "breaker-160");
 });
 
+test("ABB MS116 matches its catalog family even when Gemini puts the order code in model", () => {
+  const catalog = require("./catalog.json");
+  const cases = [
+    { manufacturer: "ABB", model: "MS116", type: "MPCB", poles: "3P" },
+    { manufacturer: "ABB", model: "MS 116-16", type: "Manual motor starter", rating: "10-16A" },
+    {
+      manufacturer: "ABB",
+      model: "1SAM250000R1011",
+      type: "Motor protection circuit breaker",
+      poles: "1P",
+      rawText: "ABB MS116-16 10-16A 1SAM250000R1011",
+    },
+  ];
+  for (const part of cases) {
+    assert.equal(matchCatalogPart(catalog, part)?.id, "abb-ms116", JSON.stringify(part));
+  }
+});
+
 test("the extracted main breaker is present in components with its ampere", () => {
   const mainCatalog = [
     { id: "abb-tmax-xt1", manufacturer: "ABB", model: "SACE Tmax XT1", type: "MCCB", rating: "IEC 160A frame", poles: "3P/4P" },
@@ -300,6 +321,47 @@ test("the installed main-breaker callout corrects a conflicting board-level OCR 
   assert.equal(result.components.length, 1);
   assert.equal(result.components[0].rating, "160A");
   assert.match(result.warnings.join(" "), /corrected from 128A to 160A/i);
+});
+
+test("the source-side Socomec transfer switch outranks UPS and live field mains", () => {
+  const catalog = require("./catalog.json");
+  const result = normalizeReading({
+    board: {
+      number: "MDB-1",
+      mainBreakerType: "MCCB",
+      mainBreakerModel: "ABB SACE Tmax XT4",
+      mainBreakerAmpere: "250A",
+      mainBreakerReference: "QF-UPS",
+      mainBreakerEvidence: "UTILITY + GENERATOR -> QS0 -> common bus",
+    },
+    components: [
+      {
+        manufacturer: "Socomec", model: "ATyS p", type: "Automatic Transfer Switch",
+        rating: "630A", poles: "4P", quantity: 1, reference: "QS0",
+        rawText: "UTILITY + GENERATOR -> QS0 SOCOMEC ATyS p -> COMMON BUS",
+        sourcePage: 1, supplyRole: "board_main", isMainBreaker: true,
+      },
+      {
+        manufacturer: "ABB", model: "SACE Tmax XT4", type: "MCCB",
+        rating: "250A", poles: "4P", quantity: 1, reference: "QF-UPS",
+        rawText: "UPS FIELD MAIN", sourcePage: 2, supplyRole: "section_main", isMainBreaker: false,
+      },
+      {
+        manufacturer: "ABB", model: "SACE Tmax XT4", type: "MCCB",
+        rating: "250A", poles: "4P", quantity: 1, reference: "QF-LIVE",
+        rawText: "LIVE FIELD MAIN", sourcePage: 3, supplyRole: "section_main", isMainBreaker: false,
+      },
+    ],
+  }, catalog);
+
+  assert.equal(result.board.mainBreakerType, "Changeover Switch");
+  assert.equal(result.board.mainBreakerModel, "Socomec ATyS p");
+  assert.equal(result.board.mainBreakerAmpere, "630A");
+  assert.equal(result.board.mainBreakerReference, "QS0");
+  assert.equal(result.board.mainBreakerEvidence, "UTILITY + GENERATOR -> QS0 -> common bus");
+  assert.equal(result.components.find((part) => part.partID === "socomec-atys-p")?.quantity, 1);
+  assert.equal(result.components.filter((part) => part.partID === "abb-tmax-xt4").length, 1);
+  assert.match(result.warnings.join(" "), /corrected from ABB SACE Tmax XT4 to Socomec ATyS p/i);
 });
 
 test("the document response JSON Schema includes extraction constraints", () => {

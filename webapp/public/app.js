@@ -4270,6 +4270,7 @@ function schemeReviewCard(reading, context) {
     ["Project", board.project],
     ["Customer", board.customer],
     ["Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · ")],
+    ["Main supply path", [board.mainBreakerReference, board.mainBreakerEvidence].filter(Boolean).join(" · ")],
     ["Supply", [board.supplyVoltage, board.frequency, board.earthingSystem].filter(Boolean).join(" · ")],
     ["Enclosure", [board.ipRating, board.formSeparation, board.enclosureSize].filter(Boolean).join(" · ")],
     ["Matched parts", String((reading.components || []).length)],
