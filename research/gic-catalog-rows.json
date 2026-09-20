@@ -1,0 +1,50 @@
+[
+ {
+  "id": "gic-irla01s",
+  "manufacturer": "GIC",
+  "type": "Interface Relay",
+  "model": "IRLA01S isolated relay module",
+  "rating": "8A",
+  "poles": "DIN",
+  "curve": "85-265VAC, 1 channel",
+  "about": "Single-channel isolated relay output module, 18mm wide. A volt-free contact or NPN proximity switch on the 24V input loop drives one 8A changeover contact, with 4kV isolation between supply, input and output. Used to interface a fire panel to HVAC, lifts or door releases.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "gic-irla02s",
+  "manufacturer": "GIC",
+  "type": "Interface Relay",
+  "model": "IRLA02S isolated relay module",
+  "rating": "8A",
+  "poles": "DIN",
+  "curve": "85-265VAC, 2 channels",
+  "about": "Two-channel isolated relay output module, 36mm wide. Each channel has its own volt-free input and 8A changeover contact, separated from the mains supply and from each other's circuits. Red LED per channel, green LED for power.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "gic-irla04s",
+  "manufacturer": "GIC",
+  "type": "Interface Relay",
+  "model": "IRLA04S isolated relay module",
+  "rating": "8A",
+  "poles": "DIN",
+  "curve": "85-265VAC, 4 channels",
+  "about": "Four-channel isolated relay output module, 72mm wide. Lets one fire-alarm or PLC output drive four dissimilar circuits that must not share a reference. Outputs are 8A resistive at 240VAC or 30VDC; contacts are rated for 100,000 electrical operations.",
+  "group": "relays",
+  "groupName": "Relays"
+ },
+ {
+  "id": "gic-irla08s",
+  "manufacturer": "GIC",
+  "type": "Interface Relay",
+  "model": "IRLA08S isolated relay module",
+  "rating": "8A",
+  "poles": "DIN",
+  "curve": "85-265VAC, 8 channels",
+  "about": "Eight-channel isolated relay output module, 105mm wide - eight isolated 8A changeover contacts in the space of six modules. Check the isolation table before relying on the full 4kV input-to-output figure on this version.",
+  "group": "relays",
+  "groupName": "Relays"
+ }
+]

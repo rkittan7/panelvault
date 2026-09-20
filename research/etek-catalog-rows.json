@@ -1,0 +1,38 @@
+[
+ {
+  "id": "etek-ekld22-red",
+  "manufacturer": "ETEK",
+  "type": "Indicator Light",
+  "model": "EKLD22 LED indicator, red",
+  "rating": "6.3-380V",
+  "poles": "22mm",
+  "curve": "LED, IP65",
+  "about": "Panel-mount LED indicator for a 22.5mm hole, with reducing rings for 25mm and 30mm. Voltages 6.3/12/24/48V AC-DC and 110/220/380V AC, screw terminals, IP65 front, 2500V withstand. Also made in yellow, blue and white, and in flashing, bi-colour and RGB versions. Rated life is only 3000 hours, so a permanently lit indicator will need replacing.",
+  "group": "door-devices",
+  "groupName": "Door & Operator Devices"
+ },
+ {
+  "id": "etek-ekld22-green",
+  "manufacturer": "ETEK",
+  "type": "Indicator Light",
+  "model": "EKLD22 LED indicator, green",
+  "rating": "6.3-380V",
+  "poles": "22mm",
+  "curve": "LED, IP65",
+  "about": "Green version of the 22mm EKLD22 LED indicator. Same body, voltages and IP65 front as the red; pick the voltage deliberately because the lamp is voltage-specific rather than taking a separate element.",
+  "group": "door-devices",
+  "groupName": "Door & Operator Devices"
+ },
+ {
+  "id": "etek-ekpb2-pilot-light",
+  "manufacturer": "ETEK",
+  "type": "Pilot Light",
+  "model": "EKPB2 pilot light",
+  "rating": "24-380V",
+  "poles": "22mm",
+  "curve": "LED/neon/incandescent, IP40",
+  "about": "Pilot light and illuminated operator from the EKPB2 22mm pushbutton range, in plastic or metal bezel so it matches the buttons beside it. LED lamps cover 6-24V and neon 110-380V, to IEC 60947-5-1, Ui 660V. Only IP40, so it belongs inside a panel or a dry enclosure; use the EKLD22 where the door has to be sealed.",
+  "group": "door-devices",
+  "groupName": "Door & Operator Devices"
+ }
+]
