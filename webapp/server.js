@@ -16,6 +16,7 @@ const path = require("node:path");
 const { readJSONBody } = require("./body");
 const { ATTACHMENT_SIZE_LIMIT, createStorage } = require("./storage");
 const { createGeminiClient } = require("./gemini");
+const { createSchemeExtractorClient } = require("./scheme-extractor");
 const {
   BOARD_SCHEME_INSTRUCTION,
   ampereRating,
@@ -71,6 +72,7 @@ const SECRET = (() => {
 let db = { companies: {} };
 const storage = createStorage({ dataDir: DATA_DIR });
 const gemini = createGeminiClient();
+const schemeExtractor = createSchemeExtractorClient();
 
 function normalizeCompanies() {
   for (const company of Object.values(db.companies || {})) {
@@ -1341,6 +1343,43 @@ const routes = {
       ...normalizeReading(reading.data, catalog, { fileName }),
       model: reading.model,
     });
+  },
+
+  /** Hand a scheme PDF to the extraction service and get a job id back.
+   *
+   * The newer path beside POST /api/ai/board-scheme. Where that one asks a
+   * model to read a whole drawing set in a single call, this one crops each
+   * sheet, reads the regions at native resolution, resolves merged
+   * destination spans at 600 DPI, and does the arithmetic in code — so every
+   * quantity traces to a sheet and nothing unverified reaches the BOM
+   * without saying so.
+   *
+   * A 35-sheet set takes minutes, which is why this returns a job rather
+   * than holding the phone's connection open. Poll GET with ?job=.
+   */
+  "POST /api/ai/scheme-extract": async (req, res) => {
+    const { fileName, data, models, useBatch } = await readBody(req);
+    const job = await schemeExtractor.submit({ fileName, data, models, useBatch });
+    sendJSON(res, 202, job);
+  },
+
+  "GET /api/ai/scheme-extract": async (req, res) => {
+    const jobID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("job");
+    if (!jobID) return fail(res, 400, "Which job?");
+    sendJSON(res, 200, await schemeExtractor.job(jobID));
+  },
+
+  /** The reviewer's workbook: RTL sheets, per-sheet quantity breakdowns. */
+  "GET /api/ai/scheme-extract-workbook": async (req, res) => {
+    const jobID = new URL(req.url, `http://${req.headers.host}`).searchParams.get("job");
+    if (!jobID) return fail(res, 400, "Which job?");
+    const { body, contentType } = await schemeExtractor.workbook(jobID);
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": body.length,
+      "Content-Disposition": `attachment; filename="${jobID}.xlsx"`,
+    });
+    res.end(body);
   },
 
   /** Owner registers the company and becomes its first admin. */
@@ -2880,11 +2919,13 @@ const routes = {
 const READ_ONLY_POST_ROUTES = new Set([
   "POST /api/ai/generate",
   "POST /api/ai/board-scheme",
+  "POST /api/ai/scheme-extract",
 ]);
 
 /** POST routes allowed to carry a base64 document. */
 const LARGE_BODY_ROUTES = new Set([
-  "POST /api/ai/board-scheme", "POST /api/board-attachment", "POST /api/part-manual",
+  "POST /api/ai/board-scheme", "POST /api/ai/scheme-extract",
+  "POST /api/board-attachment", "POST /api/part-manual",
 ]);
 
 const OPEN_ROUTES = new Set([

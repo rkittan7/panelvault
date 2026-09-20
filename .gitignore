@@ -60,3 +60,7 @@ webapp/.dev-data/
 # Xcode / CocoaPods build output
 ios/build/
 **/xcuserdata/
+
+# scheme_extractor local toolchain and rendered artifacts
+scheme_extractor/.venv/
+scheme_extractor/**/__pycache__/
