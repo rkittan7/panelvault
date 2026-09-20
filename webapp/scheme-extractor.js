@@ -40,7 +40,13 @@ function createSchemeExtractorClient({
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("The scheme extractor requires Node.js 20 or newer.");
-  const root = String(baseUrl).replace(/\/+$/, "");
+  const configuredRoot = String(baseUrl).replace(/\/+$/, "");
+  // Render's `hostport` service property is intentionally scheme-less
+  // (for example `panelvault-scheme-extractor:8100`). The private network is
+  // HTTP, so make that Blueprint-native value directly usable by fetch.
+  const root = /^https?:\/\//i.test(configuredRoot)
+    ? configuredRoot
+    : `http://${configuredRoot}`;
 
   async function call(path, { method = "GET", body, timeout } = {}) {
     let response;

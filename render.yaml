@@ -24,9 +24,28 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.6-flash
+      - key: SCHEME_EXTRACTOR_URL
+        fromService:
+          type: pserv
+          name: panelvault-scheme-extractor
+          property: hostport
       - key: PUBLIC_BASE_URL
         value: https://cloud.panel-vault.com
       - key: PASSWORD_RESET_WEBHOOK_URL
         sync: false
       - key: PASSWORD_RESET_WEBHOOK_SECRET
         sync: false
+
+  - type: pserv
+    name: panelvault-scheme-extractor
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: ./scheme_extractor/Dockerfile
+    dockerContext: ./scheme_extractor
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SCHEME_CACHE_DIR
+        value: /tmp/scheme_extractor_cache

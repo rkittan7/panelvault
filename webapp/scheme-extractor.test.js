@@ -110,3 +110,11 @@ test("the workbook comes back as bytes with its spreadsheet type", async () => {
 test("the default base url points at the sidecar, not at a public host", () => {
   assert.match(DEFAULT_BASE_URL, /^http:\/\/127\.0\.0\.1:/);
 });
+
+test("a Render private hostport is normalized to an HTTP URL", () => {
+  const client = createSchemeExtractorClient({
+    baseUrl: "panelvault-scheme-extractor:8100",
+    fetchImpl: async () => json({ status: "ok" }),
+  });
+  assert.equal(client.baseUrl, "http://panelvault-scheme-extractor:8100");
+});
