@@ -645,8 +645,8 @@ function normalizeReading(reading, catalog, options = {}) {
     // Door devices get first claim on the safety cap. They are the easiest
     // items for a long power schedule to crowd out, and the dedicated ledger
     // exists specifically so every physical operator survives normalization.
-    ...(Array.isArray(reading?.doorDevices) ? reading.doorDevices : []),
-    ...(Array.isArray(reading?.components) ? reading.components : []),
+    ...(Array.isArray(reading?.doorDevices) ? reading.doorDevices.slice(0, 200) : []),
+    ...(Array.isArray(reading?.components) ? reading.components.slice(0, 200) : []),
   ];
   const parts = extractedParts.filter((part) => {
     if (!selectedBoardNumber) return true;
@@ -693,7 +693,11 @@ function normalizeReading(reading, catalog, options = {}) {
 
   const components = [];
   const unmatched = [];
-  for (const part of parts.slice(0, 200)) {
+  // The response contract permits 200 door rows and 200 schematic rows. Do
+  // not re-apply a 200-row cap after combining them: that used to discard the
+  // tail of otherwise valid scans, usually the ordinary schematic components
+  // because door positions intentionally receive first claim above.
+  for (const part of parts) {
     const quantity = Math.min(Math.max(Math.trunc(Number(part.quantity) || 1), 1), 999);
     const isMain = part === mainBreakerPart?.part || part?.isMainBreaker === true
       || (mainModel && sameModel(part?.model || part?.rawText, mainModel)

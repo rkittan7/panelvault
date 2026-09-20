@@ -50,6 +50,8 @@ test("the production instruction counts unique devices from schematic pages", ()
   assert.match(BOARD_SCHEME_INSTRUCTION, /count its device tag once across the entire\s+PDF/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /FIRL 6A \+ N/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /main incomer once in components/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /never omit a visibly installed device/i);
+  assert.match(BOARD_SCHEME_INSTRUCTION, /final coverage pass page by page/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /door elevations, control\s+station layouts and operator-device schedules/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /Allen-Bradley may be printed as AB, A-B/i);
   assert.match(BOARD_SCHEME_INSTRUCTION, /כיתאו אליקטריק/);
@@ -400,6 +402,28 @@ test("model output is clamped before it can reach a board draft", () => {
   assert.equal(result.board.notes.length, 600);
   assert.equal(result.components[0].quantity, 1);
   assert.equal(result.components[1].quantity, 999);
+});
+
+test("door inventory and schematic inventory each retain their full response allowance", () => {
+  const rows = (prefix, count, sourcePage) => Array.from({ length: count }, (_, index) => ({
+    manufacturer: "Unknown",
+    model: `${prefix}-${index + 1}`,
+    type: "Accessory",
+    quantity: 1,
+    reference: `${prefix}${index + 1}`,
+    rawText: `${prefix} device ${index + 1}`,
+    sourcePage,
+  }));
+  const result = normalizeReading({
+    board: {},
+    doorDevices: rows("DOOR", 120, 2),
+    components: rows("SCHEMATIC", 120, 3),
+  }, CATALOG);
+
+  assert.equal(result.components.length, 0);
+  assert.equal(result.unmatched.length, 240);
+  assert.ok(result.unmatched.some((part) => part.model === "DOOR-120"));
+  assert.ok(result.unmatched.some((part) => part.model === "SCHEMATIC-120"));
 });
 
 test("a reading with nothing usable produces empty lists, not throws", () => {

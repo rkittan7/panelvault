@@ -71,17 +71,35 @@ test("reading a document sends it inline and returns parsed JSON", async () => {
   assert.equal(request.body.contents[0].parts[0].inline_data.mime_type, "application/pdf");
   assert.equal(request.body.contents[0].parts[0].inline_data.data, "JVBERi0=");
   assert.deepEqual(request.body.contents[0].parts[0].mediaResolution, {
-    level: "MEDIA_RESOLUTION_MEDIUM",
+    level: "MEDIA_RESOLUTION_HIGH",
   });
   // Gemini 3 is tuned for its default temperature; the no-guess rule belongs
   // in the extraction instruction and semantic validation instead.
   assert.equal(request.body.generationConfig.temperature, undefined);
   assert.equal(request.body.generationConfig.responseMimeType, "application/json");
-  assert.equal(request.body.generationConfig.thinkingConfig.thinkingLevel, "low");
+  assert.equal(request.body.generationConfig.thinkingConfig.thinkingLevel, "high");
+  assert.equal(request.body.generationConfig.maxOutputTokens, 65_536);
   // The detailed shape lives in the extraction prompt. Large structured-output
   // schemas are rejected by some Gemini models before they inspect the PDF.
   assert.equal(request.body.generationConfig.responseJsonSchema, undefined);
   assert.equal(request.body.generationConfig.responseSchema, undefined);
+});
+
+test("a token-limited document response fails instead of returning a partial inventory", async () => {
+  const client = createGeminiClient({
+    apiKey: "test-key",
+    fetchImpl: async () => new Response(JSON.stringify({
+      candidates: [{
+        finishReason: "MAX_TOKENS",
+        content: { parts: [{ text: '{"board":{},"components":[]}' }] },
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+  });
+
+  await assert.rejects(
+    () => client.readDocument({ data: "AAAA", mimeType: "application/pdf", prompt: "read" }),
+    (error) => error.statusCode === 502 && /inventory was complete/i.test(error.message),
+  );
 });
 
 test("a document timeout becomes an actionable gateway-timeout error", async () => {

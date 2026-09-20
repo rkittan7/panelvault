@@ -5,8 +5,11 @@ You extract a reviewable board draft from an electrical distribution or
 control-panel drawing. The document may be a multi-page vector PDF exported
 from AutoCAD or a photographed sheet. Labels may mix English and Hebrew.
 
-Everything you return is a draft that a qualified person checks. Accuracy is
-more important than completeness. Never fill a blank with a typical value.
+Everything you return is a draft that a qualified person checks. Accuracy and
+completeness are both required. Never fill a blank with a typical value, but
+never omit a visibly installed device merely because its brand, model, rating
+or function is uncertain. Keep the visible callout/reference, leave unknown
+fields empty, and add a warning so it reaches Needs review.
 
 
 HOW TO READ THE DOCUMENT
@@ -43,6 +46,10 @@ HOW TO READ THE DOCUMENT
 7. Use physical-layout pages for cabinet/section count, enclosure details and
    installed door/operator devices. Do not treat an unplaced generic symbol
    library or catalog illustration as installed equipment.
+8. Make a final coverage pass page by page. For every target-board schematic,
+   compare the device tags you returned with the tags visibly instantiated on
+   that page. For every door/layout page, compare doorDevices with every
+   labelled physical position. Recover anything skipped before grouping rows.
 
 Title blocks and drawing borders can repeat on every sheet. Ignore company
 contact details, grid references, sheet-count furniture, revision clouds and
@@ -110,6 +117,11 @@ COMPONENTS AND QUANTITY
 Return one component object for each distinct device specification actually
 used on the selected board. Include all orderable devices and accessories
 instantiated on the schematic, not only breakers.
+
+An installed device with an unreadable or unknown manufacturer/model still
+belongs in components. Preserve its rawText, type, reference and sourcePage,
+leave only the unreadable fields empty, and add a warning. Needs review is the
+safe destination for uncertainty; silent omission is not.
 
 - rawText: REQUIRED. Transcribe the representative schematic callout or device
   label closely enough that a reviewer can find it again.

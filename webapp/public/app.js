@@ -4078,7 +4078,7 @@ function schemeIntakePanel(kind, onComplete) {
   const progress = el("div", "scheme-progress hidden");
   const progressCopy = el("div", "scheme-progress-copy");
   const progressTitle = el("strong", null, "Reading the drawing");
-  progressCopy.append(progressTitle, el("small", null, "Most drawings finish in under a minute. Large multi-page schemes can take up to 2½ minutes."));
+  progressCopy.append(progressTitle, el("small", null, "Most drawings finish in under two minutes. Dense multi-page schemes can take up to five minutes while PanelVault checks every page."));
   const elapsed = el("span", "scheme-elapsed", "0s");
   progress.append(el("span", "scheme-spinner"), progressCopy, elapsed);
 
