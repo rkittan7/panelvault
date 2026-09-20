@@ -2307,6 +2307,29 @@ function mainBreakerComponent(board, part) {
     || null;
 }
 
+/** The incomer's pole count, which the board record itself does not store: it
+ * keeps only type, model and ampere.
+ *
+ * The scheme line is the only place an installed device's poles are written
+ * down, so it wins. A catalog part sold in a single pole count settles it too —
+ * a part offered only as 4P cannot be fitted as anything else. Failing both,
+ * this says so rather than returning nothing: `infoLines` drops an empty value,
+ * and a missing row reads as "no poles" when it means "nobody recorded them",
+ * which on an incomer is the difference between a 3P and a 4P board. */
+function mainBreakerPoles(part, component) {
+  const fromDrawing = String(component?.poles || "").trim();
+  if (fromDrawing) return { text: fromDrawing, exact: fromDrawing };
+  const offered = String(part?.poles || "").trim();
+  if (!offered) return { text: "Not recorded", exact: "" };
+  // The catalog's poles column carries ranges ("1P-4P"), choices ("3P/4P") and
+  // prose ("Varies", "Application dependent") as well as single configurations,
+  // so a pole count is only claimed for something shaped like one — 4P, 3P+N,
+  // 3PH. Everything else is reported as unrecorded, with what the catalog says.
+  return /^\d+\s*(P|PH)(\s*\+\s*N)?$/i.test(offered)
+    ? { text: `${offered} — the only pole count this part is sold in`, exact: offered }
+    : { text: `Not recorded — the catalog lists ${offered}`, exact: "" };
+}
+
 /** The board's incomer: its photograph and catalog specification, the line the
  * AI read it from, and the other boards carrying the same breaker.
  *
@@ -2318,9 +2341,11 @@ async function openBreakerOverview(sourceBoard) {
   // fetched lazily: without this the card opens saying the breaker is unmatched
   // whenever it is the first thing the user touches after signing in.
   await ensureCatalog().catch(() => {});
-  const breakerLabel = [sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel, sourceBoard.mainBreakerAmpere].filter(Boolean).join(" · ");
   const part = selectedMainBreakerPart(sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel);
   const component = mainBreakerComponent(sourceBoard, part);
+  const poles = mainBreakerPoles(part, component);
+  const breakerLabel = [sourceBoard.mainBreakerType, sourceBoard.mainBreakerModel,
+    sourceBoard.mainBreakerAmpere, poles.exact].filter(Boolean).join(" · ");
   const matching = state.boards.filter((board) =>
     board.mainBreakerType === sourceBoard.mainBreakerType
       && board.mainBreakerModel === sourceBoard.mainBreakerModel
@@ -2357,7 +2382,7 @@ async function openBreakerOverview(sourceBoard) {
       ["Type", sourceBoard.mainBreakerType || "Not set"],
       ["Model", sourceBoard.mainBreakerModel || "Not set"],
       ["Installed ampere", sourceBoard.mainBreakerAmpere || "Not set"],
-      ["Poles", component?.poles],
+      ["Poles", poles.text],
       ["Curve", component?.curve],
       ["Sensitivity", component?.sensitivity],
     ])));
@@ -2578,6 +2603,8 @@ function renderBoardDetail() {
   const properties = el("div", "board-property-grid");
   const outDate = board.dateOut ? new Date(board.dateOut).toLocaleDateString() : "Not set";
   const dueDate = board.dueDate ? new Date(board.dueDate).toLocaleDateString() : "No due date";
+  const breakerPart = selectedMainBreakerPart(board.mainBreakerType, board.mainBreakerModel);
+  const breakerPoles = mainBreakerPoles(breakerPart, mainBreakerComponent(board, breakerPart)).exact;
   properties.append(
     boardProperty("folder", "Project", board.project === "No Project" ? "No project" : board.project,
       board.project && board.project !== "No Project" ? () => openProjectOverview(board.project) : null),
@@ -2589,7 +2616,10 @@ function renderBoardDetail() {
     boardProperty("tag", "Manufacturer", board.manufacturer,
       board.manufacturer ? () => openManufacturerOverview(board.manufacturer) : null,
       board.manufacturer ? brandTile(board.manufacturer, "sm") : null),
-    boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel, board.mainBreakerAmpere].filter(Boolean).join(" · "),
+    // Poles belong on the tile, not only inside the sheet: 3P against 4P is the
+    // first thing asked about an incomer. Shown only when it is actually known.
+    boardProperty("boltShield", "Main breaker", [board.mainBreakerType, board.mainBreakerModel,
+      board.mainBreakerAmpere, breakerPoles].filter(Boolean).join(" · "),
       () => openBreakerOverview(board)),
     boardProperty("hash", "Customer", board.customer, () => openCustomerOverview(board.customer)),
     boardProperty("note", "Schedule", `Out ${outDate} · Due ${dueDate}`),
@@ -4610,7 +4640,9 @@ function mainBreakerSelectionSlot(typeControl, modelControl, ampereControl, opti
     copy.append(
       el("span", "eyebrow", model ? "Selected main breaker" : "Main breaker slot"),
       el("strong", null, model || "Choose a catalog breaker"),
-      el("span", "main-breaker-slot-spec", [type, ampere].filter(Boolean).join(" · ")),
+      // The catalog's pole count goes on the slot too — reading the card and
+      // still not knowing whether the incomer is 3P or 4P is the complaint.
+      el("span", "main-breaker-slot-spec", [type, ampere, part?.poles].filter(Boolean).join(" · ")),
     );
     const edit = el("span", "main-breaker-slot-edit");
     edit.append(icon(options.readOnly ? "chevron" : "sliders", 15), document.createTextNode(options.readOnly ? " View" : " Edit"));
