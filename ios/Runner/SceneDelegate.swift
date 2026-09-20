@@ -5196,10 +5196,10 @@ struct NewBoardSchemeIntakeView: View {
           case .failed(let message):
             failureCard(message)
           case .done(let name):
-            if let reading {
-              SchemeReadingSummaryCard(theme: theme, fileName: name, reading: reading)
+            if let completed = reading {
+              SchemeReadingSummaryCard(theme: theme, fileName: name, reading: completed)
               Button {
-                onFinish(reading)
+                onFinish(completed)
               } label: {
                 Label("Review the draft", systemImage: "arrow.right.circle.fill")
                   .font(.headline)
@@ -9270,6 +9270,31 @@ private struct PanelCloudClient {
     return response.board
   }
 
+  /// Send an AutoCAD scheme to PanelVault Cloud and get the board it describes.
+  ///
+  /// The drawing itself goes up — Gemini reads PDFs natively, so nothing is
+  /// rasterised or OCR'd here. Reading a large multi-page scheme is slow by
+  /// nature, hence the long timeout; the caller shows progress for it.
+  func readBoardScheme(
+    fileName: String,
+    mimeType: String,
+    data: Data,
+    account: PanelCloudAccount
+  ) async throws -> BoardSchemeReading {
+    let payload = [
+      "fileName": fileName,
+      "mimeType": mimeType,
+      "data": data.base64EncodedString(),
+    ]
+    return try await authenticatedRequest(
+      account: account,
+      path: "/api/ai/board-scheme",
+      method: "POST",
+      body: try JSONEncoder().encode(payload),
+      timeout: 180
+    )
+  }
+
   private func accountRequest(baseURL: String, path: String, body: [String: String]) async throws -> PanelCloudAccount {
     let base = try normalizedBaseURL(baseURL)
     guard let url = URL(string: path, relativeTo: base) else { throw PanelCloudError.invalidServer }
@@ -9307,13 +9332,14 @@ private struct PanelCloudClient {
     account: PanelCloudAccount,
     path: String,
     method: String,
-    body: Data?
+    body: Data?,
+    timeout: TimeInterval = 30
   ) async throws -> Result {
     let base = try normalizedBaseURL(account.baseURL)
     guard let url = URL(string: path, relativeTo: base) else { throw PanelCloudError.invalidServer }
     var request = URLRequest(url: url)
     request.httpMethod = method
-    request.timeoutInterval = 30
+    request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.setValue("Bearer \(account.token)", forHTTPHeaderField: "Authorization")
     if let body {
@@ -15522,31 +15548,6 @@ struct WarehouseStockCloudClient {
       method: "GET",
       body: Optional<[String: String]>.none,
       token: account.token
-    )
-  }
-
-  /// Send an AutoCAD scheme to PanelVault Cloud and get the board it describes.
-  ///
-  /// The drawing itself goes up — Gemini reads PDFs natively, so nothing is
-  /// rasterised or OCR'd here. Reading a large multi-page scheme is slow by
-  /// nature, hence the long timeout; the caller shows progress for it.
-  func readBoardScheme(
-    fileName: String,
-    mimeType: String,
-    data: Data,
-    account: PanelCloudAccount
-  ) async throws -> BoardSchemeReading {
-    try await request(
-      baseURL: try WarehouseStockCloudClient.normalizedBaseURL(account.baseURL),
-      path: "/api/ai/board-scheme",
-      method: "POST",
-      body: [
-        "fileName": fileName,
-        "mimeType": mimeType,
-        "data": data.base64EncodedString(),
-      ],
-      token: account.token,
-      timeout: 180
     )
   }
 
