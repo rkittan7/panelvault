@@ -40,7 +40,9 @@ function createSchemeExtractorClient({
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("The scheme extractor requires Node.js 20 or newer.");
-  const configuredRoot = String(baseUrl).replace(/\/+$/, "");
+  // Render's dashboard labels the internal address "TCP"; accept it pasted
+  // with that scheme too.
+  const configuredRoot = String(baseUrl).trim().replace(/^tcp:\/\//i, "").replace(/\/+$/, "");
   // Render's `hostport` service property is intentionally scheme-less
   // (for example `panelvault-scheme-extractor:8100`). The private network is
   // HTTP, so make that Blueprint-native value directly usable by fetch.
@@ -62,8 +64,13 @@ function createSchemeExtractorClient({
         throw serviceError("The extraction service did not answer in time.", 504);
       }
       // A refused connection means the sidecar is not running. Say so plainly
-      // rather than reporting it as a bad request from the phone.
-      throw serviceError("The extraction service is not reachable.", 503);
+      // rather than reporting it as a bad request from the phone, and name
+      // where we looked and why it failed so a misconfigured deploy can be
+      // told apart from a stopped one.
+      const reason = cause?.cause?.code || cause?.code || cause?.message || "unknown error";
+      const where = process.env.SCHEME_EXTRACTOR_URL ? new URL(root).host : "SCHEME_EXTRACTOR_URL is not set";
+      console.error(`Scheme extractor unreachable at ${root}:`, cause);
+      throw serviceError(`The extraction service is not reachable (${where}: ${reason}).`, 503);
     }
     if (!response.ok) throw serviceError(await readProblem(response), response.status === 404 ? 404 : 502);
     return response;

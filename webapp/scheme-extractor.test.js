@@ -118,3 +118,11 @@ test("a Render private hostport is normalized to an HTTP URL", () => {
   });
   assert.equal(client.baseUrl, "http://panelvault-scheme-extractor:8100");
 });
+
+test("a Render TCP address is accepted as pasted", () => {
+  const client = createSchemeExtractorClient({
+    baseUrl: "tcp://panelvault-scheme-extractor:8100",
+    fetchImpl: async () => { throw new Error("unused"); },
+  });
+  assert.equal(client.baseUrl, "http://panelvault-scheme-extractor:8100");
+});
