@@ -73,6 +73,38 @@ def render_page(pdf: Path, page: int, dpi: int, cache: ArtifactCache, timeout: i
     return target
 
 
+def render_region(
+    pdf: Path,
+    page: int,
+    dpi: int,
+    box: tuple[int, int, int, int],
+    cache: ArtifactCache,
+    name: str,
+    timeout: int = 180,
+) -> Image.Image:
+    """One rectangle of a page at `dpi`, in rendered (post-rotation) pixels."""
+    target = cache.path(page, f"{name}.png")
+    if not cache.has(page, f"{name}.png"):
+        prefix = target.with_suffix("")
+        x0, y0, x1, y1 = box
+        subprocess.run(
+            ["pdftoppm", "-r", str(dpi), "-png", "-f", str(page), "-l", str(page),
+             "-x", str(x0), "-y", str(y0), "-W", str(x1 - x0), "-H", str(y1 - y0),
+             str(pdf), str(prefix)],
+            capture_output=True,
+            timeout=timeout,
+        )
+        produced = sorted(prefix.parent.glob(f"{prefix.name}-*.png"))
+        if not produced:
+            raise RuntimeError(f"pdftoppm produced nothing for page {page} region {box} at {dpi} dpi.")
+        produced[0].replace(target)
+        for leftover in produced[1:]:
+            leftover.unlink()
+    with Image.open(target) as image:
+        image.load()
+        return image
+
+
 # ------------------------------------------------------------ rule detection
 
 def _bilevel(image: Image.Image) -> tuple[bytes, int, int]:
@@ -295,14 +327,22 @@ def zoom_crop(
     stage 2 crop is the whole point — this pass exists to see detail the
     first pass could not.
     """
-    path = render_page(pdf, page, settings.zoom_dpi, cache, timeout)
-    image = Image.open(path)
-    width, height = image.size
+    # Only the region is rendered. A whole A4 page at 600 dpi is 7017x4959
+    # pixels: pdftoppm peaks near 160 MB drawing it and Pillow needs another
+    # 100 MB to open it — most of a 512 MB instance.
+    # pdftoppm's own crop yields the identical pixels at a tenth of that.
+    with Image.open(render_page(pdf, page, settings.single_line_dpi, cache, timeout)) as base:
+        base_w, base_h = base.size
+    scale = settings.zoom_dpi / settings.single_line_dpi
+    width, height = round(base_w * scale), round(base_h * scale)
     box = (
         max(0, int(bbox_pct[0] * width)),
         max(0, int(bbox_pct[1] * height)),
         min(width, int(bbox_pct[2] * width)),
         min(height, int(bbox_pct[3] * height)),
     )
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise ValueError(f"Empty zoom region {bbox_pct} on page {page}.")
+    image = render_region(pdf, page, settings.zoom_dpi, box, cache, f"zoom-{tag}-region", timeout)
     stem = cache.path(page, f"zoom-{tag}")
-    return chunk_width(image.crop(box), settings, stem)
+    return chunk_width(image, settings, stem)

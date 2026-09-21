@@ -4237,7 +4237,16 @@ async function readSchemeWithClaude(upload, { signal, onProgress } = {}) {
   while (job.status === "queued" || job.status === "running") {
     onProgress?.(job);
     await waitForSchemePoll(2000, signal);
-    job = await api(`/api/ai/scheme-extract?job=${encodeURIComponent(submitted.job_id)}`, undefined, { signal });
+    try {
+      job = await api(`/api/ai/scheme-extract?job=${encodeURIComponent(submitted.job_id)}`, undefined, { signal });
+    } catch (error) {
+      // Jobs live in the extractor's memory, so a restart part-way through
+      // (a deploy, or running out of memory) forgets the run.
+      if (/no such job/i.test(error?.message || "")) {
+        throw new Error("The scheme reader restarted before it finished, so this reading was lost. Please try again.");
+      }
+      throw error;
+    }
   }
   onProgress?.(job);
   if (job.status === "failed") {
