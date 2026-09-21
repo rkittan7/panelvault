@@ -31,6 +31,7 @@ from tenacity import (
 from dataclasses import replace as dc_replace
 
 from ..config import BATCH_DISCOUNT, Config, StageModel
+from .schema import strict_compatible
 
 
 
@@ -205,7 +206,10 @@ class AnthropicClient:
         tool: dict[str, Any] = {
             "name": call.tool_name,
             "description": f"Return the {call.tool_name} record for this sheet.",
-            "strict": True,
+            # The sheet schema has far more nullable fields than strict mode
+            # will compile (41 against a limit of 16). It goes unstrict and
+            # leans on the Pydantic check and its correction turn instead.
+            "strict": strict_compatible(call.schema),
             "input_schema": call.schema,
             "cache_control": {"type": "ephemeral"},
         }

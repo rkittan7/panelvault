@@ -49,7 +49,9 @@ def test_models_that_reject_temperature_are_not_sent_it():
 
 import pytest
 
-from scheme_extractor.models.schema import AuditResult, SheetExtraction, ZoomResult, tool_schema
+from scheme_extractor.models.schema import (
+    STRICT_UNION_LIMIT, AuditResult, SheetExtraction, ZoomResult, tool_schema, union_parameters,
+)
 
 REJECTED = {
     "maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
@@ -86,3 +88,19 @@ def test_zoom_maps_arrive_as_pairs_and_are_folded_back():
     })
     assert result.cable_row == {"X11": "5x2.5N2XY"}
     assert result.inc_row == {"X11": "12.8A"}
+
+
+def test_strict_is_only_claimed_where_the_api_will_compile_it():
+    seen: list[dict] = []
+    client = _client(seen)
+    for model in (SheetExtraction, ZoomResult, AuditResult):
+        schema = tool_schema(model)
+        call = Call(key="k", system="s", content=[{"type": "text", "text": "hi"}], tool_name="t", schema=schema)
+        client.complete("extract", call)
+        tool = seen[-1]["tools"][0]
+        if tool["strict"]:
+            assert union_parameters(tool["input_schema"]) <= STRICT_UNION_LIMIT
+    # The sheet schema is the one over the limit; the other two stay strict.
+    assert union_parameters(tool_schema(SheetExtraction)) > STRICT_UNION_LIMIT
+    assert union_parameters(tool_schema(ZoomResult)) <= STRICT_UNION_LIMIT
+    assert union_parameters(tool_schema(AuditResult)) <= STRICT_UNION_LIMIT

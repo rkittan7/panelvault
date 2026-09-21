@@ -307,6 +307,25 @@ class ExtractionRun(Contract):
 
 # ------------------------------------------------------- JSON Schema for tools
 
+# Strict tool use compiles the schema into a grammar, and each nullable or
+# union-typed parameter multiplies its cost; the API refuses more than this.
+STRICT_UNION_LIMIT = 16
+
+
+def union_parameters(schema: Any) -> int:
+    """How many parameters are `anyOf` or carry a type array."""
+    if isinstance(schema, dict):
+        own = 1 if ("anyOf" in schema or isinstance(schema.get("type"), list)) else 0
+        return own + sum(union_parameters(value) for value in schema.values())
+    if isinstance(schema, list):
+        return sum(union_parameters(item) for item in schema)
+    return 0
+
+
+def strict_compatible(schema: dict[str, Any]) -> bool:
+    return union_parameters(schema) <= STRICT_UNION_LIMIT
+
+
 UNSUPPORTED_CONSTRAINTS = (
     "maxItems", "minLength", "maxLength", "minimum", "maximum",
     "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "uniqueItems",
