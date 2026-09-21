@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,25 +53,47 @@ class PageRegions:
 
 # ----------------------------------------------------------------- rendering
 
+# This producer's exports make poppler print hundreds of stream warnings per
+# page. They are noise; only what is left says why a render failed.
+PDF_NOISE = re.compile(r"Syntax (?:Error|Warning)|Illegal character|Missing 'endstream'|Bad 'Length'")
+
+
+def _pdftoppm(pdf: Path, page: int, dpi: int, target: Path, extra: list[str], timeout: int) -> Path:
+    """Render into `target`, once more if the first attempt yields nothing.
+
+    Each attempt writes under its own prefix, so two runs of the same drawing
+    — which share a cache directory — never move each other's output away.
+    """
+    detail = ""
+    for _ in range(2):
+        prefix = target.with_name(f"{target.stem}.{uuid.uuid4().hex[:8]}")
+        done = subprocess.run(
+            ["pdftoppm", "-r", str(dpi), "-png", "-f", str(page), "-l", str(page), *extra, str(pdf), str(prefix)],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+        )
+        # pdftoppm appends a zero-padded page number of unpredictable width.
+        produced = sorted(prefix.parent.glob(f"{prefix.name}-*.png"))
+        if produced:
+            produced[0].replace(target)
+            for leftover in produced[1:]:
+                leftover.unlink()
+            return target
+        errors = [line for line in done.stderr.splitlines() if line.strip() and not PDF_NOISE.search(line)]
+        # A negative code is the signal that killed it; -9 under a memory cap
+        # is the out-of-memory killer.
+        detail = f"exit code {done.returncode}" + (f": {' | '.join(errors[-3:])}" if errors else "")
+    raise RuntimeError(f"pdftoppm produced nothing for page {page} at {dpi} dpi ({detail}).")
+
+
 def render_page(pdf: Path, page: int, dpi: int, cache: ArtifactCache, timeout: int = 180) -> Path:
     name = f"page-{dpi}.png"
     target = cache.path(page, name)
     if cache.has(page, name):
         return target
-    prefix = target.with_suffix("")
-    subprocess.run(
-        ["pdftoppm", "-r", str(dpi), "-png", "-f", str(page), "-l", str(page), str(pdf), str(prefix)],
-        capture_output=True,
-        timeout=timeout,
-    )
-    # pdftoppm appends a zero-padded page number of unpredictable width.
-    produced = sorted(prefix.parent.glob(f"{prefix.name}-*.png"))
-    if not produced:
-        raise RuntimeError(f"pdftoppm produced nothing for page {page} at {dpi} dpi.")
-    produced[0].replace(target)
-    for leftover in produced[1:]:
-        leftover.unlink()
-    return target
+    return _pdftoppm(pdf, page, dpi, target, [], timeout)
 
 
 def render_region(
@@ -85,21 +108,12 @@ def render_region(
     """One rectangle of a page at `dpi`, in rendered (post-rotation) pixels."""
     target = cache.path(page, f"{name}.png")
     if not cache.has(page, f"{name}.png"):
-        prefix = target.with_suffix("")
         x0, y0, x1, y1 = box
-        subprocess.run(
-            ["pdftoppm", "-r", str(dpi), "-png", "-f", str(page), "-l", str(page),
-             "-x", str(x0), "-y", str(y0), "-W", str(x1 - x0), "-H", str(y1 - y0),
-             str(pdf), str(prefix)],
-            capture_output=True,
-            timeout=timeout,
+        _pdftoppm(
+            pdf, page, dpi, target,
+            ["-x", str(x0), "-y", str(y0), "-W", str(x1 - x0), "-H", str(y1 - y0)],
+            timeout,
         )
-        produced = sorted(prefix.parent.glob(f"{prefix.name}-*.png"))
-        if not produced:
-            raise RuntimeError(f"pdftoppm produced nothing for page {page} region {box} at {dpi} dpi.")
-        produced[0].replace(target)
-        for leftover in produced[1:]:
-            leftover.unlink()
     with Image.open(target) as image:
         image.load()
         return image
