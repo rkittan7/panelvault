@@ -9,6 +9,7 @@ cell called spare when nothing said שמור.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, WithJsonSchema, model_validator
@@ -34,6 +35,32 @@ class Contract(BaseModel):
     """Reject anything the schema did not ask for, on the way in."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_json_strings(cls, data: Any) -> Any:
+        """Accept a list or object the model sent as a JSON string.
+
+        Without strict tool use (the sheet schema is too large for it) the
+        model sometimes returns a nested array as its JSON text —
+        `"devices": "[{\"tag\": ...}]"` — which failed a whole sheet of
+        4382.26-8. A field that is itself a string is left alone.
+        """
+        if not isinstance(data, dict):
+            return data
+        fixed = dict(data)
+        for name, value in data.items():
+            field = cls.model_fields.get(name)
+            if field is None or not isinstance(value, str):
+                continue
+            text = value.strip()
+            if not text.startswith(("[", "{")) or field.annotation in (str, Optional[str]):
+                continue
+            try:
+                fixed[name] = json.loads(text)
+            except ValueError:
+                pass
+        return fixed
 
 
 def ServerField(default: Any = PydanticUndefined, **kwargs: Any) -> Any:

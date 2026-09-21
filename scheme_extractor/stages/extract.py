@@ -74,7 +74,11 @@ def region_guidance(regions: PageRegions, chunk_overlap: int) -> str:
         index += 1
     title = regions.regions.get("title_block")
     if title:
-        parts.append(f"{index}. `region_title_block` — the title block.")
+        parts.append(
+            f"{index}. `region_title_block` — the title block, in {len(title.chunks)} piece(s) "
+            "left to right that overlap by a tenth of its width. Each label sits to the RIGHT "
+            "of its own value (Hebrew order); pair them within one piece, never across two."
+        )
         index += 1
     else:
         parts.append(

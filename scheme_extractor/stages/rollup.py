@@ -111,20 +111,53 @@ def _fold_unnamed(grouped: dict[tuple, BOMLine]) -> None:
         del grouped[key]
 
 
+def _key(device) -> tuple:
+    return (
+        device.device_class,
+        _norm(device.manufacturer),
+        _norm(device.model),
+        _norm(device.rating),
+        _poles(device.poles),
+    )
+
+
+def _compatible(a: tuple, b: tuple) -> bool:
+    """Same class, and no field where both say something different."""
+    return a[0] == b[0] and all(x is None or y is None or x == y for x, y in zip(a[1:], b[1:]))
+
+
+def _detail(key: tuple) -> int:
+    return sum(1 for part in key[1:] if part)
+
+
 def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
-    grouped: dict[tuple, BOMLine] = {}
-    curves: dict[tuple, set[str]] = {}
+    """One unit per tag across the whole set.
+
+    A tag names one device in a drawing set, and the same breaker is often
+    drawn twice — on an overview sheet and again on its own. Counted once per
+    sheet, 4382.26-8 listed QU1, QU4, the SPDs and every contactor twice. The
+    most detailed compatible drawing of a tag is the one counted; a tag drawn
+    with contradicting specs stays as separate units, flagged `duplicate_tag`,
+    because that disagreement is the finding.
+    """
+    occurrences: dict[str, list[tuple[str, object, tuple]]] = {}
     for sheet in sheets:
         label = sheet.sheet.sheet_label
-        seen_on_sheet: set[str] = set()
         for device in sheet.devices:
-            key = (
-                device.device_class,
-                _norm(device.manufacturer),
-                _norm(device.model),
-                _norm(device.rating),
-                _poles(device.poles),
-            )
+            for tag in device.tags_expanded or expand_range(device.tag):
+                occurrences.setdefault(tag, []).append((label, device, _key(device)))
+
+    grouped: dict[tuple, BOMLine] = {}
+    curves: dict[tuple, set[str]] = {}
+    for tag, seen in occurrences.items():
+        chosen: list[list] = []  # [label, device, key]
+        for label, device, key in seen:
+            match = next((c for c in chosen if _compatible(c[2], key)), None)
+            if match is None:
+                chosen.append([label, device, key])
+            elif _detail(key) > _detail(match[2]):
+                match[:] = [label, device, key]
+        for label, device, key in chosen:
             line = grouped.get(key)
             if line is None:
                 line = BOMLine(
@@ -136,18 +169,15 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
                     qty=0,
                 )
                 grouped[key] = line
-            for tag in device.tags_expanded or expand_range(device.tag):
-                if tag in seen_on_sheet:
-                    continue
-                seen_on_sheet.add(tag)
-                line.qty += 1
-                line.tags.append(tag)
-                line.breakdown[label] = line.breakdown.get(label, 0) + 1
+            line.qty += 1
+            line.tags.append(tag)
+            line.breakdown[label] = line.breakdown.get(label, 0) + 1
             curves.setdefault(key, set()).add(device.curve or "")
-            for flag in device.flags:
+            flags = [*device.flags, *(["duplicate_tag"] if len(chosen) > 1 else [])]
+            for flag in flags:
                 if flag not in line.flags:
                     line.flags.append(flag)
-            line.needs_human = line.needs_human or device.needs_human
+            line.needs_human = line.needs_human or device.needs_human or len(chosen) > 1
 
     for key, line in grouped.items():
         seen = {value for value in curves.get(key, set()) if value}

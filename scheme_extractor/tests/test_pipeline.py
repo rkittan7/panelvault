@@ -191,3 +191,25 @@ def test_a_busbar_caption_does_not_make_a_frame_only_sheet_verifiable():
     reconcile.reconcile(sheet, tokens, text_coverage=meta.text_coverage)
     assert sheet.devices[0].needs_human is False
     assert "tag_not_in_text_layer" not in sheet.devices[0].flags
+
+
+@needs_reference
+def test_the_title_block_crop_starts_at_its_border_and_keeps_pairs_whole(cache_dir):
+    # Cropped a fixed distance above the e-mail row, the project and drawing
+    # number row was cut in half; cut at a fixed width, "שם המזמין" and its
+    # value landed in different pieces.
+    from PIL import Image
+    from scheme_extractor.cache import ArtifactCache
+    from scheme_extractor.stages.render import page_regions
+
+    config = Config(cache_dir=cache_dir)
+    meta = probe(REFERENCE)
+    tokens = page_tokens(REFERENCE, 1, page_size=meta.page_size, rotation=meta.rotation, dpi=220)
+    regions = page_regions(REFERENCE, tokens, ArtifactCache(cache_dir, "tb"), config.render, include_title_block=True)
+    block = regions.regions["title_block"]
+    width, height = tokens.width, tokens.height
+    # The frame's top rule sits at about 81% of the page on this producer's sheets.
+    assert 0.78 * height < block.box[1] < 0.83 * height
+    assert len(block.chunks) == 2
+    left, right = (Image.open(chunk).size[0] for chunk in block.chunks)
+    assert left + right - width >= 0.09 * width  # the pieces overlap

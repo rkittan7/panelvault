@@ -83,3 +83,27 @@ def test_the_header_comes_from_the_title_block_in_the_right_fields():
     assert board["manufacturer"] == "פח-תמחש T4P-M"
     assert board["manufacturerRole"] == "enclosure"
     assert board["panelBuilder"] == 'כיתאן אלקטריק בע"מ'
+
+
+def test_a_device_drawn_on_two_sheets_counts_once_at_its_most_detailed():
+    sheets = [
+        _sheet(2, [{"tag": "QU1", "device_class": "mccb", "rating": "3X100A"}]),
+        _sheet(3, [{"tag": "QU1", "device_class": "mccb", "manufacturer": "ABB", "model": "XT1C",
+                    "rating": "3X100A", "poles": "3"}]),
+        _sheet(4, [{"tag": "FAKU", "device_class": "spd"}, {"tag": "FAKU", "device_class": "spd"}]),
+        _sheet(5, [{"tag": "FAKU", "device_class": "spd"}]),
+    ]
+    bom = build_bom(sheets)
+    mccb = next(line for line in bom if line.device_class == "mccb")
+    assert (mccb.qty, mccb.model, mccb.breakdown) == (1, "XT1C", {"03": 1})
+    assert next(line for line in bom if line.device_class == "spd").qty == 1
+
+
+def test_one_tag_drawn_with_contradicting_specs_is_kept_and_flagged():
+    sheets = [
+        _sheet(2, [{"tag": "Q1", "device_class": "mccb", "rating": "3X40A"}]),
+        _sheet(3, [{"tag": "Q1", "device_class": "mccb", "rating": "3X100A"}]),
+    ]
+    bom = build_bom(sheets)
+    assert sum(line.qty for line in bom) == 2
+    assert all("duplicate_tag" in line.flags and line.needs_human for line in bom)

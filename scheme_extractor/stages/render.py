@@ -139,6 +139,58 @@ def _runs(line: bytes, min_len: int, gap: int = 3) -> list[tuple[int, int]]:
     return [(s, e) for s, e in spans if e - s >= min_len]
 
 
+def title_block_top(image: Image.Image, anchor_y: int) -> int | None:
+    """The title block's top border: the first long rule above its text.
+
+    The text-layer anchor sits on a middle row of the block (the e-mail line
+    on this producer's frame). Cropping a fixed distance above it cut the
+    project and drawing-number row in half.
+    """
+    width, height = image.size
+    lowest = max(0, anchor_y - round(0.25 * height))
+    band = image.crop((0, lowest, width, anchor_y))
+    data, band_w, band_h = _bilevel(band)
+    for row in range(band_h - 1, -1, -1):
+        line = data[row * band_w:(row + 1) * band_w]
+        if any(end - start >= 0.6 * band_w for start, end in _runs(line, round(0.6 * band_w))):
+            # Keep going while the block's own internal rules continue; the
+            # top border is the highest rule reached before a gap in them.
+            top = row
+            gap = 0
+            for above in range(row - 1, -1, -1):
+                ruled = _runs(data[above * band_w:(above + 1) * band_w], round(0.6 * band_w))
+                if ruled:
+                    top, gap = above, 0
+                elif (gap := gap + 1) > round(0.06 * height):
+                    break
+            return lowest + top
+    return None
+
+
+def split_title_block(image: Image.Image, stem: Path) -> list[Path]:
+    """Two pieces of 55% width each, overlapping by a tenth of the block.
+
+    Hebrew title blocks put each label to the right of its value. Cut at a
+    fixed chunk width, the labels landed in one piece and their values in
+    the other, and the model paired "שם המזמין" with the project. With this
+    overlap every label/value pair on the frame (a fifth of its width at
+    most) is whole in at least one piece, and neither piece is wide enough
+    for the API to shrink its text.
+    """
+    width, height = image.size
+    piece = round(width * 0.55)
+    if piece >= width:
+        path = stem.with_name(f"{stem.name}-00.png")
+        image.save(path)
+        return [path]
+    paths = []
+    for index, left in enumerate((0, width - piece)):
+        path = stem.with_name(f"{stem.name}-{index:02d}.png")
+        image.crop((left, 0, left + piece, height)).save(path)
+        paths.append(path)
+    return paths
+
+
 def _vertical_rules(image: Image.Image, min_len: int) -> list[tuple[int, int, int]]:
     """Every long vertical line as (x, y_top, y_bottom).
 
@@ -314,9 +366,13 @@ def page_regions(
     # The title block is byte-identical on every sheet of a set, so it is read
     # once and reused rather than paid for 35 times.
     if include_title_block and title is not None:
-        tb_box = (0, max(0, int(title.y0) - pad * 4), width, height)
+        top = title_block_top(base, int(title.y0))
+        if top is None:
+            top = max(0, int(title.y0) - round(0.10 * height))
+            notes.append("Title block border not found; cropped a fixed band above it.")
+        tb_box = (0, max(0, top - pad), width, height)
         tb_stem = cache.path(page, "title_block")
-        tb_paths = chunk_width(base.crop(tb_box), settings, tb_stem)
+        tb_paths = split_title_block(base.crop(tb_box), tb_stem)
         regions["title_block"] = Region(
             "title_block", tb_paths[0], tb_box, pct(tb_box, (width, height)),
             settings.title_block_dpi, tb_paths,
