@@ -35,7 +35,6 @@ PROTECTIVE_CLASSES = {"mcb", "mccb", "rcd", "motor_protection", "fuse"}
 def reconcile(
     sheet: SheetExtraction,
     tokens: PageTokens,
-    protective_devices: int | None = None,
     *,
     text_coverage: str = "rich",
 ) -> None:
@@ -73,27 +72,60 @@ def reconcile(
     for point in sheet.io_points:
         point.sheet_label = sheet.sheet.sheet_label
 
-    # One destination column per FINAL protective device: the last one on
-    # each line. A feeder breaker above a busbar, an RCD above a group of
-    # MCBs, or the MCB above a circuit's own RCD feeds another device and has
-    # no column — counting every device flagged nearly every sheet of
-    # 4382.26-8, all of them read correctly.
-    if protective_devices is None:
-        protective_devices = final_protective_devices(sheet)
-    columns = len({row.terminal for row in sheet.circuit_table})
-    if (
-        sheet.layout_kind == "table"
-        and columns
-        and protective_devices is not None
-        and columns != protective_devices
-    ):
-        sheet.notes.append(
-            f"Sheet {sheet.sheet.sheet_label}: {columns} destination columns against "
-            f"{protective_devices} final protective devices — the table may be misread."
-        )
-        for row in sheet.circuit_table:
-            if "column_count_mismatch" not in row.flags:
-                row.flags.append("column_count_mismatch")
+    if sheet.layout_kind == "table" and sheet.circuit_table:
+        for problem in column_problems(sheet):
+            sheet.notes.append(f"Sheet {sheet.sheet.sheet_label}: {problem} — the table may be misread.")
+            for row in sheet.circuit_table:
+                if "column_mismatch" not in row.flags:
+                    row.flags.append("column_mismatch")
+
+
+def column_problems(sheet: SheetExtraction) -> list[str]:
+    """What the columns and the devices above them disagree about.
+
+    Counting columns against devices failed on real sheets: a breaker that
+    feeds a busbar (sheet 24's Q0) or a motor operator has no column and no
+    device fed from it either, so it looked like a missing circuit. Each row
+    now names its own protective device, which allows checks that only fire
+    on a real disagreement.
+    """
+    protective = [d for d in sheet.devices if d.device_class in PROTECTIVE_CLASSES]
+    tags = {tag for d in protective for tag in (d.tags_expanded or [d.tag])}
+    named = [row for row in sheet.circuit_table if row.protective_device]
+    if not named:
+        return []
+    problems = []
+    unknown = sorted({row.protective_device for row in named if row.protective_device not in tags})
+    if unknown:
+        problems.append(f"column(s) protected by {', '.join(unknown)}, which is not drawn on the sheet")
+    # One device may serve a merged span of columns; beyond that, two
+    # columns naming one device means a column was read twice.
+    by_device: dict[str, set[str]] = {}
+    for row in named:
+        by_device.setdefault(row.protective_device, set()).add(row.terminal)
+    for device, terminals in sorted(by_device.items()):
+        spans = {frozenset(r.span_terminals or [r.terminal]) for r in named if r.protective_device == device}
+        if len(terminals) > 1 and len(spans) > 1:
+            problems.append(f"{device} is named by {len(terminals)} separate columns")
+    # A branch breaker — fed from another protective device, and feeding none
+    # — is a final circuit and should have a column of its own.
+    fed = {d.fed_from.strip() for d in protective if d.fed_from}
+    referenced = {row.protective_device for row in named}
+    # A motor-protection breaker powers a motor or a breaker's motor
+    # operator, never a circuit breaker — a link to one is a misread
+    # (sheet 24: Q0 "fed from" QA0, the MS116 on its operator).
+    parents = {
+        tag for d in protective if d.device_class != "motor_protection"
+        for tag in (d.tags_expanded or [d.tag])
+    }
+    orphans = sorted(
+        tag for d in protective if d.fed_from and d.fed_from.strip() in parents
+        for tag in (d.tags_expanded or [d.tag])
+        if tag not in fed and tag not in referenced
+    )
+    if orphans:
+        problems.append(f"{', '.join(orphans)} drawn with no column")
+    return problems
 
 
 def final_protective_devices(sheet: SheetExtraction) -> int | None:

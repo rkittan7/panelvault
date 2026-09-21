@@ -230,6 +230,11 @@ class AnthropicClient:
             params["tool_choice"] = {"type": "auto"}
         elif accepts_temperature(stage.model):
             params["temperature"] = self.config.temperature
+        else:
+            # Sonnet 5 and Opus 5 think by default, and thinking cannot be
+            # combined with a forced tool choice. These stages transcribe
+            # rather than reason, so thinking is turned off explicitly.
+            params["thinking"] = {"type": "disabled"}
         return params
 
     def _create(self, params: dict[str, Any]) -> Any:

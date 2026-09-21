@@ -96,12 +96,45 @@ def _title_block(run: ExtractionRun) -> dict[str, str]:
     return fields
 
 
+# Rows of the switchboard data table (ת"י 61439) by the words that label
+# them, in the order they are tried. The table is printed the same way by
+# every Israeli producer; its labels, not their position, identify a row.
+BOARD_DATA = {
+    "enclosure_manufacturer": ("יצרן מקורי", "ייצרן מקורי", "יצרן"),
+    "ip_rating": ("דרגת הגנה", "IP"),
+    "form_separation": ("מידור", "FORM"),
+    "enclosure_size": ("מידה כללית", "מידות"),
+    "rated_current": ("זרם הלוח", "InA"),
+    "earthing_system": ("שיטת הארקה",),
+    "supply_voltage": ("מתח רשת", "Un"),
+    "frequency": ("תדר", "fn"),
+}
+
+
+def _board_data(run: ExtractionRun) -> dict[str, str]:
+    found: dict[str, str] = {}
+    rows = [row for sheet in run.sheets for row in sheet.board_data]
+    for field, labels in BOARD_DATA.items():
+        for label in labels:
+            row = next(
+                (r for r in rows if label in r.label_he or (r.symbol or "").strip() == label),
+                None,
+            )
+            if row and row.value.strip():
+                found[field] = row.value.strip()
+                break
+    return found
+
+
 def board_draft(run: ExtractionRun) -> dict[str, Any]:
     facts: dict[str, str] = {}
     for fact in run.audit.panel:
         if fact.value and fact.field not in facts:
             facts[fact.field] = fact.value.strip()
     title = _title_block(run)
+    # The data table is read directly; the audit's copy only fills gaps.
+    for field, value in _board_data(run).items():
+        facts[field] = value
 
     def pick(title_key: str | None, fact_key: str) -> str:
         return (title.get(title_key) if title_key else None) or facts.get(fact_key, "")

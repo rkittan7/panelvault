@@ -207,9 +207,12 @@ def extract_sheets(
     client: LLMClient,
     config: Config,
     calls: list[SheetCall],
+    stage: str = "extract",
 ) -> dict[int, tuple[SheetExtraction | None, str]]:
     """Run the whole stage, and never let one sheet end the run."""
-    raw = client.complete_many("extract", [c.call for c in calls])
+    if not calls:
+        return {}
+    raw = client.complete_many(stage, [c.call for c in calls])
     by_key = {c.call.key: c for c in calls}
     results: dict[int, tuple[SheetExtraction | None, str]] = {}
 
@@ -228,7 +231,7 @@ def extract_sheets(
             # One correction turn with the validation error attached (§6). The
             # invariants that fail here — a qty that does not match its tags, a
             # spare with no שמור — are exactly the ones worth one more ask.
-            corrected, _ = client.revalidate("extract", sheet_call.call, message)
+            corrected, _ = client.revalidate(stage, sheet_call.call, message)
             results[sheet_call.page] = (SheetExtraction.model_validate(corrected), "")
         except Exception as error:  # noqa: BLE001 — carry on with the other sheets
             results[sheet_call.page] = (None, f"{message} | retry failed: {error}")

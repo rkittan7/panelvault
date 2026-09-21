@@ -65,6 +65,8 @@ def _norm(value: str | None) -> str | None:
     if value is None:
         return None
     compact = re.sub(r"\s+", "", value).upper()
+    # CAD text mixes hyphen, en dash and minus: `2.5-4A`, `2.5–4A`.
+    compact = re.sub(r"[\u2010-\u2015\u2212]", "-", compact)
     return compact or None
 
 
@@ -111,6 +113,90 @@ def _fold_unnamed(grouped: dict[tuple, BOMLine]) -> None:
         del grouped[key]
 
 
+PLACEHOLDER = re.compile(r"\.{2,}|…")
+
+
+def _pole_count(poles: str | None, rating: str | None, device_class: str) -> str | None:
+    """Poles as printed, else as the rating implies (`3X16A` is three).
+
+    On these single-lines a breaker printed with a bare current (`16A C ABB`)
+    is single-pole; a multi-pole one carries its count in the rating.
+    """
+    compact = _poles(poles)
+    if compact:
+        found = re.match(r"\d+", compact)
+        return found.group() if found else compact
+    rating = _norm(rating) or ""
+    match = re.match(r"(\d)X", rating)
+    if match:
+        return match.group(1)
+    if device_class == "mcb" and re.fullmatch(r"\d+(?:\.\d+)?A", rating):
+        return "1"
+    return None
+
+
+def _item_poles(item) -> str | None:
+    if _poles(item.poles):
+        found = re.match(r"\d+", _poles(item.poles))
+        return found.group() if found else None
+    found = re.search(r"\((\d)\s*P\)", item.description_he or "", re.I)
+    return found.group(1) if found else None
+
+
+def _pattern_covers(pattern: str, tags: list[str]) -> bool:
+    """`F...` names F361 and FU461; `IRL` does not name R211.
+
+    Without this, the one relay row on 4382.26-8's parts sheet (GIC IRLA04S,
+    pattern `IRL`) named every relay on the set, and a latching relay's row
+    (`KSR..`) named two switches.
+    """
+    prefix = re.match(r"[A-Za-z]+", pattern.strip())
+    if not prefix:
+        return False
+    return all(tag.upper().startswith(prefix.group().upper()) for tag in tags)
+
+
+def _classes_from_equipment_list(sheets: list[SheetExtraction]) -> dict[str, str]:
+    """model -> device class, where the parts list is unambiguous about it."""
+    seen: dict[str, set[str]] = {}
+    for sheet in sheets:
+        for item in sheet.equipment_list:
+            if item.model:
+                seen.setdefault(_norm(item.model), set()).add(item.device_class)
+    return {model: classes.pop() for model, classes in seen.items() if len(classes) == 1}
+
+
+def _models_from_equipment_list(grouped: dict[tuple, BOMLine], items: list) -> None:
+    """Name a model the single-lines leave out, from the set's own parts list.
+
+    4382.26-8 prints `16A C ABB` beside ~150 breakers and names the model
+    only on its parts sheet: S201M for single-pole, S203M for three-pole.
+    A line takes a model only when exactly one listed family fits its class,
+    maker and pole count, and it is flagged so a reviewer sees the source.
+    """
+    for line in grouped.values():
+        if line.model:
+            continue
+        poles = _pole_count(line.poles, line.rating, line.device_class)
+        fits = {
+            (item.manufacturer, item.model)
+            for item in items
+            if item.model
+            and item.device_class == line.device_class
+            and _pattern_covers(item.tag_pattern, line.tags)
+            and (not line.manufacturer or not item.manufacturer or _norm(item.manufacturer) == _norm(line.manufacturer))
+            and (_item_poles(item) is None or poles is None or _item_poles(item) == poles)
+            and (_item_poles(item) is not None or len([i for i in items if i.device_class == line.device_class and i.model]) == 1)
+        }
+        if len(fits) != 1:
+            continue
+        maker, model = fits.pop()
+        line.model = model
+        line.manufacturer = line.manufacturer or maker
+        if "model_from_equipment_list" not in line.flags:
+            line.flags.append("model_from_equipment_list")
+
+
 def _key(device) -> tuple:
     return (
         device.device_class,
@@ -145,7 +231,20 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
         label = sheet.sheet.sheet_label
         for device in sheet.devices:
             for tag in device.tags_expanded or expand_range(device.tag):
+                if PLACEHOLDER.search(tag):
+                    # `F...`, `Q..`: a family from a parts list, not a device.
+                    continue
                 occurrences.setdefault(tag, []).append((label, device, _key(device)))
+
+    # An MS116 is motor protection wherever it is drawn; one sheet filing it
+    # as an MCCB split it off its own line. The parts list settles the class.
+    listed_class = _classes_from_equipment_list(sheets)
+    for tag, seen in occurrences.items():
+        for index, (label, device, key) in enumerate(seen):
+            corrected = listed_class.get(key[2]) if key[2] else None
+            if corrected and corrected != device.device_class:
+                device = device.model_copy(update={"device_class": corrected})
+                seen[index] = (label, device, _key(device))
 
     grouped: dict[tuple, BOMLine] = {}
     curves: dict[tuple, set[str]] = {}
@@ -184,6 +283,7 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
         line.curve = seen.pop() if len(seen) == 1 else None
 
     _fold_unnamed(grouped)
+    _models_from_equipment_list(grouped, [item for sheet in sheets for item in sheet.equipment_list])
 
     lines = sorted(
         grouped.values(),

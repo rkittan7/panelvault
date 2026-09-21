@@ -104,6 +104,15 @@ phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
 - Terminal blocks (`X181`, `XU497`, `XP13`) are `terminal`. A breaker model
   such as `XT1C` printed near a terminal is still the breaker's `model`.
 
+## Parts lists and the board data table are not devices
+- A table listing part FAMILIES — a tag pattern such as `F...`, `Q..`,
+  `FB0..`, `X..` beside a maker, model and description — is the set's own
+  equipment list. Put each row in `equipment_list`, never in `devices`. A
+  pattern with dots is never a device tag.
+- The switchboard data table (תיאור / ערך / מידע, per ת"י 61439: יצרן מקורי,
+  דרגת הגנה, מידור, מידה כללית, זרם הלוח, שיטת הארקה…) goes in `board_data`,
+  one row per line, the Hebrew label and symbol as printed.
+
 ## The title block
 The frame along the bottom of each sheet. Read it into `sheet.title_block`:
 - `project` — שם פרויקט
@@ -133,7 +142,9 @@ destination column; the ones above it feed it.
   above it on the same line. Set it to null only where the device hangs
   straight off a busbar or an incoming supply.
 - On every circuit_table row, set `protective_device` to the tag of the last
-  protective device above that terminal.
+  protective device above that terminal — the one directly on its own
+  vertical line. Where an RCD sits over a short busbar feeding three MCBs,
+  each of the three columns belongs to its own MCB, never to the RCD.
 - An RCD above a group of MCBs (drawn over a short busbar feeding them) is the
   `fed_from` of each MCB in the group.
 

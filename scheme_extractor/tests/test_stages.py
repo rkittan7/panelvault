@@ -254,3 +254,42 @@ def test_accessories_on_a_breaker_do_not_make_it_upstream():
         {"tag": "AF16", "device_class": "relay", "fed_from": "FB0189"},
     ]
     assert final_protective_devices(_sheet(devices, ["XU497", "X189"])) == 2
+
+
+# ------------------------------------------------------------ column checks
+
+from scheme_extractor.stages.reconcile import column_problems
+
+
+def _table(devices, rows):
+    return SheetExtraction(
+        sheet=Sheet(page_number=1, sheet_label="01"),
+        devices=[Device(**d) for d in devices],
+        circuit_table=[CircuitRow(**r) for r in rows],
+    )
+
+
+def test_a_busbar_feeder_or_motor_operator_breaker_is_not_a_missing_column():
+    # Sheet 24: Q0 feeds busbar W0; QA0 powers Q0's motor operator.
+    sheet = _table(
+        [{"tag": "QA0", "device_class": "motor_protection"},
+         {"tag": "Q0", "device_class": "mccb", "fed_from": "QA0"},
+         {"tag": "Q300", "device_class": "mccb"},
+         {"tag": "F381", "device_class": "mcb", "fed_from": "Q300"}],
+        [{"terminal": "X381", "protective_device": "F381"}],
+    )
+    assert column_problems(sheet) == []
+
+
+def test_columns_hung_on_a_group_rcd_are_reported():
+    # Sheet 12 as misread: the MCBs under the group RCD lost their columns.
+    sheet = _table(
+        [{"tag": "FB0U1.1", "device_class": "rcd"},
+         {"tag": "FU401", "device_class": "mcb", "fed_from": "FB0U1.1"},
+         {"tag": "FU402", "device_class": "mcb", "fed_from": "FB0U1.1"}],
+        [{"terminal": "XU401", "protective_device": "FB0U1.1"},
+         {"terminal": "XU402", "protective_device": "FB0U1.1"}],
+    )
+    problems = column_problems(sheet)
+    assert any("FB0U1.1 is named by 2 separate columns" in p for p in problems)
+    assert any("FU401, FU402 drawn with no column" in p for p in problems)

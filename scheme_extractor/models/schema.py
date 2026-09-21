@@ -10,6 +10,7 @@ cell called spare when nothing said שמור.
 from __future__ import annotations
 
 import json
+import re
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, WithJsonSchema, model_validator
@@ -29,6 +30,9 @@ FindingType = Literal[
     "bom_list_gap", "missing_data", "attention",
 ]
 Severity = Literal["blocking", "review", "note"]
+
+
+HEBREW_GERSHAYIM = re.compile(r'(?<=[\u0590-\u05FF])"(?=[\u0590-\u05FF])')
 
 
 class Contract(BaseModel):
@@ -59,7 +63,15 @@ class Contract(BaseModel):
             try:
                 fixed[name] = json.loads(text)
             except ValueError:
-                pass
+                # Hebrew abbreviations carry a quote between letters (בע"מ).
+                # Inside JSON text the model leaves it unescaped, which ends
+                # the string early. Between two Hebrew letters a quote is
+                # always gershayim, never a delimiter.
+                repaired = HEBREW_GERSHAYIM.sub("\u05f4", text)
+                try:
+                    fixed[name] = json.loads(repaired, strict=False)
+                except ValueError:
+                    pass
         return fixed
 
 
@@ -208,6 +220,26 @@ class ZoomRegion(Contract):
     terminals: list[str] = Field(default_factory=list)
 
 
+class EquipmentListItem(Contract):
+    """A row of the set's own parts list: a FAMILY of devices, not one."""
+
+    tag_pattern: str
+    device_class: DeviceClass
+    description_he: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    rating: Optional[str] = None
+    poles: Optional[str] = None
+
+
+class BoardDatum(Contract):
+    """A row of the switchboard data table (ת"י 61439), e.g. יצרן מקורי."""
+
+    label_he: str
+    symbol: Optional[str] = None
+    value: str
+
+
 class SheetExtraction(Contract):
     sheet: Sheet
     busbars: list[Busbar] = Field(default_factory=list)
@@ -218,6 +250,8 @@ class SheetExtraction(Contract):
     gaps: list[Gap] = Field(default_factory=list)
     anomalies: list[Anomaly] = Field(default_factory=list)
     needs_zoom_regions: list[ZoomRegion] = Field(default_factory=list)
+    equipment_list: list[EquipmentListItem] = Field(default_factory=list)
+    board_data: list[BoardDatum] = Field(default_factory=list)
 
     # Pipeline bookkeeping, not model output.
     layout_kind: str = ServerField("table")

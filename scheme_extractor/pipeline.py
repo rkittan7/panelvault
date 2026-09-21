@@ -102,7 +102,17 @@ def run(
     ]
     if progress:
         progress(f"reading {len(calls)} sheets", 0.30)
-    extracted = extract.extract_sheets(client, config, calls)
+    # The sheet sent with its title block goes to the title stage's model:
+    # its Hebrew is what names the board, and the cheap model misreads it.
+    titled = {
+        page for page, prepared_page in prepared.pages.items()
+        if "title_block" in prepared_page.regions.regions
+    }
+    title_stage = "title" if "title" in config.models else "extract"
+    extracted = extract.extract_sheets(client, config, [c for c in calls if c.page not in titled])
+    extracted.update(extract.extract_sheets(
+        client, config, [c for c in calls if c.page in titled], stage=title_stage,
+    ))
 
     sheets: list[SheetExtraction] = []
     # A page that could not be prepared is a problem; how the others were

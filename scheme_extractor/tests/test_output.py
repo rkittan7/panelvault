@@ -107,3 +107,84 @@ def test_one_tag_drawn_with_contradicting_specs_is_kept_and_flagged():
     bom = build_bom(sheets)
     assert sum(line.qty for line in bom) == 2
     assert all("duplicate_tag" in line.flags and line.needs_human for line in bom)
+
+
+# ------------------------------------------------ parts list and data table
+
+from scheme_extractor.models.schema import BoardDatum, EquipmentListItem
+
+
+def _listed(page, devices, items=(), data=()):
+    sheet = _sheet(page, devices)
+    sheet.equipment_list = [EquipmentListItem(**i) for i in items]
+    sheet.board_data = [BoardDatum(**d) for d in data]
+    return sheet
+
+
+PARTS_SHEET = [
+    {"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S201M",
+     "description_he": "מאמ״תים (1P) 10KA"},
+    {"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S203M",
+     "description_he": "מאמ״תים (3P) 10KA"},
+]
+
+
+def test_a_parts_list_names_the_model_the_single_lines_leave_out():
+    sheets = [
+        _listed(15, [{"tag": "FU461", "device_class": "mcb", "manufacturer": "ABB", "rating": "32A"},
+                     {"tag": "F313", "device_class": "mcb", "manufacturer": "ABB", "rating": "3X16A"}]),
+        _listed(35, [], PARTS_SHEET),
+    ]
+    bom = {line.tags[0]: line for line in build_bom(sheets)}
+    assert bom["FU461"].model == "S201M"
+    assert bom["F313"].model == "S203M"
+    assert "model_from_equipment_list" in bom["FU461"].flags
+
+
+def test_a_parts_list_row_is_never_counted_as_a_device():
+    sheets = [_listed(35, [{"tag": "F...", "device_class": "mcb", "model": "S201M"},
+                           {"tag": "Q..", "device_class": "mccb", "model": "XT1C"}])]
+    assert build_bom(sheets) == []
+
+
+def test_the_board_data_table_fills_the_enclosure_fields():
+    data = [
+        {"label_he": "ייצרן מקורי", "value": "פח-תמחש T4P-M"},
+        {"label_he": "דרגת הגנה", "symbol": "IP", "value": "IP-20"},
+        {"label_he": "מידור (FORM)", "symbol": "FORM", "value": "FORM-1"},
+        {"label_he": "מידה כללית HXWXD", "symbol": "mm", "value": "1950X3600X500"},
+        {"label_he": "שיטת הארקה", "value": "TNCS"},
+    ]
+    board = board_draft(_run([_listed(1, [], data=data)]))["board"]
+    assert board["manufacturer"] == "פח-תמחש T4P-M"
+    assert board["manufacturerRole"] == "enclosure"
+    assert (board["ipRating"], board["formSeparation"], board["enclosureSize"], board["earthingSystem"]) == (
+        "IP-20", "FORM-1", "1950X3600X500", "TNCS")
+
+
+def test_hebrew_abbreviations_inside_stringified_json_are_repaired():
+    # Sheet 02 of 4382.26-8, as the model sent it.
+    raw = '[{"tag": "QALE", "device_class": "motor_protection", "notes_he": "פ"י"ס"ק"ם"}]'
+    sheet = SheetExtraction.model_validate({"sheet": {"page_number": 2, "sheet_label": "02"}, "devices": raw})
+    assert sheet.devices[0].notes_he == "פ״י״ס״ק״ם"
+
+
+def test_a_parts_list_row_names_only_the_tags_it_patterns():
+    items = [{"tag_pattern": "IRL", "device_class": "relay", "manufacturer": "GIC", "model": "IRLA04S"},
+             {"tag_pattern": "KSR..", "device_class": "switch", "manufacturer": "HAGER", "model": "EPN510"}]
+    sheets = [
+        _listed(20, [{"tag": "R211", "device_class": "relay"}, {"tag": "SPU", "device_class": "switch"}]),
+        _listed(35, [], items),
+    ]
+    assert all(line.model is None for line in build_bom(sheets))
+
+
+def test_one_motor_breaker_is_one_line_whatever_dash_or_class_a_sheet_used():
+    items = [{"tag_pattern": "QA..", "device_class": "motor_protection", "manufacturer": "ABB", "model": "MS116"}]
+    sheets = [
+        _listed(21, [{"tag": "QALU", "device_class": "motor_protection", "manufacturer": "ABB", "model": "MS116", "rating": "2.5-4A"},
+                     {"tag": "QA0", "device_class": "mccb", "manufacturer": "ABB", "model": "MS116", "rating": "2.5–4A"}]),
+        _listed(35, [], items),
+    ]
+    bom = build_bom(sheets)
+    assert [(line.device_class, line.qty) for line in bom] == [("motor_protection", 2)]

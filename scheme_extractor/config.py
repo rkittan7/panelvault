@@ -38,6 +38,11 @@ DEFAULT_MODELS: dict[str, StageModel] = {
     "extract": StageModel("claude-haiku-4-5-20251001", 8000, use_batch=True),
     "zoom": StageModel("claude-haiku-4-5-20251001", 2000),
     "audit": StageModel("claude-haiku-4-5-20251001", 8000),
+    # The sheet carrying the title block and the board data table, alone.
+    # Haiku misread its Hebrew wholesale on 4382.26-8 — the project as the
+    # builder, ס.מ.ע as ת.ח.ע — where Sonnet 5 read every field; it is one
+    # call per drawing, about two cents.
+    "title": StageModel("claude-sonnet-5", 16000),
 }
 
 
