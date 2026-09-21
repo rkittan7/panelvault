@@ -239,3 +239,18 @@ def test_a_device_listed_twice_by_overlapping_pieces_counts_once():
 def test_no_feed_links_means_no_verdict():
     devices = [{"tag": "F1", "device_class": "mcb"}, {"tag": "FB1", "device_class": "rcd"}]
     assert final_protective_devices(_sheet(devices, ["X1"])) is None
+
+
+def test_accessories_on_a_breaker_do_not_make_it_upstream():
+    # Sheet 17: QU497 carries a shunt-trip coil and an auxiliary contact,
+    # both fed from it. It is still the one final device for XU497.
+    # A second line, an MCB over its own RCD, gives the sheet a feed link.
+    devices = [
+        {"tag": "QU497", "device_class": "mccb"},
+        {"tag": "TC-QU497", "device_class": "shunt_trip", "fed_from": "QU497"},
+        {"tag": "SLOT2", "device_class": "relay", "fed_from": "QU497"},
+        {"tag": "F189", "device_class": "mcb"},
+        {"tag": "FB0189", "device_class": "rcd", "fed_from": "F189"},
+        {"tag": "AF16", "device_class": "relay", "fed_from": "FB0189"},
+    ]
+    assert final_protective_devices(_sheet(devices, ["XU497", "X189"])) == 2

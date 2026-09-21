@@ -143,7 +143,7 @@ def run(
     for sheet in sheets:
         prepared_page = prepared.pages.get(sheet.sheet.page_number)
         if prepared_page:
-            reconcile.reconcile(sheet, prepared_page.tokens)
+            reconcile.reconcile(sheet, prepared_page.tokens, text_coverage=prepared.probe.text_coverage)
         warnings.extend(sheet.notes)
 
     # ---------------------------------------------------------- stage 6

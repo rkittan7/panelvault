@@ -32,9 +32,19 @@ def page_has_drawing_text(tokens: PageTokens) -> bool:
 PROTECTIVE_CLASSES = {"mcb", "mccb", "rcd", "motor_protection", "fuse"}
 
 
-def reconcile(sheet: SheetExtraction, tokens: PageTokens, protective_devices: int | None = None) -> None:
+def reconcile(
+    sheet: SheetExtraction,
+    tokens: PageTokens,
+    protective_devices: int | None = None,
+    *,
+    text_coverage: str = "rich",
+) -> None:
     known = tokens.texts()
-    verifiable = page_has_drawing_text(tokens)
+    # The set-level verdict wins. On a frame-only export the busbar caption
+    # alone (`L1,L2,L3/N/PE`, `3x400A`, `3X160A`, `SLOT2`) looks like five
+    # drawing tokens, and trusting that marked every device on 22 of
+    # 4382.26-8's 35 sheets for a human.
+    verifiable = text_coverage == "rich" and page_has_drawing_text(tokens)
 
     for device in sheet.devices:
         device.sheet_label = sheet.sheet.sheet_label
@@ -96,7 +106,10 @@ def final_protective_devices(sheet: SheetExtraction) -> int | None:
     """
     protective = [d for d in sheet.devices if d.device_class in PROTECTIVE_CLASSES]
     tags = {tag for d in protective for tag in (d.tags_expanded or [d.tag])}
-    upstream = {d.fed_from.strip() for d in sheet.devices if d.fed_from} & tags
+    # Only another protective device makes one upstream. A shunt-trip coil,
+    # an auxiliary contact or a contactor hanging off a breaker is fed from
+    # it too, and counting those left sheet 17's only breaker with no column.
+    upstream = {d.fed_from.strip() for d in protective if d.fed_from} & tags
     if not upstream:
         return None
     return len(tags - upstream)

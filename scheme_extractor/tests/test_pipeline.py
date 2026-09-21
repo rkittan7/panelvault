@@ -165,7 +165,7 @@ def test_reconcile_distinguishes_contradicted_from_unverifiable():
         sheet=Sheet(page_number=6, sheet_label="06"),
         devices=[Device(tag="F361", tags_expanded=["F361"], qty=1, device_class="mcb", rating="16A")],
     )
-    reconcile.reconcile(sheet, tokens)
+    reconcile.reconcile(sheet, tokens, text_coverage=meta.text_coverage)
 
     device = sheet.devices[0]
     # This sheet's text layer carries no drawing text, so the tag is
@@ -174,3 +174,20 @@ def test_reconcile_distinguishes_contradicted_from_unverifiable():
     assert "tag_unverifiable" in device.flags
     assert "tag_not_in_text_layer" not in device.flags
     assert device.needs_human is False
+
+
+@needs_reference
+def test_a_busbar_caption_does_not_make_a_frame_only_sheet_verifiable():
+    # Sheet 17's text layer holds `L1,L2,L3/N/PE`, `3x400A`, `3X160A` and
+    # `SLOT2` — five tag-shaped tokens and no device tag. The set is
+    # frame-only, so its breaker is unverifiable, not contradicted.
+    meta = probe(REFERENCE)
+    assert meta.text_coverage == "frame"
+    tokens = page_tokens(REFERENCE, 17, page_size=meta.page_size, rotation=meta.rotation, dpi=220)
+    sheet = SheetExtraction(
+        sheet=Sheet(page_number=17, sheet_label="17"),
+        devices=[Device(tag="QU497", device_class="mccb", rating="3X32A", model="XT1C")],
+    )
+    reconcile.reconcile(sheet, tokens, text_coverage=meta.text_coverage)
+    assert sheet.devices[0].needs_human is False
+    assert "tag_not_in_text_layer" not in sheet.devices[0].flags
