@@ -185,3 +185,57 @@ def test_model_is_overridable_from_the_request_body():
     config = Config().with_overrides({"models": {"audit": "claude-sonnet-5"}})
     assert config.models["audit"].model == "claude-sonnet-5"
     assert config.models["extract"].model.startswith("claude-haiku")
+
+
+# ------------------------------------------------ final protective devices
+# Shapes taken from 4382.26-8, where counting every breaker flagged sheets
+# that were read correctly.
+
+from scheme_extractor.models.schema import CircuitRow, Device, Sheet, SheetExtraction
+from scheme_extractor.stages.reconcile import final_protective_devices
+
+
+def _sheet(devices, terminals):
+    return SheetExtraction(
+        sheet=Sheet(page_number=1, sheet_label="01"),
+        devices=[Device(**d) for d in devices],
+        circuit_table=[CircuitRow(terminal=t) for t in terminals],
+    )
+
+
+def test_series_mcb_and_rcd_count_once_per_circuit():
+    # Sheet 15: nine lines, each an MCB with its own RCD beneath it.
+    devices = []
+    for n in range(9):
+        devices.append({"tag": f"FU{n}", "device_class": "mcb"})
+        devices.append({"tag": f"FB0U{n}", "device_class": "rcd", "fed_from": f"FU{n}"})
+    assert final_protective_devices(_sheet(devices, [f"XU{n}" for n in range(9)])) == 9
+
+
+def test_feeder_and_group_rcds_have_no_column():
+    # Sheet 12: F0U1 feeds three RCDs, each over three MCBs; three more MCBs
+    # hang straight off F0U1's busbar.
+    devices = [{"tag": "F0U1", "device_class": "mccb"}]
+    for g in range(3):
+        devices.append({"tag": f"FB0U1.{g}", "device_class": "rcd", "fed_from": "F0U1"})
+        for m in range(3):
+            devices.append({"tag": f"FU40{g}{m}", "device_class": "mcb", "fed_from": f"FB0U1.{g}"})
+    devices.append({
+        "tag": "FU410.1-.3", "device_class": "mcb", "fed_from": "F0U1",
+        "qty": 3, "tags_expanded": ["FU410.1", "FU10.2", "FU410.3"],
+    })
+    assert final_protective_devices(_sheet(devices, [])) == 12
+
+
+def test_a_device_listed_twice_by_overlapping_pieces_counts_once():
+    devices = [
+        {"tag": "F05", "device_class": "mccb"},
+        {"tag": "F181", "device_class": "mcb", "fed_from": "F05"},
+        {"tag": "F181", "device_class": "mcb", "fed_from": "F05"},
+    ]
+    assert final_protective_devices(_sheet(devices, [])) == 1
+
+
+def test_no_feed_links_means_no_verdict():
+    devices = [{"tag": "F1", "device_class": "mcb"}, {"tag": "FB1", "device_class": "rcd"}]
+    assert final_protective_devices(_sheet(devices, ["X1"])) is None

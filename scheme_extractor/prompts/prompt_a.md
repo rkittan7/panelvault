@@ -98,9 +98,24 @@ If one member breaks the series pattern (e.g. `FU10.2` sitting between
 `FU410.1` and `FU410.3`), record it VERBATIM in `tags_expanded` and add an
 entry to `anomalies`. Do not silently correct it.
 
+## Which device feeds which
+A line often carries more than one protective device in series: a feeder
+breaker on the busbar, then an RCD, then the circuit's own MCB — or an MCB
+with its own RCD beneath it. Only the LAST protective device on a line has a
+destination column; the ones above it feed it.
+- On every device, set `fed_from` to the tag of the protective device directly
+  above it on the same line. Set it to null only where the device hangs
+  straight off a busbar or an incoming supply.
+- On every circuit_table row, set `protective_device` to the tag of the last
+  protective device above that terminal.
+- An RCD above a group of MCBs (drawn over a short busbar feeding them) is the
+  `fed_from` of each MCB in the group.
+
 ## Self-check before returning
-- Does the number of destination columns equal the number of protective devices
-  drawn above them? If not, set needs_zoom on the table region.
+- Does the number of destination columns equal the number of FINAL protective
+  devices — the ones no other device is `fed_from`? A feeder breaker, or an
+  RCD above a group, has no column of its own. If they differ, set needs_zoom
+  on the table region.
 - Did you mark any cell "spare" without seeing שמור printed? Undo it.
 - Does every `qty` equal the length of its own `tags_expanded`?
 

@@ -127,6 +127,8 @@ def write(run: ExtractionRun, path: Path) -> Path:
         summary.append([fact.field, fact.value or ""])
     for warning in run.warnings:
         summary.append(["Warning", warning])
+    for note in run.notes:
+        summary.append(["Note", note])
     _autosize(summary)
 
     path = Path(path)

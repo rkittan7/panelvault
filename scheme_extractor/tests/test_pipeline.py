@@ -113,7 +113,7 @@ def test_a_sheet_that_fails_does_not_end_the_run(cache_dir):
 def test_the_run_says_the_text_layer_could_not_verify_anything(cache_dir):
     config = Config(cache_dir=cache_dir)
     result = run(REFERENCE, config, client=FakeClient(config), job_id="job_cov")
-    assert any("could not be reconciled" in w for w in result.warnings)
+    assert any("could not be reconciled" in note for note in result.notes)
 
 
 def test_zoom_overwrites_a_span_and_recomputes_spare():

@@ -29,6 +29,9 @@ def page_has_drawing_text(tokens: PageTokens) -> bool:
     return sum(1 for t in tokens.tokens if DRAWING_TOKEN.match(t.text)) >= 5
 
 
+PROTECTIVE_CLASSES = {"mcb", "mccb", "rcd", "motor_protection", "fuse"}
+
+
 def reconcile(sheet: SheetExtraction, tokens: PageTokens, protective_devices: int | None = None) -> None:
     known = tokens.texts()
     verifiable = page_has_drawing_text(tokens)
@@ -60,23 +63,43 @@ def reconcile(sheet: SheetExtraction, tokens: PageTokens, protective_devices: in
     for point in sheet.io_points:
         point.sheet_label = sheet.sheet.sheet_label
 
-    # One destination column per protective device. A mismatch means the table
-    # was misread — a column dropped, or two merged into one.
+    # One destination column per FINAL protective device: the last one on
+    # each line. A feeder breaker above a busbar, an RCD above a group of
+    # MCBs, or the MCB above a circuit's own RCD feeds another device and has
+    # no column — counting every device flagged nearly every sheet of
+    # 4382.26-8, all of them read correctly.
     if protective_devices is None:
-        protective_devices = sum(
-            len(d.tags_expanded or [d.tag])
-            for d in sheet.devices
-            if d.device_class in {"mcb", "mccb", "rcd", "motor_protection", "fuse"}
-        )
+        protective_devices = final_protective_devices(sheet)
     columns = len({row.terminal for row in sheet.circuit_table})
-    if sheet.layout_kind == "table" and columns and columns != protective_devices:
+    if (
+        sheet.layout_kind == "table"
+        and columns
+        and protective_devices is not None
+        and columns != protective_devices
+    ):
         sheet.notes.append(
             f"Sheet {sheet.sheet.sheet_label}: {columns} destination columns against "
-            f"{protective_devices} protective devices — the table may be misread."
+            f"{protective_devices} final protective devices — the table may be misread."
         )
         for row in sheet.circuit_table:
             if "column_count_mismatch" not in row.flags:
                 row.flags.append("column_count_mismatch")
+
+
+def final_protective_devices(sheet: SheetExtraction) -> int | None:
+    """Protective devices that nothing else on the sheet is fed from.
+
+    Tags are counted once: the table arrives in overlapping pieces, so the
+    same breaker can be listed twice. Returns None when the reading carries
+    no feed links at all — without them a feeder cannot be told from a final
+    circuit, and a count would only raise a false alarm.
+    """
+    protective = [d for d in sheet.devices if d.device_class in PROTECTIVE_CLASSES]
+    tags = {tag for d in protective for tag in (d.tags_expanded or [d.tag])}
+    upstream = {d.fed_from.strip() for d in sheet.devices if d.fed_from} & tags
+    if not upstream:
+        return None
+    return len(tags - upstream)
 
 
 def unverified(sheet: SheetExtraction) -> list[str]:

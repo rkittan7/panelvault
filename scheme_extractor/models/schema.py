@@ -303,6 +303,7 @@ class ExtractionRun(Contract):
     audit: AuditResult = Field(default_factory=AuditResult)
     cost: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 # ------------------------------------------------------- JSON Schema for tools

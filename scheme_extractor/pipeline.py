@@ -39,11 +39,14 @@ class Prepared:
     probe: ProbeResult
     pages: dict[int, PreparedPage] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # How the file was handled (rotation, chunking, a thin text layer):
+    # context for a developer, not something a reviewer can act on.
+    notes: list[str] = field(default_factory=list)
 
 
 def prepare(pdf: Path, config: Config, cache: ArtifactCache, progress: Progress | None = None) -> Prepared:
     result = probe(pdf, timeout=config.poppler_timeout_s)
-    prepared = Prepared(probe=result, warnings=list(result.notes))
+    prepared = Prepared(probe=result, notes=list(result.notes))
 
     # Which sheet carries the title block: read once, reused everywhere (§5).
     title_sheet = 1
@@ -66,7 +69,7 @@ def prepare(pdf: Path, config: Config, cache: ArtifactCache, progress: Progress 
             timeout=config.poppler_timeout_s,
         )
         prepared.pages[page] = PreparedPage(tokens, regions)
-        prepared.warnings.extend(regions.notes)
+        prepared.notes.extend(regions.notes)
         if progress:
             progress(f"prepared sheet {page}", page / max(1, result.pages) * 0.25)
     return prepared
@@ -102,9 +105,9 @@ def run(
     extracted = extract.extract_sheets(client, config, calls)
 
     sheets: list[SheetExtraction] = []
-    # Problems lead; the preparation notes (rotation, chunking) are context
-    # and go last, so a capped list never hides why a sheet was not read.
-    warnings: list[str] = []
+    # A page that could not be prepared is a problem; how the others were
+    # prepared is a note, kept apart so it never crowds the problems out.
+    warnings: list[str] = list(prepared.warnings)
     failures: list[str] = []
     for page, prepared_page in sorted(prepared.pages.items()):
         sheet, error = extracted.get(page, (None, "not attempted"))
@@ -119,7 +122,7 @@ def run(
         sheet.layout_kind = prepared_page.regions.layout_kind
         sheets.append(sheet)
     if not prepared.pages:
-        raise ExtractionFailed("No sheet in this PDF could be prepared: " + "; ".join(prepared.warnings[:3]))
+        raise ExtractionFailed("No sheet in this PDF could be prepared: " + "; ".join((prepared.warnings or prepared.notes)[:3]))
     if len(failures) == len(sheets):
         # Nothing was read. An empty draft would look like an empty board;
         # fail the job with the reason instead.
@@ -158,10 +161,10 @@ def run(
 
     cost = client.ledger.summary() if hasattr(client, "ledger") else {}
     warnings.extend(cost.get("warnings", []))
-    warnings.extend(prepared.warnings)
 
+    notes = list(prepared.notes)
     if prepared.probe.text_coverage != "rich":
-        warnings.append(
+        notes.append(
             "This drawing's text layer carries only the sheet frame and title block, so device "
             "values could not be reconciled against it. Every affected value is flagged "
             "`*_unverifiable` rather than verified."
@@ -185,4 +188,5 @@ def run(
         audit=audit_result or AuditResult(),
         cost=cost,
         warnings=warnings,
+        notes=notes,
     )

@@ -112,5 +112,6 @@ def payload(run: ExtractionRun) -> dict[str, Any]:
         "audit": run.audit.model_dump(mode="json"),
         "cost": run.cost,
         "warnings": run.warnings,
+        "notes": run.notes,
         "board_draft": board_draft(run),
     }
