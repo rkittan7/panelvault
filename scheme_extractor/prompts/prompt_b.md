@@ -20,7 +20,7 @@ Return ONLY JSON matching the supplied schema:
      "destination_he":"תריס חשמלי בכניסה","confidence":"high"},
     {"span_terminals":["X15"],"destination_he":"שמור","confidence":"high"}
   ],
-  "cable_row": {"X11":"5x2.5N2XY","X14":"3x2.5N2XY"},
-  "inc_row":   {"X11":"12.8A"},
+  "cable_row": [{"terminal":"X11","value":"5x2.5N2XY"},{"terminal":"X14","value":"3x2.5N2XY"}],
+  "inc_row":   [{"terminal":"X11","value":"12.8A"}],
   "unresolved": []
 }

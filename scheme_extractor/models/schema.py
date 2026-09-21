@@ -9,9 +9,9 @@ cell called spare when nothing said שמור.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, WithJsonSchema, model_validator
 from pydantic_core import PydanticUndefined
 
 # The only two words that make a circuit spare. An empty cell is empty (§2.4).
@@ -174,7 +174,10 @@ class Anomaly(Contract):
 
 class ZoomRegion(Contract):
     reason: str
-    bbox_pct: list[float] = Field(min_length=4, max_length=4)
+    bbox_pct: list[float] = Field(
+        min_length=4, max_length=4,
+        description="Exactly four fractions of the page: x0, y0, x1, y1.",
+    )
     terminals: list[str] = Field(default_factory=list)
 
 
@@ -203,11 +206,40 @@ class ZoomCell(Contract):
     confidence: Confidence = "low"
 
 
+def _pairs_to_map(value: Any) -> Any:
+    """`[{"terminal": "X11", "value": "12.8A"}]` → `{"X11": "12.8A"}`."""
+    if isinstance(value, list):
+        return {
+            str(item.get("terminal")): str(item.get("value"))
+            for item in value
+            if isinstance(item, dict) and item.get("terminal") and item.get("value") is not None
+        }
+    return value
+
+
+# Strict tool use cannot express an open-keyed map (`additionalProperties`
+# must be false), so the model returns terminal/value pairs and they are
+# folded back into a map here. Everything downstream still sees a dict.
+TerminalMap = Annotated[
+    dict[str, str],
+    BeforeValidator(_pairs_to_map),
+    WithJsonSchema({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"terminal": {"type": "string"}, "value": {"type": "string"}},
+            "required": ["terminal", "value"],
+            "additionalProperties": False,
+        },
+    }),
+]
+
+
 class ZoomResult(Contract):
     terminals: list[str] = Field(default_factory=list)
     cells: list[ZoomCell] = Field(default_factory=list)
-    cable_row: dict[str, str] = Field(default_factory=dict)
-    inc_row: dict[str, str] = Field(default_factory=dict)
+    cable_row: TerminalMap = Field(default_factory=dict)
+    inc_row: TerminalMap = Field(default_factory=dict)
     unresolved: list[str] = Field(default_factory=list)
 
 
@@ -275,6 +307,12 @@ class ExtractionRun(Contract):
 
 # ------------------------------------------------------- JSON Schema for tools
 
+UNSUPPORTED_CONSTRAINTS = (
+    "maxItems", "minLength", "maxLength", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "uniqueItems",
+)
+
+
 def tool_schema(model: type[BaseModel]) -> dict[str, Any]:
     """A JSON Schema the strict tool-use parameter will accept.
 
@@ -319,6 +357,13 @@ def tool_schema(model: type[BaseModel]) -> dict[str, Any]:
             # `default` is advisory and strict mode does not honour it; the
             # model must emit every field explicitly.
             node.pop("default", None)
+            # Strict mode rejects length and range constraints (minItems
+            # beyond 0 or 1 included). Pydantic still enforces them when the
+            # answer is validated, and a violation earns the correction turn.
+            for keyword in UNSUPPORTED_CONSTRAINTS:
+                node.pop(keyword, None)
+            if node.get("minItems", 0) > 1:
+                node.pop("minItems")
             return node
         if isinstance(node, list):
             return [tighten(item) for item in node]

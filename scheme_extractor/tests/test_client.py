@@ -43,3 +43,46 @@ def test_models_that_reject_temperature_are_not_sent_it():
     assert accepts_temperature("claude-sonnet-4-6")
     for model in ("claude-sonnet-5", "claude-opus-5", "claude-opus-4-8", "claude-fable-5-1"):
         assert not accepts_temperature(model)
+
+
+# ---------------------------------------------------------------- strict schemas
+
+import pytest
+
+from scheme_extractor.models.schema import AuditResult, SheetExtraction, ZoomResult, tool_schema
+
+REJECTED = {
+    "maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
+    "exclusiveMaximum", "multipleOf", "uniqueItems", "patternProperties", "propertyNames",
+}
+
+
+def _violations(node, path=""):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in REJECTED or (key == "minItems" and value not in (0, 1)):
+                yield f"{path}/{key}"
+            if key == "additionalProperties" and value is not False:
+                yield f"{path}/additionalProperties"
+            yield from _violations(value, f"{path}/{key}")
+        if node.get("type") == "object" and node.get("additionalProperties") is not False:
+            yield f"{path} (object not closed)"
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            yield from _violations(item, f"{path}[{index}]")
+
+
+@pytest.mark.parametrize("model", [SheetExtraction, ZoomResult, AuditResult])
+def test_every_stage_schema_is_accepted_by_strict_tool_use(model):
+    # The API answers a violation with a 400 on every sheet of every run.
+    assert list(_violations(tool_schema(model))) == []
+
+
+def test_zoom_maps_arrive_as_pairs_and_are_folded_back():
+    result = ZoomResult.model_validate({
+        "terminals": ["X11"], "cells": [], "unresolved": [],
+        "cable_row": [{"terminal": "X11", "value": "5x2.5N2XY"}],
+        "inc_row": [{"terminal": "X11", "value": "12.8A"}],
+    })
+    assert result.cable_row == {"X11": "5x2.5N2XY"}
+    assert result.inc_row == {"X11": "12.8A"}
