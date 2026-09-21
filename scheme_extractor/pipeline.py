@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,12 @@ from .stages.render import PageRegions, page_regions
 from .stages.textlayer import AnchorError, PageTokens, page_tokens
 
 Progress = Callable[[str, float], None]
+
+log = logging.getLogger("scheme_extractor")
+
+
+class ExtractionFailed(RuntimeError):
+    """The run produced nothing a reviewer could use."""
 
 
 @dataclass
@@ -95,7 +102,10 @@ def run(
     extracted = extract.extract_sheets(client, config, calls)
 
     sheets: list[SheetExtraction] = []
-    warnings = list(prepared.warnings)
+    # Problems lead; the preparation notes (rotation, chunking) are context
+    # and go last, so a capped list never hides why a sheet was not read.
+    warnings: list[str] = []
+    failures: list[str] = []
     for page, prepared_page in sorted(prepared.pages.items()):
         sheet, error = extracted.get(page, (None, "not attempted"))
         if sheet is None:
@@ -104,8 +114,16 @@ def run(
             sheet = SheetExtraction(sheet=Sheet(page_number=page, sheet_label=label))
             sheet.notes.append(f"Extraction failed: {error}")
             warnings.append(f"Sheet {label} could not be read: {error}")
+            failures.append(error)
+            log.warning("sheet %s could not be read: %s", label, error)
         sheet.layout_kind = prepared_page.regions.layout_kind
         sheets.append(sheet)
+    if not prepared.pages:
+        raise ExtractionFailed("No sheet in this PDF could be prepared: " + "; ".join(prepared.warnings[:3]))
+    if len(failures) == len(sheets):
+        # Nothing was read. An empty draft would look like an empty board;
+        # fail the job with the reason instead.
+        raise ExtractionFailed(f"Claude could not read any of the {len(sheets)} sheets. First error: {failures[0]}")
 
     # ---------------------------------------------------------- stage 4
     for index, sheet in enumerate(sheets):
@@ -140,6 +158,7 @@ def run(
 
     cost = client.ledger.summary() if hasattr(client, "ledger") else {}
     warnings.extend(cost.get("warnings", []))
+    warnings.extend(prepared.warnings)
 
     if prepared.probe.text_coverage != "rich":
         warnings.append(

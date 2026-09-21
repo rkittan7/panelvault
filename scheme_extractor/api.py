@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import shutil
 import tempfile
 import threading
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 from .config import Config
 from .output.payload import payload
 from .output.workbook import write as write_workbook
-from .pipeline import run as run_pipeline
+from .pipeline import ExtractionFailed, run as run_pipeline
 
 app = FastAPI(title="PanelVault scheme extraction", version="1.0")
 
@@ -109,7 +110,9 @@ def _start(pdf: Path, config: Config, tasks: BackgroundTasks) -> Job:
             job.status = "done"
         except Exception as error:  # noqa: BLE001 — the job carries the failure, the server stays up
             job.status = "failed"
-            job.error = f"{type(error).__name__}: {error}"
+            # A run that read nothing already says why in plain words.
+            job.error = str(error) if isinstance(error, ExtractionFailed) else f"{type(error).__name__}: {error}"
+            logging.getLogger("scheme_extractor").exception("job %s failed", job.id)
         finally:
             job.finished_at = datetime.now(timezone.utc).isoformat()
             job.progress = 1.0
