@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -31,6 +32,16 @@ from dataclasses import replace as dc_replace
 
 from ..config import BATCH_DISCOUNT, Config, StageModel
 
+
+
+# Opus 4.7 and later, Sonnet 5 and Fable reject a fixed `temperature` with a
+# 400; the 4.5 / 4.6 line still takes it. A stage upgraded to a newer model
+# (SCHEME_MODEL_AUDIT=claude-sonnet-5) must not start failing for it.
+_SAMPLING_MODELS = re.compile(r"claude-(?:haiku|sonnet|opus)-4-[56](?:$|-)")
+
+
+def accepts_temperature(model: str) -> bool:
+    return bool(_SAMPLING_MODELS.search(model))
 
 class SchemaError(ValueError):
     """The model returned structurally valid JSON that the contract rejects."""
@@ -201,7 +212,6 @@ class AnthropicClient:
         params: dict[str, Any] = {
             "model": stage.model,
             "max_tokens": stage.max_tokens,
-            "temperature": self.config.temperature,
             "system": [
                 {"type": "text", "text": call.system, "cache_control": {"type": "ephemeral"}}
             ],
@@ -214,8 +224,23 @@ class AnthropicClient:
             params["thinking"] = {"type": "enabled", "budget_tokens": stage.thinking_budget}
             # Thinking and forced tool choice cannot be combined.
             params["tool_choice"] = {"type": "auto"}
-            params.pop("temperature", None)
+        elif accepts_temperature(stage.model):
+            params["temperature"] = self.config.temperature
         return params
+
+    def _create(self, params: dict[str, Any]) -> Any:
+        """`messages.create` for one request.
+
+        SDK 1.x dropped `temperature` from the method signature (passing it is
+        a TypeError), though the API still honours it on the models that
+        accept it. It travels in the request body instead. The batch path
+        needs no such move: a batch request's params are forwarded as-is.
+        """
+        params = dict(params)
+        temperature = params.pop("temperature", None)
+        if temperature is not None:
+            params["extra_body"] = {"temperature": temperature}
+        return self._client.messages.create(**params)
 
     @staticmethod
     def _usage(stage_name: str, model: str, message: Any, seconds: float, batched: bool) -> Usage:
@@ -252,7 +277,7 @@ class AnthropicClient:
         )
         def send(params: dict[str, Any]) -> tuple[Any, float]:
             started = time.monotonic()
-            message = self._client.messages.create(**params)
+            message = self._create(params)
             return message, time.monotonic() - started
 
         params = self._params(stage_model, call)
@@ -306,7 +331,7 @@ class AnthropicClient:
             ],
         )
         started = time.monotonic()
-        message = self._client.messages.create(**params)
+        message = self._create(params)
         usage = self._usage(stage, stage_model.model, message, time.monotonic() - started, False)
         self.ledger.record(usage)
         return self._tool_input(message, call.tool_name), usage
@@ -375,10 +400,11 @@ class AnthropicClient:
         for item in self._client.messages.batches.results(batch.id):
             call = by_key[item.custom_id]
             if item.result.type != "succeeded":
-                results[call.key] = (
-                    None,
-                    Usage(stage, stage_model.model, batched=True, note=f"batch result: {item.result.type}"),
-                )
+                # An errored result carries the API's own reason; without it
+                # the sheet's failure reads only "errored".
+                detail = getattr(getattr(getattr(item.result, "error", None), "error", None), "message", "")
+                note = f"batch result: {item.result.type}" + (f" — {detail}" if detail else "")
+                results[call.key] = (None, Usage(stage, stage_model.model, batched=True, note=note[:300]))
                 continue
             message = item.result.message
             usage = self._usage(stage, stage_model.model, message, elapsed / max(1, len(calls)), batched=True)
