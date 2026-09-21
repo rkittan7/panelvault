@@ -40,7 +40,9 @@ services:
     name: panelvault-scheme-extractor
     runtime: docker
     plan: starter
-    region: frankfurt
+    # Must match the region panelvault-cloud actually runs in (Oregon, whatever
+    # its own entry above says): the private network does not cross regions.
+    region: oregon
     dockerfilePath: ./scheme_extractor/Dockerfile
     dockerContext: ./scheme_extractor
     maxShutdownDelaySeconds: 300
