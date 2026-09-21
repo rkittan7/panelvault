@@ -253,8 +253,20 @@ class Finding(Contract):
     severity: Severity = "review"
 
 
+# The board facts the review screen fills in. A fixed vocabulary, because a
+# free-form `field` let the model call the same fact "client" on one run and
+# "customer" on the next, and the draft read the wrong value or none.
+PanelField = Literal[
+    "project", "board_name", "drawing_no", "client", "consultant", "panel_builder",
+    "enclosure_manufacturer", "board_type", "revision", "job_number",
+    "main_breaker_reference", "main_breaker_type", "main_breaker_model", "main_breaker_rating",
+    "rated_current", "short_circuit_rating", "supply_voltage", "frequency", "earthing_system",
+    "ip_rating", "form_separation", "enclosure_size", "other",
+]
+
+
 class PanelFact(Contract):
-    field: str
+    field: PanelField
     value: Optional[str] = None
     sheets: list[str] = Field(default_factory=list)
 

@@ -60,6 +60,57 @@ def device_units(sheet: SheetExtraction) -> list[tuple[str, str]]:
     return units
 
 
+def _norm(value: str | None) -> str | None:
+    """Grouping key for a printed value: `2x40A`, `2X40A` and `2X 40A` agree."""
+    if value is None:
+        return None
+    compact = re.sub(r"\s+", "", value).upper()
+    return compact or None
+
+
+def _poles(value: str | None) -> str | None:
+    """`2`, `2P` and `2p` are the same pole count."""
+    compact = _norm(value)
+    return re.sub(r"P(?=$|\+)", "", compact) if compact else None
+
+
+def _fold_unnamed(grouped: dict[tuple, BOMLine]) -> None:
+    """Fold a line missing its maker or model into the one line it must be.
+
+    One sheet printing `F202 ABB` beside an RCD and another reading only
+    `2X40A` split the same part into two BOM lines, and only the named one
+    matched the catalogue. Such a line joins a named line only when exactly
+    one candidate of the same class, rating and poles exists, and it is
+    flagged so the inference stays visible.
+    """
+    for key in sorted(grouped, key=lambda k: tuple(part or "" for part in k)):
+        line = grouped.get(key)
+        if line is None:
+            continue
+        device_class, maker, model, rating, poles = key
+        if maker and model:
+            continue
+        candidates = [
+            (other_key, other) for other_key, other in grouped.items()
+            if other is not line
+            and other_key[0] == device_class and other_key[3] == rating and other_key[4] == poles
+            and other_key[2] and (not model or other_key[2] == model)
+            and (not maker or other_key[1] == maker)
+        ]
+        if len(candidates) != 1 or not rating:
+            continue
+        target_key, target = candidates[0]
+        target.qty += line.qty
+        target.tags.extend(line.tags)
+        for sheet_label, count in line.breakdown.items():
+            target.breakdown[sheet_label] = target.breakdown.get(sheet_label, 0) + count
+        for flag in [*line.flags, "model_inferred"]:
+            if flag not in target.flags:
+                target.flags.append(flag)
+        target.needs_human = target.needs_human or line.needs_human
+        del grouped[key]
+
+
 def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
     grouped: dict[tuple, BOMLine] = {}
     curves: dict[tuple, set[str]] = {}
@@ -67,7 +118,13 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
         label = sheet.sheet.sheet_label
         seen_on_sheet: set[str] = set()
         for device in sheet.devices:
-            key = (device.device_class, device.manufacturer, device.model, device.rating, device.poles)
+            key = (
+                device.device_class,
+                _norm(device.manufacturer),
+                _norm(device.model),
+                _norm(device.rating),
+                _poles(device.poles),
+            )
             line = grouped.get(key)
             if line is None:
                 line = BOMLine(
@@ -95,6 +152,8 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
     for key, line in grouped.items():
         seen = {value for value in curves.get(key, set()) if value}
         line.curve = seen.pop() if len(seen) == 1 else None
+
+    _fold_unnamed(grouped)
 
     lines = sorted(
         grouped.values(),

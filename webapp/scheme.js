@@ -26,7 +26,12 @@ function canonicalBoardManufacturer(value) {
   const key = identityKey(value);
   if (!key) return "";
   if (["tamhash", "tamash", "תמחש"].includes(key)) return "Tamhash";
-  return BOARD_MANUFACTURERS.find((name) => identityKey(name) === key) || "";
+  const exact = BOARD_MANUFACTURERS.find((name) => identityKey(name) === key);
+  if (exact) return exact;
+  // Data tables print the maker with its product line: "פח-תמחש T4P-M".
+  // Accept a known name inside a longer label, never a fragment of one.
+  if (["tamhash", "tamash", "תמחש"].some((alias) => key.includes(alias))) return "Tamhash";
+  return BOARD_MANUFACTURERS.find((name) => identityKey(name).length >= 4 && key.includes(identityKey(name))) || "";
 }
 
 function enclosureManufacturerRole(value) {
@@ -315,6 +320,11 @@ const FRAME_FAMILIES = [
  * the A to follow the number directly, so 6kA breaking capacity is never
  * mistaken for a 6A trip rating. MCB shorthand such as C16 is accepted. */
 function ampereRating(...values) {
+  // Drawings print poles and current together: "3X40A", "2x40A", "3×63A".
+  for (const value of values) {
+    const poled = String(value || "").toUpperCase().match(/(?:^|[^A-Z0-9])\d\s*[X×]\s*(\d+(?:\.\d+)?)\s*A(?![A-Z])/);
+    if (poled) return `${Number(poled[1])}A`;
+  }
   for (const value of values) {
     const source = String(value || "").toUpperCase();
     const explicit = source.match(/(?:^|[^A-Z0-9])(\d+(?:\.\d+)?)\s*A(?![A-Z])/);

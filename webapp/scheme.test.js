@@ -710,3 +710,19 @@ test("every catalog row still finds itself by brand and model", () => {
 test("the prompt asks for Hager's printed order reference", () => {
   assert.match(BOARD_SCHEME_INSTRUCTION, /Hager modular devices print a full order reference/);
 });
+
+test("a rating printed with its poles reads as the current", () => {
+  assert.equal(ampereRating("3X32A"), "32A");
+  assert.equal(ampereRating("2x40A"), "40A");
+  assert.equal(ampereRating("3×160A"), "160A");
+  assert.equal(ampereRating("3X40A Inc=32A"), "40A");
+  assert.equal(ampereRating("MS116"), "");
+});
+
+test("an enclosure maker printed with its product line is still recognised", () => {
+  const reading = normalizeReading({
+    board: { number: "4382.26-8", manufacturer: "פח-תמחש T4P-M", manufacturerRole: "enclosure" },
+    components: [], unmatched: [], warnings: [],
+  }, []);
+  assert.equal(reading.board.manufacturer, "Tamhash");
+});

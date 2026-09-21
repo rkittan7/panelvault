@@ -91,6 +91,32 @@ For EVERY destination cell you must:
 Never distribute a merged phrase by guessing. If you cannot tell whether a
 phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
 
+## Tag, model, rating — three different things
+- `tag` is the designation printed beside the symbol that names THIS device:
+  `QU497`, `FU461`, `FB0U1.1`, `QC189`, `F05`. It is unique on the drawing.
+- `model` is the product printed under it: `XT1C`, `F202`, `AF16`, `MS116`,
+  `TM3DI16`. A model number is NEVER a tag — `AF16 ABB` beside a contactor
+  symbol tagged `QC189` is one device, tag `QC189`, model `AF16`.
+- `rating` is the current as printed, poles included: `3X32A`, `2X40A`, `16A`.
+  `poles` is the pole count alone (`3`, `2`); `setting` is an `Inc=` value.
+- `manufacturer` is printed per device on these drawings (`ABB`); record it on
+  every device that shows it.
+- Terminal blocks (`X181`, `XU497`, `XP13`) are `terminal`. A breaker model
+  such as `XT1C` printed near a terminal is still the breaker's `model`.
+
+## The title block
+The frame along the bottom of each sheet. Read it into `sheet.title_block`:
+- `project` — שם פרויקט
+- `panel` — שם הלוח (the board's name, e.g. "E2 לוח חשמל קומה 21")
+- `client` — שם המזמין (who ordered the board)
+- `consultant` — שם היועץ
+- `drawing_no` — מס' סדורי
+- `panel_builder` — the company whose name and logo head the block, the firm
+  that built the board. Never the project, never the client.
+- `drawn_by` — שרטט; `revision_dates` — תאריך עדכון; `total_pages` — מתוך
+Copy the Hebrew exactly as printed. If a field is unreadable, leave it null —
+do not fill it from another field or from the company's tagline.
+
 ## Range labels
 Where identical devices are labelled as a range (`F201-F209`, `FU410.1-.3`),
 expand to the explicit list in `tags_expanded` and set `qty` to the count.

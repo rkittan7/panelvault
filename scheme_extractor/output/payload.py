@@ -38,15 +38,27 @@ PANELVAULT_TYPE = {
 }
 
 
-def _component(line: BOMLine, board_number: str) -> dict[str, Any]:
+# Drawing furniture, not parts: a destination terminal (`XU497`) is a place a
+# cable lands, and matching it against the catalogue only filled the review
+# list with "Terminal ×39". They stay in the workbook's BOM.
+NOT_PARTS = {"terminal", "label", "external"}
+
+
+def _component(line: BOMLine, board_number: str, main_tag: str) -> dict[str, Any]:
+    kind = PANELVAULT_TYPE.get(line.device_class, line.device_class)
+    poles = f"{line.poles}P" if line.poles and line.poles.isdigit() else line.poles
+    # Name the line by what it is before what it is rated: "MCB 3X40A 3P C",
+    # not "3X40A 3", which gave the reviewer and the matcher nothing to go on.
     raw = " ".join(
-        part for part in (line.manufacturer, line.model, line.rating, line.poles, line.curve) if part
+        part for part in (line.manufacturer, line.model, kind, line.rating, poles, line.curve) if part
     )
+    is_main = bool(main_tag) and main_tag in line.tags
     return {
         "rawText": raw,
+        "description": raw,
         "manufacturer": line.manufacturer or "",
         "model": line.model or "",
-        "type": PANELVAULT_TYPE.get(line.device_class, line.device_class),
+        "type": kind,
         "rating": line.rating or "",
         "poles": line.poles or "",
         "curve": line.curve or "",
@@ -55,8 +67,11 @@ def _component(line: BOMLine, board_number: str) -> dict[str, Any]:
         "reference": ", ".join(line.tags[:60]),
         "sourcePage": 0,
         "boardNumber": board_number,
-        "supplyRole": "board_main" if line.device_class == "mccb" and line.qty == 1 else "downstream",
-        "isMainBreaker": False,
+        # Only the audited incomer is the board main. Marking every single
+        # MCCB `board_main` made the site stamp the main breaker's rating
+        # onto all of them.
+        "supplyRole": "board_main" if is_main and line.qty == 1 else "downstream",
+        "isMainBreaker": is_main and line.qty == 1,
         # Not in the old contract, and deliberately added: a reviewer must be
         # able to see which lines nobody has verified.
         "flags": line.flags,
@@ -65,23 +80,59 @@ def _component(line: BOMLine, board_number: str) -> dict[str, Any]:
     }
 
 
+def _title_block(run: ExtractionRun) -> dict[str, str]:
+    """The title block as read at native resolution in stage 3.
+
+    Every sheet repeats it and one sheet (the first) is sent with its crop,
+    so the most complete reading wins, field by field.
+    """
+    fields: dict[str, str] = {}
+    for sheet in sorted(run.sheets, key=lambda s: s.sheet.page_number):
+        block = sheet.sheet.title_block
+        for name in ("project", "panel", "panel_builder", "client", "consultant", "drawing_no"):
+            value = (getattr(block, name) or "").strip()
+            if value and name not in fields:
+                fields[name] = value
+    return fields
+
+
 def board_draft(run: ExtractionRun) -> dict[str, Any]:
-    facts = {fact.field.lower(): (fact.value or "") for fact in run.audit.panel}
-    number = facts.get("drawing_no") or facts.get("drawing number") or ""
+    facts: dict[str, str] = {}
+    for fact in run.audit.panel:
+        if fact.value and fact.field not in facts:
+            facts[fact.field] = fact.value.strip()
+    title = _title_block(run)
+
+    def pick(title_key: str | None, fact_key: str) -> str:
+        return (title.get(title_key) if title_key else None) or facts.get(fact_key, "")
+
+    number = pick("drawing_no", "drawing_no")
+    main_tag = facts.get("main_breaker_reference", "")
+    main_line = next((line for line in run.bom if main_tag and main_tag in line.tags), None)
+    enclosure = facts.get("enclosure_manufacturer", "")
+    components = [
+        _component(line, number, main_tag) for line in run.bom if line.device_class not in NOT_PARTS
+    ]
     return {
         "board": {
             "number": number,
-            "name": facts.get("panel", ""),
-            "customer": facts.get("client", ""),
-            "project": facts.get("project", ""),
-            "type": facts.get("type", ""),
+            "name": pick("panel", "board_name"),
+            "customer": pick("client", "client"),
+            "project": pick("project", "project"),
+            "type": facts.get("board_type", ""),
             "typeConfidence": "low",
             "typeEvidence": "",
-            "manufacturer": facts.get("panel_builder", ""),
-            "mainBreakerType": facts.get("main_breaker_type", ""),
-            "mainBreakerModel": facts.get("main_breaker_model", ""),
-            "mainBreakerAmpere": facts.get("main_breaker_rating", ""),
-            "mainBreakerReference": facts.get("main_breaker_reference", ""),
+            # The site's "board manufacturer" is who made the enclosure (the
+            # data table's יצרן מקורי), not the panel builder in the title
+            # block — the role tells it so.
+            "manufacturer": enclosure,
+            "manufacturerRole": "enclosure" if enclosure else None,
+            "panelBuilder": pick("panel_builder", "panel_builder"),
+            "mainBreakerType": facts.get("main_breaker_type", "")
+                or (PANELVAULT_TYPE.get(main_line.device_class, "") if main_line else ""),
+            "mainBreakerModel": facts.get("main_breaker_model", "") or (main_line.model or "" if main_line else ""),
+            "mainBreakerAmpere": facts.get("main_breaker_rating", "") or (main_line.rating or "" if main_line else ""),
+            "mainBreakerReference": main_tag,
             "mainBreakerEvidence": "",
             "cabinetCount": 1,
             "jobNumber": facts.get("job_number", ""),
@@ -95,7 +146,7 @@ def board_draft(run: ExtractionRun) -> dict[str, Any]:
             "standards": [],
             "notes": "",
         },
-        "components": [_component(line, number) for line in run.bom],
+        "components": components,
         "unmatched": [],
         "warnings": run.warnings[:20],
     }
