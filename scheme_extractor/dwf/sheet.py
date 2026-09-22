@@ -34,6 +34,7 @@ RATING = re.compile(
     r"|^\d[xX]\d+(?:/\d+)?A(?:\s*gG)?$",
     re.I,
 )
+PLC_MODEL = re.compile(r"^TM\d{1,3}[A-Z0-9]{2,}$")
 SETTING = re.compile(r"^Inc\s*=\s*\S+$", re.I)
 CURVE = re.compile(r"^[BCDKZ]$")
 SENSITIVITY = re.compile(r"^\d+\s*mA$", re.I)
@@ -62,7 +63,7 @@ PREFIX_CLASS = [
     ("FB", "rcd"), ("FC", "fuse"), ("FA", "spd"), ("F", "mcb"),
     ("QA", "motor_protection"), ("QC", "contactor"), ("Q", "mccb"),
     ("SH", "switch"), ("SP", "switch"),
-    ("PF", "lamp"), ("RC", "step_relay"), ("RH", "relay"), ("R", "relay"), ("K", "relay"),
+    ("PF", "lamp"), ("PH", "lamp"), ("RC", "step_relay"), ("RH", "relay"), ("R", "relay"), ("K", "relay"),
     ("TC", "shunt_trip"),
 ]
 NOT_DEVICES = ("X", "DI", "DO", "AI", "AO", "COM", "C0M", "CN", "SLOT", "W", "U", "L")
@@ -73,10 +74,13 @@ NOT_MODELS = ("DI", "DO", "AI", "AO", "COM", "C0M", "CN", "SLOT")
 class Grid:
     """The drawing's ruled lines, to find the cell around a point."""
 
-    def __init__(self, lines: list[list[tuple[int, int]]], min_length: int = 120):
+    def __init__(self, lines: list[list[tuple[int, int]]], min_length: int = 120,
+                 layers: list[str] | None = None, skip: set[str] = frozenset()):
         self.verticals: list[tuple[int, int, int]] = []
         self.horizontals: list[tuple[int, int, int]] = []
-        for run in lines:
+        for n, run in enumerate(lines):
+            if layers is not None and layers[n] in skip:
+                continue
             for (x0, y0), (x1, y1) in zip(run, run[1:]):
                 if abs(x0 - x1) <= 3 and abs(y0 - y1) >= min_length:
                     self.verticals.append(((x0 + x1) // 2, min(y0, y1), max(y0, y1)))
@@ -113,12 +117,16 @@ class Block:
 
 
 def stacks(texts: list[whip.Text]) -> list[Block]:
-    """Texts one below another at (about) one x, read top down."""
+    """Texts one below another at (about) one x, read top down. A second
+    device tag starts its own stack: PHU1 under QU1's labels is a lamp."""
     blocks: list[Block] = []
     for text in sorted(texts, key=lambda t: -t.y):
+        leads = _names_device(text.text)
         for block in blocks:
             last = block.texts[-1]
             reach = 2.6 * max(text.height, last.height)
+            if leads and any(_names_device(t.text) for t in block.texts):
+                continue
             if abs(text.x - block.x) < 3 * text.height and 0 <= last.y - text.y < reach:
                 block.texts.append(text)
                 break
@@ -144,7 +152,23 @@ def _device_class(tag: str, model: str | None, rating: str | None) -> str | None
     return None
 
 
+# Families a tag's prefix can carry besides its own: an RCD named F…, a
+# contactor or step relay named K…/R….
+COMPATIBLE = {("mcb", "rcd"), ("relay", "contactor"), ("relay", "step_relay"), ("mccb", "motor_protection")}
+
+
+def _conflicts(tag: str, model: str) -> bool:
+    by_model = next((cls for pattern, cls in MODEL_CLASS if pattern.search(model)), None)
+    by_tag = next((cls for prefix, cls in PREFIX_CLASS if tag.upper().startswith(prefix)), None)
+    return bool(by_model and by_tag and by_model != by_tag and (by_tag, by_model) not in COMPATIBLE)
+
+
 LETTER_TAG = re.compile(r"^[A-Z]{2,6}$")
+
+
+def _is_lamp(value: str) -> bool:
+    """`PFM`, `PFUS`: a lamp's tag. A lamp has no rating to stand beside."""
+    return bool(LETTER_TAG.match(value)) and value.startswith(("PF", "PH")) and len(value) > 2
 
 
 def _is_letter_tag(value: str) -> bool:
@@ -163,12 +187,25 @@ def _is_model(word: str) -> bool:
     )
 
 
+def _names_device(value: str) -> bool:
+    """A tag named the way devices are named here, not a model that looks
+    like one (XT1C, MS116, F202)."""
+    return (
+        (_is_tag(value) or _is_lamp(value))
+        and not any(pattern.search(value) for pattern, _ in MODEL_CLASS)
+        and any(value.startswith(prefix) for prefix, _ in PREFIX_CLASS)
+    )
+
+
 def device(block: Block) -> Device | None:
     values = [t.text for t in block.texts]
+    # `R1 / IRL`: relay 1 inside an IRL module, not a relay of its own.
+    if "IRL" in values and any(re.fullmatch(r"R\d", v) for v in values):
+        return None
     attributes = [v for v in values if RATING.match(v) or v.upper() in MAKERS or _is_model(v.split()[0])]
     # A tag without a number counts only on a stack that also carries a
     # rating, a model or a maker: on its own it could be any word.
-    tags = [v for v in values if _is_tag(v) or (attributes and _is_letter_tag(v))]
+    tags = [v for v in values if _is_tag(v) or _is_lamp(v) or (attributes and _is_letter_tag(v))]
     if not tags:
         return None
     # A model number can look like a tag (AF190, MS116). The stack's tag is
@@ -201,6 +238,8 @@ def device(block: Block) -> Device | None:
             sensitivity = next((w for w in words[1:] if SENSITIVITY.match(w)), sensitivity)
         elif HEBREW.search(value):
             notes.append(value)
+    if model and _conflicts(tag, model):
+        model = None          # a neighbour's label: a relay module beside a breaker's tag
     cls = _device_class(tag, model, rating)
     if cls is None:
         return None
@@ -239,17 +278,28 @@ def circuit_table(texts: list[whip.Text], devices: list[tuple[Device, Block]], g
     dest_top = name_y - 60
     cable_y = labels["cable"].y if labels["cable"] else None
     inc_y = labels["inc"].y if labels["inc"] else None
-    dest_bottom = (cable_y + 120) if cable_y is not None else bottom_y
+    # A destination's last line can sit just above the cable row's rule.
+    dest_bottom = (cable_y + 60) if cable_y is not None else bottom_y
+    # A table's own rules stop at its top; a longer line through it is the
+    # frame or a drop line, and would split a merged cell.
+    grid.verticals = [v for v in grid.verticals if v[2] <= name_y + 250]
 
     def column_of(x: float) -> int | None:
         best = min(range(len(xs)), key=lambda i: abs(xs[i] - x))
         return best if abs(xs[best] - x) < 0.75 * pitch else None
 
+    # A column's centre is the middle of its name's cell: columns are not all
+    # one width, and a name sits at the left of a wide one.
+    centres = []
+    for column in columns:
+        cell = grid.cell(*middle(column))
+        centres.append((cell[0] + cell[2]) / 2 if cell else column.x + 0.4 * pitch)
+
     def span_of(text: whip.Text) -> list[int]:
         """The columns sharing the ruled cell that holds the text."""
         cell = grid.cell(*middle(text))
         if cell is not None:
-            covered = [i for i, cx in enumerate(xs) if cell[0] < cx + 0.4 * pitch and cx + 0.4 * pitch < cell[2]]
+            covered = [i for i, cx in enumerate(centres) if cell[0] < cx < cell[2]]
             if covered:
                 return covered
         col = column_of(text.x)
@@ -282,8 +332,7 @@ def circuit_table(texts: list[whip.Text], devices: list[tuple[Device, Block]], g
                   if d.device_class in {"mcb", "mccb", "rcd", "fuse", "motor_protection", "switch"}]
     rows = []
     for i, column in enumerate(columns):
-        parts = sorted(destination[i], key=lambda t: (-t.y, t.x))
-        text = " ".join(t.text for t in parts) or None
+        text = " ".join(t.text for t in _reading_order(destination[i])) or None
         above = [(d, b) for d, b in protective if abs(b.x - column.x) < 0.6 * pitch and b.y > name_y]
         below_most = min(above, key=lambda db: db[1].y)[0].tag if above else None
         rows.append(CircuitRow(
@@ -297,6 +346,17 @@ def circuit_table(texts: list[whip.Text], devices: list[tuple[Device, Block]], g
             is_spare=bool(text and any(word in text for word in SPARE_WORDS)),
         ))
     return rows
+
+
+def _reading_order(texts: list[whip.Text]) -> list[whip.Text]:
+    """Lines top down, and a line's pieces right to left, as Hebrew reads."""
+    lines: list[list[whip.Text]] = []
+    for text in sorted(texts, key=lambda t: -t.y):
+        if lines and lines[-1][0].y - text.y < 0.6 * max(text.height, lines[-1][0].height):
+            lines[-1].append(text)
+        else:
+            lines.append([text])
+    return [t for line in lines for t in sorted(line, key=lambda t: -t.x)]
 
 
 # ------------------------------------------------------------- parts list
@@ -365,7 +425,9 @@ def board_data(texts: list[whip.Text], grid: Grid) -> list[BoardDatum]:
         _, bottom, _, top = cell
         value = [
             t for t in texts
-            if t is not text and bottom < middle(t)[1] < top
+            # Low in its line: a sub-label set tight under the rule above
+            # (לוח שרות in the IP row) is not the row above's.
+            if t is not text and bottom < t.y + 0.25 * t.height < top
             and min(columns, key=lambda c: abs(columns[c] - middle(t)[0])) == "value"
             and abs(columns["value"] - middle(t)[0]) < 1500
         ]
@@ -392,10 +454,8 @@ TITLE_LABELS = {
 def title_block(texts: list[whip.Text], board_number: str) -> TitleBlock:
     """Label/value pairs, calibrated on the one pair whose value is known.
 
-    AutoCAD plots a title block's fixed labels in paper space and its filled
-    attributes in model space, so on these DWFs a value sits a fixed distance
-    left of its label that is not the distance on paper. The drawing number
-    is known from the package, so its pair measures that distance, and every
+    A value sits a fixed distance left of its label. The drawing number is
+    known from the package, so its pair measures that distance, and every
     other label's value is looked for the same distance away, on its row.
     """
     title_texts = [t for t in texts if t.layer in FRAME_LAYERS]
@@ -450,15 +510,51 @@ def _value_like(text: whip.Text) -> bool:
 
 # ------------------------------------------------------------------ sheet
 
-def read_sheet(number: int, page: whip.Page, board_number: str) -> SheetExtraction:
-    schematic = [t for t in page.texts if t.rotation == 0 and t.layer not in FRAME_LAYERS]
+def frame_words(pages: list[whip.Page]) -> frozenset[str]:
+    """What the title block says: frame-layer text on most of the sheets."""
+    counts: dict[str, int] = {}
+    for page in pages:
+        for word in {t.text for t in page.texts if t.layer in FRAME_LAYERS}:
+            counts[word] = counts.get(word, 0) + 1
+    return frozenset(word for word, n in counts.items() if n * 2 >= len(pages))
+
+
+def _in_table(text: whip.Text, number: int, frame: frozenset[str] | None) -> bool:
+    """Table content. Drafters put some cells on the frame layer too (a
+    destination, a cable): those are kept when the set's other sheets do not
+    repeat them, as they repeat the title block's words."""
+    if text.layer == "LOGOENG":
+        return False
+    if text.layer not in FRAME_LAYERS:
+        return True
+    if frame is None or text.text in frame:
+        return False
+    return text.text.lstrip("0") != str(number)          # the sheet's own number
+
+
+def read_sheet(number: int, page: whip.Page, board_number: str,
+               frame: frozenset[str] | None = None) -> SheetExtraction:
+    schematic = [t for t in page.texts if t.layer not in FRAME_LAYERS]
     devices: list[tuple[Device, Block]] = []
     for block in stacks(schematic):
         found = device(block)
         if found is not None:
             devices.append((found, block))
+    # A PLC's modules carry no tag, only their model under the drawing of
+    # each (TM262L20MESE8T, TM3DI16, ...): the model names the module.
+    stacked = {d.model for d, _ in devices if d.model}
+    for text in page.texts:
+        if PLC_MODEL.match(text.text) and text.text not in stacked and _in_table(text, number, frame):
+            stacked.add(text.text)
+            devices.append((Device(
+                tag=text.text, device_class="plc" if re.match(r"^TM2", text.text) else "plc_module",
+                manufacturer="Schneider", model=text.text,
+            ), Block([text])))
     grid = Grid(page.lines)
-    table = circuit_table(schematic, devices, grid)
+    # The frame's and title block's rules are no table's: one crossing a
+    # destination row would split a merged cell.
+    table = circuit_table([t for t in page.texts if _in_table(t, number, frame)], devices,
+                          Grid(page.lines, layers=page.line_layers, skip=FRAME_LAYERS))
     return SheetExtraction(
         sheet=Sheet(page_number=number, sheet_label=f"{number:02d}",
                     title_block=title_block(page.texts, board_number)),
@@ -467,6 +563,17 @@ def read_sheet(number: int, page: whip.Page, board_number: str) -> SheetExtracti
         equipment_list=equipment_list([t for t in page.texts if t.rotation == 0], grid),
         board_data=board_data(page.texts, grid),
     )
+
+
+def complete_plc_models(sheets: list[SheetExtraction]) -> None:
+    """`TM3DQ16` under the rack drawing is the `TM3DQ16R` its I/O sheet
+    names in full: one module, named by its longest spelling."""
+    modules = [d for s in sheets for d in s.devices if d.device_class in {"plc", "plc_module"} and d.model]
+    models = {d.model for d in modules}
+    for device in modules:
+        longer = [m for m in models if m != device.model and m.startswith(device.model)]
+        if len(longer) == 1:
+            device.model = device.tag = longer[0]
 
 
 def consensus_title(titles: list[TitleBlock]) -> TitleBlock:

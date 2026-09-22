@@ -39,11 +39,24 @@ for nothing.
 | `dwf/hebrew.py` | Hebrew stored as the keys an Israeli keyboard would press (`ao pruhhey:` is שם פרוייקט:), decoded word by word; Latin words stay |
 | `dwf/sheet.py` | devices as stacked labels (`FU411 / 16A / C / ABB`), destination tables down their columns with merged cells from the drawing's rules, the parts list and data table by their ruled rows, and the title block by label/value pairs |
 
-Two things the geometry has to account for: AutoCAD plots a title block's
-labels in paper space and its values in model space, so the offset between
-them is measured on the one pair whose value is known (the drawing number);
-and a few labels are exported only as strokes, with no text behind them, so
-they cannot be read (QU1 on 4382.26-1).
+Things the reading has to account for:
+
+- Every point in a page stream is relative to the one before, including the
+  corners of a text's bounding box and of an embedded image. Missing either
+  shifts everything after it (on 4382.26-1 a logo moved half the title block
+  and a whole table 8000 units off).
+- The Hebrew font draws right to left, so Latin and numbers inside a Hebrew
+  label are typed backwards (`AK01` is 10KA); a label's pieces on one line
+  read right to left.
+- Some cells and labels sit on the frame's layer; they are told from the
+  title block by not repeating on the other sheets.
+- A font's rotation flag is not what is plotted: labels flagged 90° print
+  level, so rotation is ignored.
+- A few labels are exported only as strokes, with no text behind them
+  (SH211's `3X40A SOCOMEC`, the contactors' AF models): those are left for
+  the parts list or a person.
+- A cabinet-door label can shorten a tag (`QU97` for `QU497`); it is not
+  counted twice.
 
 From there the run is the same: grouping, parts-list models, the board draft
 and the workbook. The main breaker is the highest-rated breaker or switch.

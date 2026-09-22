@@ -26,6 +26,8 @@ class Text:
     layer: str
     height: int
     rotation: int          # 1/65536 of a full turn; 16384 is 90 degrees
+    font: str = ""
+    box: tuple | None = None
 
 
 @dataclass
@@ -33,7 +35,13 @@ class Page:
     texts: list[Text] = field(default_factory=list)
     # Line work as point runs, for drawing the page back out.
     lines: list[list[tuple[int, int]]] = field(default_factory=list)
+    line_layers: list[str] = field(default_factory=list)   # the layer of each run in `lines`
     view: tuple[int, int, int, int] | None = None   # the plotted area
+
+
+# Extended binary opcodes that draw a raster image (whiptk opcode_defs.h):
+# bitonal, group 3X, indexed, mapped, RGB, RGBA, JPEG, group 4, PNG, group 4X.
+IMAGE_OPCODES = {0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000C, 0x000D}
 
 
 class _Reader:
@@ -45,6 +53,7 @@ class _Reader:
         self.layer = ""
         self.height = 0
         self.rotation = 0
+        self.font = ""
         self.page = Page()
 
     # -- primitives ----------------------------------------------------------
@@ -150,7 +159,7 @@ class _Reader:
     def set_font(self) -> None:
         fields = self.u16()
         if fields & 0x0001:
-            self.string()                         # name
+            self.font = self.string()
         for bit in (0x0002, 0x0004, 0x0008, 0x0010):
             if fields & bit:                      # charset, pitch, family, style
                 self.byte()
@@ -164,14 +173,17 @@ class _Reader:
         if fields & 0x0400:                       # flags
             self.i32()
 
+    def line(self, run: list[tuple[int, int]]) -> None:
+        self.page.lines.append(run)
+        self.page.line_layers.append(self.layer)
+
     def text(self, position: tuple[int, int], value: str) -> None:
-        self.page.texts.append(Text(position[0], position[1], value, self.layer, self.height, self.rotation))
+        self.page.texts.append(Text(position[0], position[1], value, self.layer, self.height, self.rotation, self.font))
 
     # -- the stream ------------------------------------------------------------
 
     def run(self) -> Page:
         b = self.b
-        lines = self.page.lines
         while self.i < len(b):
             at = self.i
             op = self.byte()
@@ -181,7 +193,13 @@ class _Reader:
                 self.extended_ascii()
             elif op == ord("{"):                  # extended binary: size, then body
                 size = self.i32()
-                self.i += size
+                end = self.i + size
+                if self.u16() in IMAGE_OPCODES:
+                    # An image's corners are relative points and move the
+                    # pen: skipped, everything after a logo sat 8000 off.
+                    self.u16(); self.u16()        # columns, rows
+                    self.rel32(); self.rel32()
+                self.i = end
             elif op == ord("x"):
                 self.text(self.rel32(), self.string())
             elif op == 0x18:                      # text with options
@@ -191,20 +209,24 @@ class _Reader:
                 for _ in range(2):                # overscore, underscore positions
                     for _ in range(self.count() - 1):
                         self.count()
-                self.i += 32                      # bounding box: 4 points
+                # Bounding box: four points, relative like every other point,
+                # so they move the pen. Skipped as bytes, every text after
+                # the first drifted by a text's height.
+                box = tuple(self.run_of(4, self.rel32))
                 for _ in range(self.count() - 1): # reserved
                     self.count()
                 self.text(position, value)
+                self.page.texts[-1].box = box
             elif op == 0x06:
                 self.set_font()
             elif op == 0x0C:
-                lines.append(self.run_of(2, self.rel16))
+                self.line(self.run_of(2, self.rel16))
             elif op == ord("l"):
-                lines.append(self.run_of(2, self.rel32))
+                self.line(self.run_of(2, self.rel32))
             elif op == 0x10:
-                lines.append(self.run_of(self.count(), self.rel16))
+                self.line(self.run_of(self.count(), self.rel16))
             elif op == ord("p"):
-                lines.append(self.run_of(self.count(), self.rel32))
+                self.line(self.run_of(self.count(), self.rel32))
             elif op in (0x14, 0x8D):              # polytriangle, macro draw (16-bit)
                 self.run_of(self.count(), self.rel16)
             elif op in (ord("t"), ord("m")):
@@ -226,7 +248,7 @@ class _Reader:
                 rel = self.rel16 if op == 0x0B else self.rel32
                 sizes = [self.count() for _ in range(self.count())]
                 for size in sizes:
-                    lines.append(self.run_of(size, rel))
+                    self.line(self.run_of(size, rel))
             elif op == ord("c"):
                 self.byte()
             elif op == 0x03:

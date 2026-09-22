@@ -247,8 +247,9 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
     number = dwf_package.board_number(pages)
     sheets: list[SheetExtraction] = []
     warnings: list[str] = []
+    frame_words = dwf_sheet.frame_words([page.page for page in pages])
     for index, page in enumerate(pages):
-        reading = dwf_sheet.read_sheet(page.number, page.page, number)
+        reading = dwf_sheet.read_sheet(page.number, page.page, number, frame_words)
         reading.layout_kind = "table" if reading.circuit_table else "no_table"
         for device in reading.devices:
             device.sheet_label = reading.sheet.sheet_label
@@ -263,8 +264,9 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
     identity = dwf_sheet.consensus_title([s.sheet.title_block for s in sheets])
     for reading in sheets:
         reading.sheet.title_block = identity
+    dwf_sheet.complete_plc_models(sheets)
 
-    bom = rollup.build_bom(sheets)
+    bom = rollup.build_bom(sheets, exact_text=True)
     circuits, counts = rollup.flatten_circuits(sheets)
 
     # The board's incomer: the highest-rated breaker or switch it carries.

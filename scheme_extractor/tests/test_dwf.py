@@ -51,6 +51,28 @@ def test_an_extended_binary_block_is_skipped_by_its_own_size():
     assert [t.text for t in page.texts] == ["Q0"]
 
 
+def _boxed_text(dx: int, dy: int, value: str, corners: list[tuple[int, int]]) -> bytes:
+    """0x18: position, string, no overscore/underscore, 4 relative corners, no reserved."""
+    return (b"\x18" + struct.pack("<ii", dx, dy) + b"'" + value.encode("latin-1") + b"'"
+            + b"\x01\x01" + b"".join(struct.pack("<ii", *c) for c in corners) + b"\x01")
+
+
+def test_a_texts_bounding_box_moves_the_pen():
+    # Skipping the corners as bytes drifted every later text by a text's height.
+    stream = (b"(W2D V06.00)" + _boxed_text(100, 100, "F327", [(0, -27), (400, 0), (0, 140), (-400, 0)])
+              + _text(1000, -113, "F328"))
+    page = whip.read(stream)
+    assert [(t.text, t.x, t.y) for t in page.texts] == [("F327", 100, 100), ("F328", 1100, 100)]
+
+
+def test_an_images_corners_move_the_pen():
+    # A logo's corners are relative points: skipped, the frame sat 8000 off.
+    body = struct.pack("<HHH", 0x0008, 406, 108) + struct.pack("<iiii", 5881, -622, 2436, 648) + b"jpeg"
+    blob = b"{" + struct.pack("<i", len(body) + 1) + body + b"}"
+    page = whip.read(b"(W2D V06.00)" + blob + _text(-8317, -26, "Q1"))
+    assert (page.texts[0].x, page.texts[0].y) == (0, 0)
+
+
 def test_backslash_escapes_a_quote_inside_a_string():
     page = whip.read(b"(W2D V06.00)" + b"x" + struct.pack("<ii", 0, 0) + b"'ao\\'s'")
     assert page.texts[0].text == "ao's"
@@ -69,7 +91,13 @@ def test_keyboard_hebrew_is_decoded_word_by_word():
     # Latin stays Latin: tags, ratings, models, units, e-mail.
     assert hebrew.decode("FU411 16A F202 30mA") == "FU411 16A F202 30mA"
     assert hebrew.decode("Bassam@kittan") == "Bassam@kittan"
-    assert hebrew.decode("kuj jank E2") == "לוח חשמל E2"
+    assert hebrew.decode("kuj jank 2E") == "לוח חשמל E2"
+    assert hebrew.decode(",/ jhruo") == "ת. חירום"        # the ת key is the comma
+    assert hebrew.decode("3, 4") == "3, 4"
+    # Latin inside a Hebrew label is typed backwards for the right-to-left font.
+    assert hebrew.decode("ntn,ho-ntzho AK01") == "מאמתים-מאזים 10KA"
+    assert hebrew.decode("3-n SPU") == "3-מ UPS"
+    assert hebrew.decode("4x150 N2XY") == "4x150 N2XY"       # a size, not Hebrew
 
 
 # ------------------------------------------------------------------- package
@@ -145,6 +173,23 @@ def test_a_table_is_read_down_its_columns_with_merged_cells_spanning():
     assert rows["X22"].span_terminals == ["X22", "X23"]
     assert (rows["X23"].cable, rows["X23"].inc) == ("5x10N2XY", "32A")
     assert (rows["X21"].protective_device, rows["X22"].protective_device) == ("F21", "F22")
+
+
+def test_a_frame_line_through_a_table_does_not_split_a_merged_cell():
+    texts = [
+        T("שם", 5794, 775, "BOARD"), T("יעד", 5838, 602, "BOARD"),
+        T("X21", 6440, 695), T("X22", 7400, 695),
+        T("עמדות", 6900, 450), T("עבודה", 6700, 450),
+    ]
+    lines = _ruled_table([5960, 8840], [800, 620, 100], 5600, 8840)
+    lines.append([(7300, -900), (7300, 9000)])          # the title block's rule, far past the table
+    rows = {r.terminal: r for r in circuit_table(texts, [], Grid(lines))}
+    assert rows["X21"].destination_he == rows["X22"].destination_he == "עמדות עבודה"   # right to left
+
+
+def test_a_second_device_tag_starts_its_own_stack():
+    found = [d.tag for b in stacks(_stack(7424, 5319, "QU1", "מפסק הזנה", "PHU1")) if (d := device(b))]
+    assert found == ["QU1", "PHU1"]
 
 
 def test_the_parts_list_reads_each_family_across_its_ruled_row():

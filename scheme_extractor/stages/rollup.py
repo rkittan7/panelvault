@@ -331,7 +331,24 @@ def _detail(key: tuple) -> int:
     return sum(1 for part in key[1:] if part)
 
 
-def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
+def _abbreviates(tag: str, others: set[str]) -> bool:
+    """The same device under a shorter or longer number: `QU97` on the door
+    for `QU497`, or `FU410.2` on the door for the single-line's `FU10.2`."""
+    found = re.fullmatch(r"([A-Z]+)(\d[\d.]*)", tag)
+    if not found:
+        return False
+    letters, number = found.groups()
+    for other in others:
+        match = re.fullmatch(r"([A-Z]+)(\d[\d.]*)", other)
+        if not match or match.group(1) != letters or match.group(2) == number:
+            continue
+        short, long = sorted((number, match.group(2)), key=len)
+        if len(short) >= 2 and long.endswith(short):     # F1 is not short for F11
+            return True
+    return False
+
+
+def build_bom(sheets: list[SheetExtraction], *, exact_text: bool = False) -> list[BOMLine]:
     """One unit per tag across the whole set.
 
     A tag names one device in a drawing set, and the same breaker is often
@@ -367,15 +384,19 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
     # A cabinet layout labels every device without a spec (sheet 34 of
     # 4382.26-8: 59 labels, all bare) and its small print is where QU1 was
     # read as QU11. A tag seen only as a bare label on such a sheet is not
-    # counted; one also drawn elsewhere keeps that drawing.
+    # counted; one also drawn elsewhere keeps that drawing. Text read from a
+    # CAD file is not misread, so there a cabinet's label is a device (SH211
+    # drawn only as strokes on its single-line) unless it is a short form of
+    # a drawn tag: QU97 on the cabinet door is QU497.
     layout_sheets = set()
     for sheet in sheets:
         keys = [_key(d) for d in sheet.devices]
         if len(keys) >= 25 and sum(1 for k in keys if _bare(k)) >= 0.75 * len(keys):
             layout_sheets.add(sheet.sheet.sheet_label)
-    for tag in list(occurrences):
-        seen = occurrences[tag]
-        if all(_bare(key) and label in layout_sheets for label, _, key in seen):
+    layout_only = [tag for tag, seen in occurrences.items()
+                   if all(_bare(key) and label in layout_sheets for label, _, key in seen)]
+    for tag in layout_only:
+        if not exact_text or _abbreviates(tag, set(occurrences) - set(layout_only)):
             occurrences.pop(tag)
     # `SLOT1`, `DI6` in a control schematic point at a PLC input; with no
     # model they name a slot or channel, not a module.

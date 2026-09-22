@@ -304,3 +304,11 @@ def test_every_fifth_of_a_title_block_is_whole_in_some_piece():
     assert spans[0][0] == 0 and spans[-1][1] == width
     for start in range(0, width - width // 5):
         assert any(a <= start and start + width // 5 <= b for a, b in spans), start
+
+
+def test_a_cabinet_door_label_is_a_short_form_of_a_drawn_tag():
+    from scheme_extractor.stages.rollup import _abbreviates
+    assert _abbreviates("QU97", {"QU497", "QU1"})
+    assert _abbreviates("FU410.2", {"FU10.2"})
+    assert not _abbreviates("F11", {"F1"})
+    assert not _abbreviates("SH211", {"SH271", "QC211"})
