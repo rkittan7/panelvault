@@ -213,6 +213,7 @@ function boardSchemePrompt(fileName) {
       number: "", name: "", customer: "", project: "", type: "", typeConfidence: "", typeEvidence: "", manufacturer: "",
       manufacturerRole: "", manufacturerEvidence: "", manufacturerCandidates: [{ name: "", role: "", evidence: "", sourcePage: 0 }],
       mainBreakerType: "", mainBreakerModel: "", mainBreakerAmpere: "", mainBreakerReference: "", mainBreakerEvidence: "", cabinetCount: 0,
+      cabinetWidths: "", buildFormat: "",
       jobNumber: "", revision: "", supplyVoltage: "", frequency: "", earthingSystem: "",
       ipRating: "", formSeparation: "", enclosureSize: "", standards: [], notes: "",
     },
@@ -940,6 +941,9 @@ function normalizeReading(reading, catalog, options = {}) {
       mainBreakerReference: readMatchesTarget ? text(mainBreakerPart?.part?.reference || safeBoard.mainBreakerReference, 120) : "",
       mainBreakerEvidence: readMatchesTarget ? text(safeBoard.mainBreakerEvidence, 300) : "",
       cabinetCount: Math.min(Math.max(Math.trunc(Number(safeBoard.cabinetCount) || 1), 1), 40),
+      cabinetWidths: text(safeBoard.cabinetWidths, 80),
+      buildFormat: ["Panels", "Plate"].includes(String(safeBoard.buildFormat || "").trim())
+        ? String(safeBoard.buildFormat).trim() : "",
       jobNumber: text(safeBoard.jobNumber, 60),
       revision: text(safeBoard.revision, 60),
       supplyVoltage: text(safeBoard.supplyVoltage, 40),

@@ -198,6 +198,22 @@ def _models_from_equipment_list(grouped: dict[tuple, BOMLine], items: list) -> N
             and (not line.manufacturer or not item.manufacturer or _norm(item.manufacturer) == _norm(line.manufacturer))
             and (_item_poles(item) is None or poles is None or _item_poles(item) == poles)
         ]
+        if not candidates:
+            # The list names a family the single-lines never use (`KSR..` for
+            # step relays the schematics tag `RC211`). A family pattern stands
+            # for a whole kind of device, so with one of them listed for the
+            # class there is nothing else the line can be. A row that names
+            # one device (`IRL`, no dots) speaks only for that device.
+            listed = [
+                item for item in items
+                if item.model and re.search(r"\d", item.model)
+                and item.device_class == line.device_class and "." in (item.tag_pattern or "")
+                and (not line.manufacturer or not item.manufacturer
+                     or _norm(item.manufacturer) == _norm(line.manufacturer))
+                and (_item_poles(item) is None or poles is None or _item_poles(item) == poles)
+            ]
+            if len({(item.manufacturer, item.model) for item in listed}) == 1:
+                candidates = listed
         fits = {(item.manufacturer, item.model) for item in candidates}
         if len(fits) > 1:
             # Two MCCB families listed (`XT3N 250 36kA`, `XT1C 160 25kA`):
@@ -485,6 +501,45 @@ def build_bom(sheets: list[SheetExtraction], *, exact_text: bool = False) -> lis
         # §11.6: the per-sheet breakdown must sum to the line's quantity, or
         # the line is not auditable and the run should not claim it is.
         assert sum(line.breakdown.values()) == line.qty, f"{line.model}: breakdown does not sum to qty"
+    return lines
+
+
+# What a circuit's cable needs to land on. Klemsan's rail terminals are named
+# by the largest conductor they take, and this shop fits nothing below AVK 4,
+# so a 2.5mm cable lands on an AVK 4 and a 6mm one on an AVK 6.
+AVK_SIZES = (4, 6, 10, 16, 35, 50, 70, 95, 120, 150, 185, 240)
+CABLE = re.compile(r"^(\d+)\s*[xX*×]\s*(\d+(?:[.,]\d+)?)")
+
+
+def terminal_blocks(circuits: list[CircuitRow]) -> list[BOMLine]:
+    """One rail terminal per conductor of every circuit's cable.
+
+    The cable is the only place a drawing says what lands on the rail, and
+    it says it exactly: `3x2.5N2XY` is three cores of 2.5mm. The terminals
+    are not printed as parts, so every line is flagged as worked out here.
+    """
+    per_size: dict[int, list[CircuitRow]] = {}
+    for row in circuits:
+        found = CABLE.match((row.cable or "").strip())
+        if not found:
+            continue
+        cores = int(found.group(1))
+        area = float(found.group(2).replace(",", "."))
+        size = next((s for s in AVK_SIZES if s >= area), None)
+        if size is None or cores > 12:
+            continue
+        per_size.setdefault(size, []).extend([row] * cores)
+    lines = []
+    for size, rows in sorted(per_size.items()):
+        breakdown: dict[str, int] = {}
+        for row in rows:
+            label = row.sheet_label or ""
+            breakdown[label] = breakdown.get(label, 0) + 1
+        lines.append(BOMLine(
+            device_class="terminal", manufacturer="Klemsan", model=f"AVK {size}",
+            qty=len(rows), tags=sorted({r.terminal for r in rows if r.terminal}),
+            breakdown=breakdown, flags=["from_cable_sizes"],
+        ))
     return lines
 
 

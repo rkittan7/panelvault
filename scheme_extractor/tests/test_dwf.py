@@ -12,7 +12,8 @@ import pytest
 
 from scheme_extractor.dwf import hebrew, package, whip
 from scheme_extractor.dwf.sheet import (
-    Grid, board_data, circuit_table, consensus_title, device, equipment_list, read_sheet, stacks, title_block,
+    Grid, board_data, circuit_table, consensus_title, device, enclosure_build, equipment_list, read_sheet,
+    stacks, title_block,
 )
 from scheme_extractor.models.schema import TitleBlock
 
@@ -230,6 +231,19 @@ def test_title_values_are_found_at_the_offset_the_drawing_number_measures():
     assert title.project == "אגרובנק TOWER B"
     assert title.client == 'ס.מ.ע עבודות חשמל בע"מ'
     assert title.panel == "לוח חשמל E2 קומה 22"
+
+
+def test_the_front_elevation_counts_the_cabinets_and_names_the_format():
+    page = whip.Page(texts=[
+        T("מראה לוח עם פנלים לפי תקן", 18448, 9179, "PTAG", 82),
+        T("1950", 9988, 4918, "PRTG"), T("100", 10217, 2251, "PRTG"),   # height and base, not widths
+        T("500", 11171, 1900, "DREAW"), T("600", 12776, 1900, "DREAW"), T("600", 14502, 1900, "DREAW"),
+        T("800", 16539, 1900, "DREAW"), T("800", 18867, 1899, "DREAW"), T("600", 20905, 1899, "DREAW"),
+        T("3900", 16057, 1662, "DREAW"), T("500", 22350, 2354, "PTAG"),  # overall width, and the depth
+    ])
+    build = enclosure_build([page], width=3900)
+    assert build == {"cabinet_count": "6", "cabinet_widths": "500+600+600+800+800+600",
+                     "build_format": "Panels"}
 
 
 def test_the_title_is_what_most_sheets_read():

@@ -186,6 +186,7 @@ def run(
         progress("rolling up", 0.80)
     bom = rollup.build_bom(sheets)
     circuits, counts = rollup.flatten_circuits(sheets)
+    bom += rollup.terminal_blocks(circuits)
 
     # ---------------------------------------------------------- stage 7
     if progress:
@@ -268,6 +269,13 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
 
     bom = rollup.build_bom(sheets, exact_text=True)
     circuits, counts = rollup.flatten_circuits(sheets)
+    bom += rollup.terminal_blocks(circuits)
+
+    # How the board is built: the front elevation's cabinets and format.
+    overall = next((d.value for s in sheets for d in s.board_data if "מידה" in d.label_he), "")
+    size = re.search(r"(\d{3,5})\s*[xX]\s*(\d{3,5})", overall or "")
+    build = dwf_sheet.enclosure_build(
+        [page.page for page in pages], max(int(size.group(1)), int(size.group(2))) if size else None)
 
     # The board's incomer: the highest-rated breaker or switch it carries.
     incomers = [d for s in sheets for d in s.devices if d.device_class in {"mccb", "switch"} and d.rating]
@@ -280,6 +288,7 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
             PanelFact(field="main_breaker_model", value=main.model),
             PanelFact(field="main_breaker_rating", value=main.rating),
         ]
+    facts += [PanelFact(field=field, value=value) for field, value in build.items()]
     unresolved = [line for line in bom if line.needs_human]
     if unresolved:
         warnings.append(f"{len(unresolved)} BOM line(s) carry unresolved flags and are marked for human review.")

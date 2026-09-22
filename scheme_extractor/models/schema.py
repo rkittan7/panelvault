@@ -391,7 +391,8 @@ PanelField = Literal[
     "enclosure_manufacturer", "board_type", "revision", "job_number",
     "main_breaker_reference", "main_breaker_type", "main_breaker_model", "main_breaker_rating",
     "rated_current", "short_circuit_rating", "supply_voltage", "frequency", "earthing_system",
-    "ip_rating", "form_separation", "enclosure_size", "other",
+    "ip_rating", "form_separation", "enclosure_size", "cabinet_count", "cabinet_widths",
+    "build_format", "other",
 ]
 
 

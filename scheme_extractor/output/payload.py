@@ -30,7 +30,7 @@ PANELVAULT_TYPE = {
     "plc": "PLC",
     "plc_module": "PLC Module",
     "psu": "Power Supply",
-    "terminal": "Terminal",
+    "terminal": "Terminal Block",
     "alarm_interface": "Alarm Interface",
     "enclosure": "Enclosure",
     "label": "Label",
@@ -40,7 +40,8 @@ PANELVAULT_TYPE = {
 
 # Drawing furniture, not parts: a destination terminal (`XU497`) is a place a
 # cable lands, and matching it against the catalogue only filled the review
-# list with "Terminal ×39". They stay in the workbook's BOM.
+# list with "Terminal ×39". They stay in the workbook's BOM. A line that
+# names a part (the rail terminals worked out from the cables) is a part.
 NOT_PARTS = {"terminal", "label", "external"}
 
 
@@ -144,7 +145,8 @@ def board_draft(run: ExtractionRun) -> dict[str, Any]:
     main_line = next((line for line in run.bom if main_tag and main_tag in line.tags), None)
     enclosure = facts.get("enclosure_manufacturer", "")
     components = [
-        _component(line, number, main_tag) for line in run.bom if line.device_class not in NOT_PARTS
+        _component(line, number, main_tag) for line in run.bom
+        if line.device_class not in NOT_PARTS or line.model
     ]
     return {
         "board": {
@@ -167,7 +169,9 @@ def board_draft(run: ExtractionRun) -> dict[str, Any]:
             "mainBreakerAmpere": facts.get("main_breaker_rating", "") or (main_line.rating or "" if main_line else ""),
             "mainBreakerReference": main_tag,
             "mainBreakerEvidence": "",
-            "cabinetCount": 1,
+            "cabinetCount": int(facts.get("cabinet_count") or 1),
+            "cabinetWidths": facts.get("cabinet_widths", ""),
+            "buildFormat": facts.get("build_format", ""),
             "jobNumber": facts.get("job_number", ""),
             "revision": facts.get("revision", ""),
             "supplyVoltage": facts.get("supply_voltage", ""),

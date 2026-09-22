@@ -4942,5 +4942,65 @@
 "about": "Ammeter selector letting one meter read each phase in turn. It must be the CT-shorting type so the transformer secondary is never opened while switching.",
 "group": "door-devices",
 "groupName": "Door & Operator Devices"
+},
+{
+"id": "klemsan-avk-4",
+"manufacturer": "Klemsan",
+"type": "Terminal Block",
+"model": "AVK 4",
+"rating": "0.5-4mm²",
+"poles": "DIN",
+"curve": "Screw clamp",
+"about": "Screw-clamp rail terminal for conductors up to 4mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
+},
+{
+"id": "klemsan-avk-6",
+"manufacturer": "Klemsan",
+"type": "Terminal Block",
+"model": "AVK 6",
+"rating": "0.5-6mm²",
+"poles": "DIN",
+"curve": "Screw clamp",
+"about": "Screw-clamp rail terminal for conductors up to 6mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
+},
+{
+"id": "klemsan-avk-10",
+"manufacturer": "Klemsan",
+"type": "Terminal Block",
+"model": "AVK 10",
+"rating": "1.5-10mm²",
+"poles": "DIN",
+"curve": "Screw clamp",
+"about": "Screw-clamp rail terminal for conductors up to 10mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
+},
+{
+"id": "klemsan-avk-16",
+"manufacturer": "Klemsan",
+"type": "Terminal Block",
+"model": "AVK 16",
+"rating": "2.5-16mm²",
+"poles": "DIN",
+"curve": "Screw clamp",
+"about": "Screw-clamp rail terminal for conductors up to 16mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
+},
+{
+"id": "klemsan-avk-35",
+"manufacturer": "Klemsan",
+"type": "Terminal Block",
+"model": "AVK 35",
+"rating": "6-35mm²",
+"poles": "DIN",
+"curve": "Screw clamp",
+"about": "Screw-clamp rail terminal for conductors up to 35mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
+"group": "terminals",
+"groupName": "Terminals & Wiring"
 }
 ]

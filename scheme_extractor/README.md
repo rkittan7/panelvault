@@ -37,7 +37,8 @@ for nothing.
 |---|---|---|
 | `dwf/whip.py` | the WHIP! page streams inside the DWF: every text, its position, layer and font, and the line work. Opcode layouts follow Autodesk's DWF Toolkit; an unknown opcode stops the reader rather than letting it drift |
 | `dwf/hebrew.py` | Hebrew stored as the keys an Israeli keyboard would press (`ao pruhhey:` is שם פרוייקט:), decoded word by word; Latin words stay |
-| `dwf/sheet.py` | devices as stacked labels (`FU411 / 16A / C / ABB`), destination tables down their columns with merged cells from the drawing's rules, the parts list and data table by their ruled rows, and the title block by label/value pairs |
+| `dwf/sheet.py` | devices as stacked labels (`FU411 / 16A / C / ABB`), destination tables down their columns with merged cells from the drawing's rules, the parts list and data table by their ruled rows, the title block by label/value pairs, and the front elevation's cabinets |
+| `dwf/strokes.py` | labels AutoCAD could not carry as text and drew as line work (the contactors' `AF38`, `IRLA04S`, `SOCOMEC`), read by matching each glyph against the stroke font in `dwf/strokefont.json` |
 
 Things the reading has to account for:
 
@@ -52,14 +53,31 @@ Things the reading has to account for:
   title block by not repeating on the other sheets.
 - A font's rotation flag is not what is plotted: labels flagged 90° print
   level, so rotation is ignored.
-- A few labels are exported only as strokes, with no text behind them
-  (SH211's `3X40A SOCOMEC`, the contactors' AF models): those are left for
-  the parts list or a person.
+- Labels the export could not carry as text are drawn as strokes with a `?`
+  left in their place; `dwf/strokes.py` reads them, and only when every one
+  of a label's glyphs is known, so an unreadable label stays unread rather
+  than becoming a guess at a device's model.
+- A model beside a device rather than under it (`AF40 / ABB` next to a
+  contactor's box) is not a device of its own: it goes to the nearest device
+  of its kind that has no model.
 - A cabinet-door label can shorten a tag (`QU97` for `QU497`); it is not
   counted twice.
 
 From there the run is the same: grouping, parts-list models, the board draft
 and the workbook. The main breaker is the highest-rated breaker or switch.
+
+The front elevation also gives the board's build: the row of widths that adds
+up to the board's own width counts the cabinets (`500+600+600+800+800+600` is
+six), and the sheet says whether it closes with panels or a plate. Both reach
+the board form, which had been filling in one cabinet and Panels by default.
+
+## Terminals from the cables
+
+A destination table's cable is the only place a drawing says what lands on
+the rail, and it says it exactly: `3x2.5N2XY` is three cores of 2.5mm. Every
+core gets a rail terminal, named by the largest conductor it takes — Klemsan
+AVK, nothing below AVK 4 — so 2.5mm lands on AVK 4 and 6mm on AVK 6. The
+lines are flagged `from_cable_sizes`, because no drawing printed them.
 
 ## The stages
 

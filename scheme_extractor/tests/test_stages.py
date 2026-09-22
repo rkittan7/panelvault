@@ -312,3 +312,20 @@ def test_a_cabinet_door_label_is_a_short_form_of_a_drawn_tag():
     assert _abbreviates("FU410.2", {"FU10.2"})
     assert not _abbreviates("F11", {"F1"})
     assert not _abbreviates("SH211", {"SH271", "QC211"})
+
+
+def test_every_cable_core_lands_on_a_klemsan_terminal_of_its_own_size():
+    from scheme_extractor.models.schema import CircuitRow
+    from scheme_extractor.stages.rollup import terminal_blocks
+
+    rows = [
+        CircuitRow(terminal="X21", cable="3x2.5N2XY", sheet_label="03"),   # 2.5mm: AVK 4 is the smallest fitted
+        CircuitRow(terminal="X22", cable="5x2.5N2XY", sheet_label="03"),
+        CircuitRow(terminal="X23", cable="3x6N2XY", sheet_label="04"),     # 6mm: AVK 6
+        CircuitRow(terminal="X24", cable=None, sheet_label="04"),
+    ]
+    lines = {line.model: line for line in terminal_blocks(rows)}
+    assert lines["AVK 4"].qty == 8 and lines["AVK 4"].manufacturer == "Klemsan"
+    assert lines["AVK 4"].breakdown == {"03": 8}
+    assert lines["AVK 6"].qty == 3
+    assert lines["AVK 4"].flags == ["from_cable_sizes"]

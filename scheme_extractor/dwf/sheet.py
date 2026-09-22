@@ -616,6 +616,48 @@ def read_sheet(number: int, page: whip.Page, board_number: str,
     )
 
 
+# ------------------------------------------------------- the enclosure
+
+ELEVATION = "מראה לוח"          # the sheet that draws the board's front
+PANELS, PLATE = "פנלים", "פלטה"
+FIELD = re.compile(r"^שדה\s")   # a cabinet's own label: שדה חיוני, שדה אלפסק
+
+
+def enclosure_build(pages: list[whip.Page], width: int | None = None) -> dict[str, str]:
+    """How many cabinets the board is built from, and in what format.
+
+    A front elevation dimensions each cabinet along the bottom, so the row
+    of widths that adds up to the board's own width counts the cabinets;
+    where no row does, each cabinet's `שדה …` label is counted instead.
+    The same sheets say whether the board is closed with panels or a plate.
+    """
+    found: dict[str, str] = {}
+    elevations = [p for p in pages if any(ELEVATION in t.text for t in p.texts)]
+    for page in elevations:
+        rows: dict[int, list[whip.Text]] = {}
+        for text in page.texts:
+            if re.fullmatch(r"\d{3,4}", text.text):
+                rows.setdefault(round(text.y / 60), []).append(text)
+        for row in sorted(rows.values(), key=len, reverse=True):
+            widths = [int(t.text) for t in sorted(row, key=lambda t: t.x)]
+            if len(widths) >= 2 and (width is None or sum(widths) == width):
+                found["cabinet_count"] = str(len(widths))
+                found["cabinet_widths"] = "+".join(str(w) for w in widths)
+                break
+        if "cabinet_count" in found:
+            break
+    if "cabinet_count" not in found and elevations:
+        labels = {(t.x, t.y) for p in elevations for t in p.texts if FIELD.match(t.text)}
+        if labels:
+            found["cabinet_count"] = str(len(labels))
+    words = {t.text for page in pages for t in page.texts}
+    if any(PANELS in word for word in words):
+        found["build_format"] = "Panels"
+    elif any(word.startswith(PLATE[:4]) for word in words):
+        found["build_format"] = "Plate"
+    return found
+
+
 def complete_plc_models(sheets: list[SheetExtraction]) -> None:
     """`TM3DQ16` under the rack drawing is the `TM3DQ16R` its I/O sheet
     names in full: one module, named by its longest spelling."""

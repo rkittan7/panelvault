@@ -169,14 +169,21 @@ def test_hebrew_abbreviations_inside_stringified_json_are_repaired():
     assert sheet.devices[0].notes_he == "פ״י״ס״ק״ם"
 
 
-def test_a_parts_list_row_names_only_the_tags_it_patterns():
-    items = [{"tag_pattern": "IRL", "device_class": "relay", "manufacturer": "GIC", "model": "IRLA04S"},
-             {"tag_pattern": "KSR..", "device_class": "switch", "manufacturer": "HAGER", "model": "EPN510"}]
-    sheets = [
-        _listed(20, [{"tag": "R211", "device_class": "relay"}, {"tag": "SPU", "device_class": "switch"}]),
-        _listed(35, [], items),
-    ]
+def test_a_parts_list_row_for_one_device_names_only_that_device():
+    # `IRL` is the alarm module's own row, not a family: the relays the
+    # schematics tag R211 are not IRLA04S modules.
+    items = [{"tag_pattern": "IRL", "device_class": "relay", "manufacturer": "GIC", "model": "IRLA04S"}]
+    sheets = [_listed(20, [{"tag": "R211", "device_class": "relay"}]), _listed(35, [], items)]
     assert all(line.model is None for line in build_bom(sheets))
+
+
+def test_a_family_row_names_its_kind_even_where_the_schematics_tag_it_otherwise():
+    # 4382.26-1 lists `KSR..` for step relays its single-lines tag `RC211`.
+    items = [{"tag_pattern": "KSR..", "device_class": "step_relay", "manufacturer": "HAGER", "model": "EPN510"}]
+    sheets = [_listed(20, [{"tag": "RC211", "device_class": "step_relay"}]), _listed(35, [], items)]
+    line = next(line for line in build_bom(sheets) if line.device_class == "step_relay")
+    assert (line.model, line.manufacturer) == ("EPN510", "HAGER")   # as the list spells it
+    assert "model_from_equipment_list" in line.flags
 
 
 def test_one_motor_breaker_is_one_line_whatever_dash_or_class_a_sheet_used():

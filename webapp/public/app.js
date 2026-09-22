@@ -5062,6 +5062,9 @@ function renderBoardCreate() {
     // field keeps whatever it is given.
     if (matchedManufacturer || aiManufacturer) manufacturer.set(matchedManufacturer || aiManufacturer);
     cabinets.select.value = String(Math.max(1, Math.min(12, Number(aiDraft.cabinetCount) || 1)));
+    if (["Panels", "Plate"].includes(String(aiDraft.buildFormat || "").trim())) {
+      buildFormat.select.value = String(aiDraft.buildFormat).trim();
+    }
     const breakerTypes = [...mainBreakerType.select.options].map((option) => option.value);
     const matchedBreakerType = breakerTypes.find((value) =>
       value.toLowerCase() === String(aiDraft.mainBreakerType || "").trim().toLowerCase());
