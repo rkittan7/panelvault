@@ -26,6 +26,28 @@ GET  /api/ai/scheme-extract?job=<id>      → { status, stage, progress, result 
 GET  /api/ai/scheme-extract-workbook?job= → the reviewer's xlsx
 ```
 
+## DWF: the exact path
+
+Send an AutoCAD DWF export instead of a PDF and none of the stages below run.
+A DWF keeps every label as text with its position, so `dwf/` reads the set
+as geometry, with no model and no rendering: a 42-sheet set in about a second,
+for nothing.
+
+| | | |
+|---|---|---|
+| `dwf/whip.py` | the WHIP! page streams inside the DWF: every text, its position, layer and font, and the line work. Opcode layouts follow Autodesk's DWF Toolkit; an unknown opcode stops the reader rather than letting it drift |
+| `dwf/hebrew.py` | Hebrew stored as the keys an Israeli keyboard would press (`ao pruhhey:` is שם פרוייקט:), decoded word by word; Latin words stay |
+| `dwf/sheet.py` | devices as stacked labels (`FU411 / 16A / C / ABB`), destination tables down their columns with merged cells from the drawing's rules, the parts list and data table by their ruled rows, and the title block by label/value pairs |
+
+Two things the geometry has to account for: AutoCAD plots a title block's
+labels in paper space and its values in model space, so the offset between
+them is measured on the one pair whose value is known (the drawing number);
+and a few labels are exported only as strokes, with no text behind them, so
+they cannot be read (QU1 on 4382.26-1).
+
+From there the run is the same: grouping, parts-list models, the board draft
+and the workbook. The main breaker is the highest-rated breaker or switch.
+
 ## The stages
 
 | | | |

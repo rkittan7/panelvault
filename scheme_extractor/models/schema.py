@@ -303,7 +303,7 @@ class SheetExtraction(Contract):
         if isinstance(data, dict) and isinstance(data.get("equipment_list"), list):
             data = {**data, "equipment_list": [
                 row for row in data["equipment_list"]
-                if isinstance(row, dict) and row.get("tag_pattern") and row.get("device_class")
+                if not isinstance(row, dict) or (row.get("tag_pattern") and row.get("device_class"))
             ]}
         if isinstance(data, dict) and isinstance(data.get("circuit_table"), list):
             data = {**data, "circuit_table": _spare_text_across_spans(data["circuit_table"])}

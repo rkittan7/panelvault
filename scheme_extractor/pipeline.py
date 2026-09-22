@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,8 @@ from .cache import ArtifactCache, source_hash
 from .config import Config
 from .models.client import AnthropicClient, LLMClient
 from .models.schema import AuditResult, ExtractionRun, Sheet, SheetExtraction
+from .dwf import package as dwf_package, sheet as dwf_sheet
+from .models.schema import PanelFact
 from .stages import audit, extract, reconcile, rollup, title, zoom
 from .stages.probe import ProbeResult, probe
 from .stages.render import PageRegions, page_regions
@@ -94,6 +97,9 @@ def run(
     job_id: str | None = None,
     progress: Progress | None = None,
 ) -> ExtractionRun:
+    with open(pdf, "rb") as handle:
+        if dwf_package.is_dwf(handle.read(16)):
+            return run_dwf(pdf, job_id=job_id, progress=progress)
     digest = source_hash(pdf)
     cache = ArtifactCache(config.cache_dir, digest)
     job = job_id or f"job_{uuid.uuid4().hex[:12]}"
@@ -218,4 +224,74 @@ def run(
         cost=cost,
         warnings=warnings,
         notes=notes,
+    )
+
+
+# ------------------------------------------------------------------ DWF
+
+def _amps(rating: str | None) -> float:
+    found = re.search(r"(\d+(?:\.\d+)?)\s*A\b", (rating or "").upper())
+    return float(found.group(1)) if found else 0.0
+
+
+def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None = None) -> ExtractionRun:
+    """The same run, read from a DWF's own text: no model, no rendering.
+
+    A CAD export keeps every label as text with its position, so devices,
+    tables, the parts list, the data table and the title block are read as
+    geometry (dwf/sheet.py). What the PDF path asks a model for — the audit's
+    choice of main breaker — is decided here from the ratings.
+    """
+    job = job_id or f"job_{uuid.uuid4().hex[:12]}"
+    pages = dwf_package.read(path)
+    number = dwf_package.board_number(pages)
+    sheets: list[SheetExtraction] = []
+    warnings: list[str] = []
+    for index, page in enumerate(pages):
+        reading = dwf_sheet.read_sheet(page.number, page.page, number)
+        reading.layout_kind = "table" if reading.circuit_table else "no_table"
+        for device in reading.devices:
+            device.sheet_label = reading.sheet.sheet_label
+        for row in reading.circuit_table:
+            row.sheet_label = reading.sheet.sheet_label
+        for problem in reconcile.column_problems(reading) if reading.circuit_table else []:
+            warnings.append(f"Sheet {reading.sheet.sheet_label}: {problem} — the table may be misread.")
+        sheets.append(reading)
+        if progress:
+            progress(f"read sheet {page.number}", 0.9 * (index + 1) / len(pages))
+
+    identity = dwf_sheet.consensus_title([s.sheet.title_block for s in sheets])
+    for reading in sheets:
+        reading.sheet.title_block = identity
+
+    bom = rollup.build_bom(sheets)
+    circuits, counts = rollup.flatten_circuits(sheets)
+
+    # The board's incomer: the highest-rated breaker or switch it carries.
+    incomers = [d for s in sheets for d in s.devices if d.device_class in {"mccb", "switch"} and d.rating]
+    facts = []
+    if incomers:
+        main = max(incomers, key=lambda d: _amps(d.rating))
+        facts = [
+            PanelFact(field="main_breaker_reference", value=main.tag),
+            PanelFact(field="main_breaker_type", value=main.device_class),
+            PanelFact(field="main_breaker_model", value=main.model),
+            PanelFact(field="main_breaker_rating", value=main.rating),
+        ]
+    unresolved = [line for line in bom if line.needs_human]
+    if unresolved:
+        warnings.append(f"{len(unresolved)} BOM line(s) carry unresolved flags and are marked for human review.")
+    if progress:
+        progress("done", 1.0)
+    return ExtractionRun(
+        job_id=job,
+        source_hash=source_hash(path),
+        sheets=sheets,
+        bom=bom,
+        circuits=circuits,
+        counts=counts,
+        audit=AuditResult(panel=facts),
+        cost={"total_usd": 0.0},
+        warnings=warnings,
+        notes=["Read from the DWF's own text and geometry; no model was used."],
     )

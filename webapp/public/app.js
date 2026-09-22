@@ -4272,9 +4272,17 @@ async function readSchemeWithClaude(upload, { signal, onProgress } = {}) {
     server's limit. */
 const MAX_FILE_BYTES = 14_000_000;
 const SCHEME_MIME_TYPES = [
-  "application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+  "application/pdf", "model/vnd.dwf", "application/x-dwf", "drawing/x-dwf",
+  "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
 ];
-const SCHEME_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
+const SCHEME_EXTENSIONS = [".pdf", ".dwf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
+
+/** A CAD export (DWF) is read from its own text by the extractor: exact, and
+    no AI cost. PDFs go to the same extractor; photos to the image reader. */
+function isDWF(file) {
+  return String(file?.name || file?.fileName || "").toLowerCase().endsWith(".dwf")
+    || /dwf/i.test(String(file?.type || file?.mimeType || ""));
+}
 
 function isSchemeFile(file) {
   const name = (file.name || "").toLowerCase();
@@ -4288,17 +4296,17 @@ function schemeIntakePanel(kind, onComplete) {
   head.append(chipIcon("scan", "var(--primary)"));
   const copy = el("div");
   copy.append(el("span", "eyebrow", "Audited AI scheme reader"), el("h2", null, `Scan a scheme for this ${kind.toLowerCase()}`),
-    el("p", null, "PDFs use the new Claude extraction pipeline. PNG, JPG, WebP and HEIC photos use the image reader. Up to 14 MB; nothing is created until you review and confirm it."));
+    el("p", null, "AutoCAD DWF exports are read exactly from the drawing's own text. PDFs use the Claude extraction pipeline. PNG, JPG, WebP and HEIC photos use the image reader. Up to 14 MB; nothing is created until you review and confirm it."));
   head.append(copy);
   panel.append(head);
 
   const input = el("input");
   input.type = "file";
-  input.accept = "application/pdf,image/jpeg,image/png,image/webp,image/heic";
+  input.accept = "application/pdf,.dwf,image/jpeg,image/png,image/webp,image/heic";
   input.className = "hidden";
   const drop = el("button", "scheme-upload-zone");
   drop.type = "button";
-  drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "or drop a PDF or image here"));
+  drop.append(icon("note", 28), el("strong", null, "Choose the AutoCAD scheme"), el("span", null, "or drop a DWF, PDF or image here"));
   const status = el("div", "scheme-file-status", "No file selected");
   const error = el("div", "form-error hidden");
 
@@ -4327,6 +4335,7 @@ function schemeIntakePanel(kind, onComplete) {
 
   const scanLabel = () => {
     const name = String(selectedFile?.name || "").toLowerCase();
+    if (isDWF(selectedFile)) return "Read CAD drawing";
     const pdf = selectedFile?.type === "application/pdf" || name.endsWith(".pdf");
     return pdf ? "Read scheme with Claude" : "Read image with AI";
   };
@@ -4356,7 +4365,7 @@ function schemeIntakePanel(kind, onComplete) {
     if (!file) return;
     error.classList.add("hidden");
     if (!isSchemeFile(file)) {
-      showError("Attach a PDF, PNG, JPG, WebP or HEIC drawing.");
+      showError("Attach a DWF, PDF, PNG, JPG, WebP or HEIC drawing.");
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
@@ -4417,12 +4426,13 @@ function schemeIntakePanel(kind, onComplete) {
         size: selectedFile.size,
       };
       const isPDF = upload.mimeType === "application/pdf" || upload.fileName.toLowerCase().endsWith(".pdf");
-      if (isPDF) {
+      const cad = isDWF(upload);
+      if (isPDF || cad) {
         result = await readSchemeWithClaude(upload, {
           signal: controller.signal,
           onProgress: (job) => {
             const percent = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
-            progressTitle.textContent = `Reading with Claude · ${percent}%`;
+            progressTitle.textContent = cad ? `Reading the CAD drawing · ${percent}%` : `Reading with Claude · ${percent}%`;
             progressDetail.textContent = job.stage || (job.status === "queued"
               ? "Waiting for the extractor to start…"
               : "Checking every sheet against the drawing…");

@@ -126,8 +126,8 @@ def _start(pdf: Path, config: Config, tasks: BackgroundTasks) -> Job:
 
 
 def _store(data: bytes, name: str) -> Path:
-    if not data[:5].startswith(b"%PDF-"):
-        raise HTTPException(status_code=415, detail="That file is not a PDF.")
+    if not (data[:5].startswith(b"%PDF-") or data.startswith(b"(DWF V")):
+        raise HTTPException(status_code=415, detail="That file is neither a PDF nor a DWF.")
     if len(data) > MAX_PDF_BYTES:
         raise HTTPException(status_code=413, detail="That drawing set is too large to read.")
     folder = JOBS_DIR / f"upload_{uuid.uuid4().hex[:12]}"
