@@ -41,10 +41,11 @@ DEFAULT_MODELS: dict[str, StageModel] = {
     "extract": StageModel("claude-haiku-4-5-20251001", 8000, use_batch=True),
     "zoom": StageModel("claude-haiku-4-5-20251001", 2000),
     "audit": StageModel("claude-haiku-4-5-20251001", 8000),
-    # The sheet carrying the title block and the board data table. Its own
-    # stage so it can be moved to a stronger model with one line
-    # (SCHEME_MODEL_TITLE=claude-sonnet-5, about five cents a drawing).
-    "title": StageModel("claude-haiku-4-5-20251001", 8000),
+    # One small call for the board's identity (stages/title.py): the title
+    # block and data table alone, about two cents. Haiku paired the fields
+    # right but misread the CAD-font Hebrew letters on every attempt, so this
+    # is the one call that is not Haiku. SCHEME_MODEL_TITLE overrides it.
+    "title": StageModel("claude-sonnet-5", 4000),
 }
 
 
@@ -99,7 +100,9 @@ class RenderSettings:
     table_band_dpi: int = 350
     title_block_dpi: int = 300
     zoom_dpi: int = 600
-    context_long_edge: int = 1536
+    # Layout only; no value is ever read off it. At 1536px it was a quarter
+    # of every sheet's image tokens.
+    context_long_edge: int = 1024
     chunk_width: int = 1400
     # A merged destination cell cut exactly at a chunk boundary with no
     # context around it is unrecoverable, so chunks overlap.

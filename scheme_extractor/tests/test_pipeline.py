@@ -222,3 +222,13 @@ def test_an_account_out_of_credit_fails_the_run_in_plain_words():
            "'message': 'Your credit balance is too low to access the Anthropic API.'}}")
     assert "out of credit" in account_problem(raw)
     assert account_problem("devices: Input should be a valid list") is None
+
+
+
+@needs_reference
+def test_the_title_stage_names_the_board(cache_dir):
+    config = Config(cache_dir=cache_dir)
+    result = run(REFERENCE, config, client=FakeClient(config), job_id="job_title")
+    first = next(s for s in result.sheets if s.sheet.page_number == 1)
+    assert first.sheet.title_block.project == "אגרובנק TOWER B"
+    assert not any("title block could not be read" in w for w in result.warnings)

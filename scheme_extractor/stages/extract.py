@@ -72,20 +72,10 @@ def region_guidance(regions: PageRegions, chunk_overlap: int) -> str:
             f"in {len(band.chunks)} piece(s) left to right."
         )
         index += 1
-    title = regions.regions.get("title_block")
-    if title:
-        parts.append(
-            f"{index}. `region_title_block` — the title block, in {len(title.chunks)} piece(s) "
-            "left to right that overlap by a quarter of its width. Each label sits to the RIGHT "
-            "of its own value (Hebrew order); pair them within one piece, never across two."
-        )
-        index += 1
-    else:
-        parts.append(
-            "The title block is identical on every sheet of this set and is read once "
-            "elsewhere. Leave `sheet.title_block` fields null here unless this sheet "
-            "prints something different."
-        )
+    parts.append(
+        "The title block and the switchboard data table are read elsewhere; "
+        "do not transcribe them."
+    )
 
     if (single and len(single.chunks) > 1) or (band and len(band.chunks) > 1):
         parts.append(
@@ -170,7 +160,7 @@ def build_call(
         ),
         image_block(regions.regions["context_page"].path),
     ]
-    for name in ("single_line", "table_band", "title_block"):
+    for name in ("single_line", "table_band"):
         region = regions.regions.get(name)
         if region:
             content.extend(image_block(chunk) for chunk in region.chunks)
@@ -227,18 +217,71 @@ def extract_sheets(
             return
         except ValidationError as error:
             message = _first_error(error)
+        # Drop only the rows that break the contract, free, before paying for
+        # a correction turn: on Haiku the retry often fails again, and failing
+        # lost a whole sheet (24 of 4382.26-8, over one spare cell).
+        salvaged, dropped = salvage(payload)
+        if salvaged is not None and len(dropped) <= SALVAGE_WITHOUT_RETRY:
+            salvaged.notes.extend(f"Dropped an unreadable {item}." for item in dropped)
+            results[sheet_call.page] = (salvaged, "")
+            return
         try:
-            # One correction turn with the validation error attached (§6). The
-            # invariants that fail here — a qty that does not match its tags, a
-            # spare with no שמור — are exactly the ones worth one more ask.
+            # One correction turn with the validation error attached (§6).
             corrected, _ = client.revalidate(stage, sheet_call.call, message)
             results[sheet_call.page] = (SheetExtraction.model_validate(corrected), "")
+            return
         except Exception as error:  # noqa: BLE001 — carry on with the other sheets
-            results[sheet_call.page] = (None, f"{message} | retry failed: {error}")
+            retry_error = f"{message} | retry failed: {error}"
+        if salvaged is not None:
+            salvaged.notes.extend(f"Dropped an unreadable {item}." for item in dropped)
+            results[sheet_call.page] = (salvaged, "")
+        else:
+            results[sheet_call.page] = (None, retry_error)
 
     with ThreadPoolExecutor(max_workers=config.extract_concurrency) as pool:
         list(pool.map(finish, list(raw)))
     return results
+
+
+SALVAGE_WITHOUT_RETRY = 3
+# Fields a row cannot exist without; anything else can be dropped on its own.
+REQUIRED_KEYS = {"tag", "device_class", "terminal", "tag_pattern"}
+
+
+def salvage(payload: dict) -> tuple[SheetExtraction | None, list[str]]:
+    """Validate after removing each list item that fails, one pass at a time.
+
+    Returns the sheet and what was dropped (`circuit_table row 1`), or None
+    when an error is not inside a list item and cannot be dropped.
+    """
+    data = dict(payload)
+    dropped: list[str] = []
+    for _ in range(10):
+        try:
+            return SheetExtraction.model_validate(data), dropped
+        except ValidationError as error:
+            bad: dict[str, set[int]] = {}
+            for problem in error.errors():
+                loc = problem["loc"]
+                if not (len(loc) >= 2 and isinstance(loc[0], str) and isinstance(loc[1], int)):
+                    return None, dropped
+                item = (data.get(loc[0]) or [None] * (loc[1] + 1))[loc[1]]
+                # One stray or malformed optional field: drop the field, keep
+                # the row. Only a row that is itself wrong is dropped.
+                field = loc[2] if len(loc) >= 3 and isinstance(loc[2], str) else None
+                if isinstance(item, dict) and field in item and field not in REQUIRED_KEYS:
+                    data[loc[0]] = list(data[loc[0]])
+                    data[loc[0]][loc[1]] = {k: v for k, v in item.items() if k != field}
+                    dropped.append(f"{field.replace('_', ' ')} on {loc[0].replace('_', ' ')} entry {loc[1]}")
+                    continue
+                bad.setdefault(loc[0], set()).add(loc[1])
+            for field, indexes in bad.items():
+                items = data.get(field)
+                if not isinstance(items, list):
+                    return None, dropped
+                dropped.extend(f"{field.replace('_', ' ')} entry {i}" for i in sorted(indexes))
+                data[field] = [item for i, item in enumerate(items) if i not in indexes]
+    return None, dropped
 
 
 def _first_error(error: ValidationError) -> str:

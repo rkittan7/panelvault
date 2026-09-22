@@ -12,7 +12,7 @@ from .cache import ArtifactCache, source_hash
 from .config import Config
 from .models.client import AnthropicClient, LLMClient
 from .models.schema import AuditResult, ExtractionRun, Sheet, SheetExtraction
-from .stages import audit, extract, reconcile, rollup, zoom
+from .stages import audit, extract, reconcile, rollup, title, zoom
 from .stages.probe import ProbeResult, probe
 from .stages.render import PageRegions, page_regions
 from .stages.textlayer import AnchorError, PageTokens, page_tokens
@@ -113,17 +113,7 @@ def run(
     ]
     if progress:
         progress(f"reading {len(calls)} sheets", 0.30)
-    # The sheet sent with its title block goes to the title stage's model:
-    # its Hebrew is what names the board, and the cheap model misreads it.
-    titled = {
-        page for page, prepared_page in prepared.pages.items()
-        if "title_block" in prepared_page.regions.regions
-    }
-    title_stage = "title" if "title" in config.models else "extract"
-    extracted = extract.extract_sheets(client, config, [c for c in calls if c.page not in titled])
-    extracted.update(extract.extract_sheets(
-        client, config, [c for c in calls if c.page in titled], stage=title_stage,
-    ))
+    extracted = extract.extract_sheets(client, config, calls)
 
     sheets: list[SheetExtraction] = []
     # A page that could not be prepared is a problem; how the others were
@@ -153,6 +143,19 @@ def run(
         # Nothing was read. An empty draft would look like an empty board;
         # fail the job with the reason instead.
         raise ExtractionFailed(f"Claude could not read any of the {len(sheets)} sheets. First error: {failures[0]}")
+
+    # The board's identity, read on its own: see stages/title.py.
+    for sheet in sheets:
+        prepared_page = prepared.pages.get(sheet.sheet.page_number)
+        if prepared_page is None or "title_block" not in prepared_page.regions.regions:
+            continue
+        identity, problem = title.read(client, prepared_page.regions)
+        if identity is not None:
+            sheet.sheet.title_block = identity.title_block
+            if identity.board_data:
+                sheet.board_data = identity.board_data
+        elif problem:
+            warnings.append(problem)
 
     # ---------------------------------------------------------- stage 4
     for index, sheet in enumerate(sheets):

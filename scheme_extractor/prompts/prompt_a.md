@@ -99,8 +99,10 @@ phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
   symbol tagged `QC189` is one device, tag `QC189`, model `AF16`.
 - `rating` is the current as printed, poles included: `3X32A`, `2X40A`, `16A`.
   `poles` is the pole count alone (`3`, `2`); `setting` is an `Inc=` value.
-- `manufacturer` is printed per device on these drawings (`ABB`); record it on
-  every device that shows it.
+- `manufacturer` is the maker printed beside THAT device (`ABB`). Never carry
+  it over from neighbouring devices; leave it out where none is printed.
+  Write Hebrew maker names in Latin: פיניקס → Phoenix, שניידר → Schneider,
+  סוקומק → Socomec, הגר → Hager, סלצר → Salzer.
 - One symbol, one device. A model printed beside a contactor's coil or
   contacts (`AF190 ABB` next to the contact of `QC300`) is that contactor's
   `model`, never a device of its own. A breaker's motor operator, shunt-trip
@@ -126,22 +128,8 @@ phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
   `FB0..`, `X..` beside a maker, model and description — is the set's own
   equipment list. Put each row in `equipment_list`, never in `devices`. A
   pattern with dots is never a device tag.
-- The switchboard data table (תיאור / ערך / מידע, per ת"י 61439: יצרן מקורי,
-  דרגת הגנה, מידור, מידה כללית, זרם הלוח, שיטת הארקה…) goes in `board_data`,
-  one row per line, the Hebrew label and symbol as printed.
-
-## The title block
-The frame along the bottom of each sheet. Read it into `sheet.title_block`:
-- `project` — שם פרויקט
-- `panel` — שם הלוח (the board's name, e.g. "E2 לוח חשמל קומה 21")
-- `client` — שם המזמין (who ordered the board)
-- `consultant` — שם היועץ
-- `drawing_no` — מס' סדורי
-- `panel_builder` — the company whose name and logo head the block, the firm
-  that built the board. Never the project, never the client.
-- `drawn_by` — שרטט; `revision_dates` — תאריך עדכון; `total_pages` — מתוך
-Copy the Hebrew exactly as printed. If a field is unreadable, leave it null —
-do not fill it from another field or from the company's tagline.
+- The switchboard data table (per ת"י 61439) and the title block are read
+  by another step; do not transcribe them.
 
 ## Range labels
 Where identical devices are labelled as a range (`F201-F209`, `FU410.1-.3`),
@@ -175,5 +163,8 @@ destination column; the ones above it feed it.
 
 Leave out any field you have nothing for — never write `null`, `""` or `[]`
 for it. Every omitted field costs nothing; every written one is paid for.
+In particular: omit `qty` when it is 1; omit `span_terminals` and
+`span_confidence` for a column whose cell covers only its own terminal (set
+`needs_zoom` if that cell is unreadable).
 
 Return ONLY valid JSON matching the supplied schema. No markdown fence, no prose.

@@ -105,7 +105,9 @@ class TitleBlock(Contract):
 class Sheet(Contract):
     page_number: int
     sheet_label: str
-    title_block: TitleBlock = Field(default_factory=TitleBlock)
+    # Filled by the title stage, never by the sheet reading: written out on
+    # every sheet it was an eighth of the reading stage's output.
+    title_block: TitleBlock = ServerField(default_factory=TitleBlock)
 
 
 class Busbar(Contract):
@@ -157,6 +159,26 @@ class Device(Contract):
 
 
 class CircuitRow(Contract):
+    @model_validator(mode="before")
+    @classmethod
+    def single_columns_are_certain(cls, data: Any) -> Any:
+        """A column spanning only its own terminal has no span to doubt.
+
+        The model may omit `span_confidence` there to save output; the
+        default of "low" would then send every column to the zoom stage.
+        An unreadable cell is still flagged with `needs_zoom`.
+        """
+        if isinstance(data, dict) and "span_confidence" not in data and len(data.get("span_terminals") or []) <= 1:
+            data = {**data, "span_confidence": "high"}
+        # The table's Inc row, filed under the device field's name (Haiku,
+        # every row of sheet 31).
+        if isinstance(data, dict) and "setting" in data:
+            setting = data["setting"]
+            data = {key: value for key, value in data.items() if key != "setting"}
+            if setting and not data.get("inc"):
+                data["inc"] = setting
+        return data
+
     terminal: str
     protective_device: Optional[str] = None
     destination_he: Optional[str] = None
@@ -240,7 +262,53 @@ class BoardDatum(Contract):
     value: str
 
 
+class TitleResult(Contract):
+    """What the title stage reads: the board's identity."""
+
+    title_block: TitleBlock = Field(default_factory=TitleBlock)
+    board_data: list[BoardDatum] = Field(default_factory=list)
+
+
+def _spare_text_across_spans(rows: list) -> list:
+    """A merged שמורים cell prints its word once, over several columns.
+
+    Haiku marked every column of the span spare but gave only the first the
+    text, which the spare rule rejected (sheet 24 of 4382.26-8). A column in
+    the span takes the text its neighbour read; with no such neighbour, the
+    spare mark itself is unfounded and goes.
+    """
+    texts = {}
+    for row in rows:
+        if isinstance(row, dict) and any(word in (row.get("destination_he") or "") for word in SPARE_WORDS):
+            for terminal in row.get("span_terminals") or [row.get("terminal")]:
+                texts[terminal] = row["destination_he"]
+    fixed = []
+    for row in rows:
+        if isinstance(row, dict) and row.get("is_spare") and not any(
+            word in (row.get("destination_he") or "") for word in SPARE_WORDS
+        ):
+            inherited = texts.get(row.get("terminal")) or next(
+                (texts[t] for t in row.get("span_terminals") or [] if t in texts), None)
+            row = {**row, "destination_he": inherited} if inherited else {**row, "is_spare": False}
+        fixed.append(row)
+    return fixed
+
+
 class SheetExtraction(Contract):
+    @model_validator(mode="before")
+    @classmethod
+    def drop_incomplete_list_rows(cls, data: Any) -> Any:
+        """A parts-list row without its pattern or class is noise, not a reason
+        to lose the sheet (Haiku failed sheet 01 on one such row)."""
+        if isinstance(data, dict) and isinstance(data.get("equipment_list"), list):
+            data = {**data, "equipment_list": [
+                row for row in data["equipment_list"]
+                if isinstance(row, dict) and row.get("tag_pattern") and row.get("device_class")
+            ]}
+        if isinstance(data, dict) and isinstance(data.get("circuit_table"), list):
+            data = {**data, "circuit_table": _spare_text_across_spans(data["circuit_table"])}
+        return data
+
     sheet: Sheet
     busbars: list[Busbar] = Field(default_factory=list)
     devices: list[Device] = Field(default_factory=list)
@@ -251,7 +319,8 @@ class SheetExtraction(Contract):
     anomalies: list[Anomaly] = Field(default_factory=list)
     needs_zoom_regions: list[ZoomRegion] = Field(default_factory=list)
     equipment_list: list[EquipmentListItem] = Field(default_factory=list)
-    board_data: list[BoardDatum] = Field(default_factory=list)
+    # Filled by the title stage from the data table, like the title block.
+    board_data: list[BoardDatum] = ServerField(default_factory=list)
 
     # Pipeline bookkeeping, not model output.
     layout_kind: str = ServerField("table")

@@ -45,6 +45,8 @@ class FakeClient:
             return {"findings": [], "panel": []}
         if stage == "zoom":
             return {"terminals": [], "cells": [], "cable_row": {}, "inc_row": {}, "unresolved": []}
+        if stage == "title":
+            return {"title_block": {"project": "אגרובנק TOWER B", "drawing_no": "4382.26-8"}, "board_data": []}
         page = int(re.search(r"sheet-(\d+)", call.key).group(1))
         label = f"{page:02d}"
         return {

@@ -34,6 +34,7 @@ GET  /api/ai/scheme-extract-workbook?job= → the reviewer's xlsx
 | 1 | `stages/textlayer.py` | `pdftotext -bbox-layout`, transformed into rendered-pixel space and verified against an anchor |
 | 2 | `stages/render.py` | one render per page, then region crops at native resolution |
 | 3 | `stages/extract.py` | one call per sheet, Prompt A, structured output |
+| 3b | `stages/title.py` | the title block and data table, one call, the board's identity |
 | 4 | `stages/zoom.py` | 600 DPI re-crop of anything uncertain, Prompt B |
 | 5 | `stages/reconcile.py` | assertions against the text layer — no model |
 | 6 | `stages/rollup.py` | grouping and summation — no model |
@@ -77,17 +78,20 @@ If a future export keeps its text layer intact, `text_coverage` returns
 ## Cost
 
 Per-stage tokens and dollars land on every run under `cost`. The price table
-is in `config.py`, never at a call site. Every stage runs on Haiku 4.5. A full
-run of 4382.26-8 cost about $1 unbatched; the site batches the reading stage
-at half price, and sheets may now omit empty fields, which was most of the
-output bill. A run above `$3.00` warns.
+is in `config.py`, never at a call site. A run above `$3.00` warns.
 
-Sonnet 5 read that set better (the Hebrew title block above all) but cost
-$2.20 a run. What Haiku got wrong there is covered in code where it could be:
-models from the set's own parts list, bare and duplicate mentions, slot names
-in PLC models. The title block is sent at 300 dpi in narrow overlapping
-pieces. If its Hebrew still comes back wrong, move that one sheet alone to
-Sonnet — about five cents a drawing: `SCHEME_MODEL_TITLE=claude-sonnet-5`.
+Every stage runs on Haiku 4.5 except one small call. The sheet reading is
+batched on the site (half price) and asks only for what the pipeline uses: no
+empty fields, no title block, no data table, no terminal devices. The audit
+gets the readings as `|`-separated rows instead of JSON, a quarter of the
+tokens.
+
+The board's identity — the title block and the switchboard data table — is
+read by `stages/title.py` in one call of its own on Sonnet 5, about two cents.
+On 4382.26-8 Haiku paired every title field correctly once asked about nothing
+else, but misread the CAD-font Hebrew letters on every attempt (חשמל as
+השמחי, ס.מ.ע as ס.ה.ע); Sonnet read every field. `SCHEME_MODEL_TITLE`
+moves it back to Haiku.
 
 Every stage's model is overridable from config, the environment and the
 request body.

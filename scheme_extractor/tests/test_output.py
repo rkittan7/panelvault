@@ -284,3 +284,75 @@ def test_a_placeholder_in_the_parts_list_is_not_a_model():
     items = [{"tag_pattern": "PF1...", "device_class": "lamp", "manufacturer": "SALZER", "model": "N.D.S"}]
     sheets = [_listed(2, [{"tag": "PF1E", "device_class": "lamp"}]), _listed(35, [], items)]
     assert build_bom(sheets)[0].model is None
+
+
+def test_poles_printed_in_the_rating_column_still_pick_the_family():
+    items = [{"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S201M", "rating": "(1P) 10KA"},
+             {"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S203M", "rating": "(3P) 10KA"}]
+    sheets = [_listed(29, [{"tag": "F361", "device_class": "mcb", "manufacturer": "ABB", "rating": "16A"},
+                           {"tag": "F391", "device_class": "mcb", "manufacturer": "ABB", "rating": "3X16A"}]),
+              _listed(35, [], items)]
+    assert {line.tags[0]: line.model for line in build_bom(sheets)} == {"F361": "S201M", "F391": "S203M"}
+
+
+def test_a_plc_module_named_only_by_its_tag_gets_its_model():
+    sheets = [_sheet(18, [{"tag": "TM3DI16", "device_class": "plc_module"},
+                          {"tag": "SLOT-1TM3DI32K", "device_class": "plc_module"}]),
+              _sheet(19, [{"tag": "SLOT1", "device_class": "plc_module", "model": "TM3DI32K"}])]
+    assert sorted((line.model, line.qty) for line in build_bom(sheets)) == [("TM3DI16", 1), ("TM3DI32K", 1)]
+
+
+def test_bare_labels_seen_only_on_a_layout_sheet_are_not_devices():
+    layout = [{"tag": f"F{n}", "device_class": "mcb"} for n in range(30)] + [
+        {"tag": "QU11", "device_class": "mccb"}, {"tag": "SPU", "device_class": "switch"}]
+    sheets = [
+        _sheet(34, layout),
+        _sheet(11, [{"tag": "SPU", "device_class": "switch"}] + [
+            {"tag": f"F{n}", "device_class": "mcb", "rating": "16A"} for n in range(30)]),
+    ]
+    tags = {t for line in build_bom(sheets) for t in line.tags}
+    assert "QU11" not in tags and "SPU" in tags and "F0" in tags
+
+
+def test_a_plc_slot_or_channel_reference_is_not_a_module():
+    sheets = [_sheet(9, [{"tag": "SLOT1", "device_class": "plc_module"},
+                         {"tag": "DI6", "device_class": "plc_module"}])]
+    assert build_bom(sheets) == []
+
+
+def test_an_omitted_confidence_on_a_single_column_is_not_a_zoom():
+    from scheme_extractor.models.schema import CircuitRow
+    assert CircuitRow.model_validate({"terminal": "XU471"}).span_confidence == "high"
+    merged = CircuitRow.model_validate({"terminal": "XU461", "span_terminals": ["XU461", "XU462"]})
+    assert merged.span_confidence == "low"
+
+
+def test_a_merged_spare_cell_gives_its_word_to_every_column_it_covers():
+    sheet = SheetExtraction.model_validate({"sheet": {"page_number": 24, "sheet_label": "24"}, "circuit_table": [
+        {"terminal": "X381", "destination_he": "שמורים", "is_spare": True, "span_terminals": ["X381", "X382", "X383"]},
+        {"terminal": "X382", "destination_he": "", "is_spare": True},
+        {"terminal": "X399", "is_spare": True},
+    ]})
+    rows = {row.terminal: row for row in sheet.circuit_table}
+    assert rows["X382"].destination_he == "שמורים" and rows["X382"].is_spare
+    assert rows["X399"].is_spare is False
+
+
+def test_a_sheet_keeps_everything_but_the_rows_that_break_the_contract():
+    from scheme_extractor.stages.extract import salvage
+    payload = {"sheet": {"page_number": 24, "sheet_label": "24"},
+               "devices": [{"tag": "Q0", "device_class": "mccb", "model": "XT3N"},
+                           {"tag": "BAD", "device_class": "not-a-class"}],
+               "circuit_table": [{"terminal": "X381"}]}
+    sheet, dropped = salvage(payload)
+    assert [d.tag for d in sheet.devices] == ["Q0"] and dropped == ["devices entry 1"]
+
+
+def test_a_stray_field_costs_the_field_not_the_row():
+    from scheme_extractor.stages.extract import salvage
+    payload = {"sheet": {"page_number": 31, "sheet_label": "31"},
+               "circuit_table": [{"terminal": "X181", "destination_he": "שמור", "colour": "red"},
+                                 {"terminal": "X182", "setting": "12.8A"}]}
+    sheet, dropped = salvage(payload)
+    assert [(r.terminal, r.inc) for r in sheet.circuit_table] == [("X181", None), ("X182", "12.8A")]
+    assert dropped == ["colour on circuit table entry 0"]

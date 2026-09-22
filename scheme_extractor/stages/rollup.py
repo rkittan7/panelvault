@@ -139,8 +139,11 @@ def _item_poles(item) -> str | None:
     if _poles(item.poles):
         found = re.match(r"\d+", _poles(item.poles))
         return found.group() if found else None
-    found = re.search(r"\((\d)\s*P\)", item.description_he or "", re.I)
-    return found.group(1) if found else None
+    # The count is printed `(1P)`; the model files it under description or
+    # rating as the mood takes it.
+    text = " ".join(part for part in (item.description_he, item.rating, item.model) if part)
+    found = re.search(r"\((\d)\s*P\)|\b(\d)\s*P\b", text, re.I)
+    return (found.group(1) or found.group(2)) if found else None
 
 
 def _amps(rating: str | None) -> str | None:
@@ -274,9 +277,15 @@ def _plc_identities(occurrences: dict[str, list]) -> None:
     Mentions are renamed one by one, because two different parts can share
     a raw tag (`SLOT1` for a module and the cable wired to it).
     """
-    # Haiku wrote the slot into the model (`SLOT-4-TM3AI8`).
-    for seen in occurrences.values():
+    # Haiku wrote the slot into the model (`SLOT-4-TM3AI8`), or left the
+    # model out and put it in the tag (`TM3DI16`, `SLOT-1TM3DI32K`).
+    for tag, seen in occurrences.items():
         for index, (label, device, key) in enumerate(seen):
+            if device.device_class in {"plc", "plc_module"} and not device.model:
+                from_tag = re.sub(r"^(?:PLC\W*)?SLOT\W*\d+\W*", "", tag, flags=re.I)
+                if re.search(r"[A-Z]{2}\d", from_tag.upper()):
+                    device = device.model_copy(update={"model": from_tag})
+                    seen[index] = (label, device, _key(device))
             if device.device_class in {"plc", "plc_module"} and device.model:
                 bare_model = re.sub(r"^SLOT\W*\d+\W*", "", device.model, flags=re.I)
                 if bare_model and bare_model != device.model:
@@ -355,6 +364,29 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
     # a device.
     for tag in from_bare_range - drawn:
         occurrences.pop(tag, None)
+    # A cabinet layout labels every device without a spec (sheet 34 of
+    # 4382.26-8: 59 labels, all bare) and its small print is where QU1 was
+    # read as QU11. A tag seen only as a bare label on such a sheet is not
+    # counted; one also drawn elsewhere keeps that drawing.
+    layout_sheets = set()
+    for sheet in sheets:
+        keys = [_key(d) for d in sheet.devices]
+        if len(keys) >= 25 and sum(1 for k in keys if _bare(k)) >= 0.75 * len(keys):
+            layout_sheets.add(sheet.sheet.sheet_label)
+    for tag in list(occurrences):
+        seen = occurrences[tag]
+        if all(_bare(key) and label in layout_sheets for label, _, key in seen):
+            occurrences.pop(tag)
+    # `SLOT1`, `DI6` in a control schematic point at a PLC input; with no
+    # model they name a slot or channel, not a module.
+    for tag in list(occurrences):
+        if re.fullmatch(r"(?:SLOT\W*\d+|[DA][IQO]\d+)", tag, re.I):
+            occurrences[tag] = [
+                entry for entry in occurrences[tag]
+                if not (entry[1].device_class in {"plc", "plc_module"} and not entry[2][2])
+            ]
+            if not occurrences[tag]:
+                occurrences.pop(tag)
     # `AF38 ABB` printed beside contactor QC190 was read as a device tagged
     # AF38. A "tag" that is some device's model, with no model of its own,
     # is that label, not a device.

@@ -100,7 +100,7 @@ def _title_block(run: ExtractionRun) -> dict[str, str]:
 # them, in the order they are tried. The table is printed the same way by
 # every Israeli producer; its labels, not their position, identify a row.
 BOARD_DATA = {
-    "enclosure_manufacturer": ("יצרן מקורי", "ייצרן מקורי", "יצרן"),
+    "enclosure_manufacturer": ("יצרן מקורי", "ייצרן מקורי", "מקורי", "יצרן"),
     "ip_rating": ("דרגת הגנה", "IP"),
     "form_separation": ("מידור", "FORM"),
     "enclosure_size": ("מידה כללית", "מידות"),
