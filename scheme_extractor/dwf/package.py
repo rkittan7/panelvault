@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
-from . import hebrew, whip
+from . import hebrew, strokes, whip
 
 MAGIC = b"(DWF V"
 
@@ -26,20 +26,23 @@ class Sheet:
 
 
 def _decoded(page: whip.Page) -> whip.Page:
-    """Hebrew decoded, and texts drawn twice at one spot kept once.
+    """Hebrew decoded, labels drawn as strokes read, and texts drawn twice
+    at one spot kept once.
 
     AutoCAD plots a title block's fixed text on two layers at the same
     position; one copy is enough.
     """
     seen: set[tuple[int, int, str]] = set()
     texts = []
-    for text in page.texts:
+    for text in list(page.texts) + strokes.read(page):
         key = (text.x, text.y, text.text)
         if key in seen:
             continue
         seen.add(key)
         text.text = hebrew.decode(text.text).strip()
-        if text.text:
+        # `?` stands where AutoCAD could not carry the text; `strokes` has
+        # read the label itself, and the placeholder only breaks up stacks.
+        if text.text and text.text.strip("?"):
             texts.append(text)
     page.texts = texts
     return page

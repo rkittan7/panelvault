@@ -35,6 +35,8 @@ RATING = re.compile(
     re.I,
 )
 PLC_MODEL = re.compile(r"^TM\d{1,3}[A-Z0-9]{2,}$")
+# Modules drawn as a box with their model inside and no tag of their own.
+TAGLESS = ((PLC_MODEL, "plc_module", "Schneider"), (re.compile(r"^IRLA\d+S$"), "relay", "GIC"))
 SETTING = re.compile(r"^Inc\s*=\s*\S+$", re.I)
 CURVE = re.compile(r"^[BCDKZ]$")
 SENSITIVITY = re.compile(r"^\d+\s*mA$", re.I)
@@ -112,6 +114,12 @@ class Block:
         return self.texts[0].x
 
     @property
+    def anchor(self) -> int:
+        """Where the stack hangs: a Hebrew note beside a device is set out
+        from the labels, so it does not decide the column."""
+        return next((t.x for t in self.texts if not HEBREW.search(t.text)), self.texts[0].x)
+
+    @property
     def y(self) -> int:
         return self.texts[0].y
 
@@ -127,7 +135,7 @@ def stacks(texts: list[whip.Text]) -> list[Block]:
             reach = 2.6 * max(text.height, last.height)
             if leads and any(_names_device(t.text) for t in block.texts):
                 continue
-            if abs(text.x - block.x) < 3 * text.height and 0 <= last.y - text.y < reach:
+            if abs(text.x - block.anchor) < 3 * text.height and 0 <= last.y - text.y < reach:
                 block.texts.append(text)
                 break
         else:
@@ -240,6 +248,11 @@ def device(block: Block) -> Device | None:
             notes.append(value)
     if model and _conflicts(tag, model):
         model = None          # a neighbour's label: a relay module beside a breaker's tag
+    # `AF40 / ABB` beside a contactor's box names a model, not a device. A
+    # device's own label carries a rating; a model's label carries none, so
+    # this one is left to `model_only`, to go to the device it belongs to.
+    if rank(tag) == 2 and not (rating or setting or curve):
+        return None
     cls = _device_class(tag, model, rating)
     if cls is None:
         return None
@@ -251,6 +264,36 @@ def device(block: Block) -> Device | None:
         tag=tag, device_class=cls, manufacturer=maker, model=model, rating=rating, poles=poles,
         setting=setting, curve=curve, description_he=" ".join(notes) or None,
     )
+
+
+def model_only(block: Block) -> tuple[str, str | None, str] | None:
+    """`AF40 / ABB` beside a contactor's box: a model with no tag of its own."""
+    values = [t.text for t in block.texts]
+    named = [v for v in values if _is_tag(v) or _is_lamp(v) or _is_letter_tag(v)]
+    if any(not any(pattern.search(v) for pattern, _ in MODEL_CLASS) for v in named):
+        return None
+    if any(RATING.match(v) or SETTING.match(v) for v in values):
+        return None
+    model = next((v.split()[0] for v in values if _is_model(v.split()[0])), None)
+    cls = next((c for pattern, c in MODEL_CLASS if model and pattern.search(model)), None)
+    if not cls:
+        return None
+    maker = next((MAKERS[v.upper()] for v in values if v.upper() in MAKERS), None)
+    return model, maker, cls
+
+
+def lend_models(devices: list[tuple[Device, Block]], orphans: list[tuple[tuple, Block]]) -> None:
+    """A model drawn beside its device, too far to stack with it, goes to the
+    nearest device of its own kind that has none."""
+    for (model, maker, cls), block in orphans:
+        near = [(d, b) for d, b in devices if d.device_class == cls and not d.model]
+        if not near:
+            continue
+        height = block.texts[0].height or 100
+        device, at = min(near, key=lambda db: abs(db[1].x - block.x) + abs(db[1].y - block.y))
+        if abs(at.x - block.x) < 12 * height and abs(at.y - block.y) < 3 * height:
+            device.model = model
+            device.manufacturer = device.manufacturer or maker
 
 
 # ------------------------------------------------------------ circuit tables
@@ -536,20 +579,28 @@ def read_sheet(number: int, page: whip.Page, board_number: str,
                frame: frozenset[str] | None = None) -> SheetExtraction:
     schematic = [t for t in page.texts if t.layer not in FRAME_LAYERS]
     devices: list[tuple[Device, Block]] = []
+    orphans: list[tuple[tuple, Block]] = []
     for block in stacks(schematic):
         found = device(block)
         if found is not None:
             devices.append((found, block))
-    # A PLC's modules carry no tag, only their model under the drawing of
-    # each (TM262L20MESE8T, TM3DI16, ...): the model names the module.
+        elif (loose := model_only(block)) is not None:
+            orphans.append((loose, block))
+    lend_models(devices, orphans)
+    # A PLC's modules and the alarm interface carry no tag, only their model
+    # inside the drawing of each (TM3DI16, IRLA04S): the model names them.
     stacked = {d.model for d, _ in devices if d.model}
     for text in page.texts:
-        if PLC_MODEL.match(text.text) and text.text not in stacked and _in_table(text, number, frame):
-            stacked.add(text.text)
-            devices.append((Device(
-                tag=text.text, device_class="plc" if re.match(r"^TM2", text.text) else "plc_module",
-                manufacturer="Schneider", model=text.text,
-            ), Block([text])))
+        if text.text in stacked or not _in_table(text, number, frame):
+            continue
+        for pattern, cls, maker in TAGLESS:
+            if pattern.match(text.text):
+                stacked.add(text.text)
+                devices.append((Device(
+                    tag=text.text, manufacturer=maker, model=text.text,
+                    device_class="plc" if text.text.startswith("TM2") else cls,
+                ), Block([text])))
+                break
     grid = Grid(page.lines)
     # The frame's and title block's rules are no table's: one crossing a
     # destination row would split a merged cell.
