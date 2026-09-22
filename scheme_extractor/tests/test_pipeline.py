@@ -213,3 +213,13 @@ def test_the_title_block_crop_starts_at_its_border_and_keeps_pairs_whole(cache_d
     assert len(block.chunks) == 2
     left, right = (Image.open(chunk).size[0] for chunk in block.chunks)
     assert left + right - width >= 0.09 * width  # the pieces overlap
+
+
+
+def test_an_account_out_of_credit_fails_the_run_in_plain_words():
+    from scheme_extractor.pipeline import account_problem
+
+    raw = ("Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', "
+           "'message': 'Your credit balance is too low to access the Anthropic API.'}}")
+    assert "out of credit" in account_problem(raw)
+    assert account_problem("devices: Input should be a valid list") is None

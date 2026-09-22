@@ -726,3 +726,21 @@ test("an enclosure maker printed with its product line is still recognised", () 
   }, []);
   assert.equal(reading.board.manufacturer, "Tamhash");
 });
+
+test("the PLC and relay modules printed on 4382.26-8 match their catalog rows", () => {
+  const catalog = require("./catalog.json");
+  const reading = normalizeReading({
+    board: { number: "4382.26-8" },
+    components: [
+      { rawText: "TM262L20MESE8T PLC", model: "TM262L20MESE8T", type: "PLC", quantity: 1, reference: "PLC" },
+      { rawText: "TM3DI32K PLC Module", model: "TM3DI32K", type: "PLC Module", quantity: 2, reference: "SLOT-1" },
+      { rawText: "TM3AI8 PLC Module", model: "TM3AI8", type: "PLC Module", quantity: 1, reference: "SLOT-4" },
+      { rawText: "GIC IRLA04S Relay", manufacturer: "GIC", model: "IRLA04S", type: "Relay", quantity: 1, reference: "IRL04S" },
+    ],
+    unmatched: [], warnings: [],
+  }, catalog);
+  assert.deepEqual(reading.unmatched, []);
+  assert.deepEqual(reading.components.map((c) => c.model), [
+    "Modicon M262 TM262L20MESE8T", "Modicon TM3DI32K", "Modicon TM3AI8", "IRLA04S isolated relay module",
+  ]);
+});

@@ -35,7 +35,10 @@ class StageModel:
 # §9 harness exists precisely to prove or disprove that choice. If it fails
 # the gates, upgrade `audit` first — that is one line here.
 DEFAULT_MODELS: dict[str, StageModel] = {
-    "extract": StageModel("claude-haiku-4-5-20251001", 8000, use_batch=True),
+    # Sonnet 5, not Haiku: on 4382.26-8 Haiku hung columns on a group RCD
+    # (sheet 12), dropped Q0's XT3N and clipped characters from tags; Sonnet
+    # read both sheets right. It costs about twice as much per token.
+    "extract": StageModel("claude-sonnet-5", 16000, use_batch=True),
     "zoom": StageModel("claude-haiku-4-5-20251001", 2000),
     "audit": StageModel("claude-haiku-4-5-20251001", 8000),
     # The sheet carrying the title block and the board data table, alone.
@@ -127,7 +130,7 @@ class Config:
     # Above this, caching missed or the zoom stage is firing on most sheets.
     # Both are real problems, so the run says so rather than quietly costing
     # three times what it should (§7).
-    cost_warning_usd: float = 1.50
+    cost_warning_usd: float = 3.00
 
     # `pdftoppm` on a dense A1 sheet at 600 DPI is slow but not unbounded.
     poppler_timeout_s: int = 180

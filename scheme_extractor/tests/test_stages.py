@@ -184,7 +184,7 @@ def test_model_is_overridable_from_the_request_body():
     # §11.9: swapping any stage's model is a config change only.
     config = Config().with_overrides({"models": {"audit": "claude-sonnet-5"}})
     assert config.models["audit"].model == "claude-sonnet-5"
-    assert config.models["extract"].model.startswith("claude-haiku")
+    assert config.models["zoom"].model.startswith("claude-haiku")  # untouched
 
 
 # ------------------------------------------------ final protective devices

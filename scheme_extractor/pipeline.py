@@ -26,6 +26,17 @@ class ExtractionFailed(RuntimeError):
     """The run produced nothing a reviewer could use."""
 
 
+def account_problem(error: str) -> str | None:
+    """Plain words for a failure of the Anthropic account, not the drawing."""
+    text = error.lower()
+    if "credit balance is too low" in text:
+        return ("The Anthropic account behind the scheme reader is out of credit. "
+                "Add credit under Plans & Billing at console.anthropic.com, then read the drawing again.")
+    if "invalid x-api-key" in text or "authentication_error" in text:
+        return "The scheme reader's Anthropic API key was rejected. Check ANTHROPIC_API_KEY on the extractor service."
+    return None
+
+
 @dataclass
 class PreparedPage:
     tokens: PageTokens
@@ -131,6 +142,11 @@ def run(
             log.warning("sheet %s could not be read: %s", label, error)
         sheet.layout_kind = prepared_page.regions.layout_kind
         sheets.append(sheet)
+    account = next((reason for error in failures if (reason := account_problem(error))), None)
+    if account:
+        # Every further call fails the same way; a draft read from the few
+        # sheets that got through would look like a board with parts missing.
+        raise ExtractionFailed(account)
     if not prepared.pages:
         raise ExtractionFailed("No sheet in this PDF could be prepared: " + "; ".join((prepared.warnings or prepared.notes)[:3]))
     if len(failures) == len(sheets):

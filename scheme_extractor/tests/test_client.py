@@ -33,9 +33,16 @@ CALL = Call(
 def test_sdk_1x_accepts_the_request_and_temperature_reaches_the_body():
     # SDK 1.x raises TypeError on a `temperature=` keyword; it must travel in the body.
     seen: list[dict] = []
-    parsed, _ = _client(seen).complete("extract", CALL)
+    parsed, _ = _client(seen).complete("zoom", CALL)  # a Haiku stage
     assert parsed == {"ok": True}
     assert seen[-1]["temperature"] == 0.0
+
+
+def test_a_newer_model_gets_no_temperature_and_no_thinking_with_a_forced_tool():
+    seen: list[dict] = []
+    _client(seen).complete("extract", CALL)  # Sonnet 5
+    assert "temperature" not in seen[-1]
+    assert seen[-1]["thinking"] == {"type": "disabled"}
 
 
 def test_models_that_reject_temperature_are_not_sent_it():
@@ -104,3 +111,15 @@ def test_strict_is_only_claimed_where_the_api_will_compile_it():
     assert union_parameters(tool_schema(SheetExtraction)) > STRICT_UNION_LIMIT
     assert union_parameters(tool_schema(ZoomResult)) <= STRICT_UNION_LIMIT
     assert union_parameters(tool_schema(AuditResult)) <= STRICT_UNION_LIMIT
+
+
+def test_an_answer_nested_under_the_tool_name_is_unwrapped():
+    # Sonnet 5, unconstrained by strict mode, sent {"sheet_extraction": {...}}.
+    class Block:
+        type, name = "tool_use", "sheet_extraction"
+        input = {"sheet_extraction": {"sheet": {"page_number": 24}}}
+
+    class Message:
+        content = [Block()]
+
+    assert AnthropicClient._tool_input(Message(), "sheet_extraction") == {"sheet": {"page_number": 24}}

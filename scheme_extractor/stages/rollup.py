@@ -197,6 +197,27 @@ def _models_from_equipment_list(grouped: dict[tuple, BOMLine], items: list) -> N
             line.flags.append("model_from_equipment_list")
 
 
+TRIP_CURVE = re.compile(r"^[BCDKZ]$", re.I)
+
+
+def _true_class(device):
+    """A breaker printed with a trip curve (`3X40A C ABB`) is an MCB.
+
+    Curves B/C/D belong to miniature breakers; sheets 28-29 of 4382.26-8
+    read four identical `3X40A C` breakers as MCB, MCCB and fuse. Only a
+    device with no model is corrected — a named model is trusted.
+    """
+    amps = re.search(r"(\d+(?:\.\d+)?)\s*A\b", (device.rating or "").upper())
+    if (
+        device.device_class in {"mccb", "fuse"}
+        and not device.model
+        and device.curve and TRIP_CURVE.match(device.curve.strip())
+        and amps and float(amps.group(1)) <= 63
+    ):
+        return device.model_copy(update={"device_class": "mcb"})
+    return device
+
+
 def _key(device) -> tuple:
     return (
         device.device_class,
@@ -207,9 +228,69 @@ def _key(device) -> tuple:
     )
 
 
+def _bare(key: tuple) -> bool:
+    """A mention without a spec: no model, no rating."""
+    return not key[2] and not key[3]
+
+
 def _compatible(a: tuple, b: tuple) -> bool:
-    """Same class, and no field where both say something different."""
-    return a[0] == b[0] and all(x is None or y is None or x == y for x, y in zip(a[1:], b[1:]))
+    """No field where both say something different.
+
+    The class must agree too, unless one of them is a bare mention: sheet 33
+    of 4382.26-8 is a front-view layout that labels F02 an MCB where its
+    single-line gives an MCCB 3X40A, and QC361 is a relay on one sheet and a
+    contactor on another. Those are one device each.
+    """
+    if a[0] != b[0] and not (_bare(a) or _bare(b)):
+        return False
+    return all(x is None or y is None or x == y for x, y in zip(a[1:], b[1:]))
+
+
+def _plc_identities(occurrences: dict[str, list]) -> None:
+    """One name per PLC module, whatever each sheet called it.
+
+    The drawing prints no tag on a PLC module, so each sheet's reading
+    invented one — `PLC-AI8` on the rack sheet, `SLOT-4-TM3AI8` on its I/O
+    sheet — and every module was counted twice. A module is its model and
+    slot; a mention without a slot joins the model's only slotted module,
+    or all mentions of a model become one module when none has a slot.
+    Mentions are renamed one by one, because two different parts can share
+    a raw tag (`SLOT1` for a module and the cable wired to it).
+    """
+    entries = [
+        (tag, index, key)
+        for tag, seen in occurrences.items()
+        for index, (_, device, key) in enumerate(seen)
+        if device.device_class in {"plc", "plc_module"} and key[2]
+    ]
+    models = {key[2] for _, _, key in entries}
+    # `TM3DQ16` on one sheet is the `TM3DQ16R` its I/O sheet names in full.
+    fullest = {model: max((m for m in models if m.startswith(model)), key=len) for model in models}
+    slots: dict[str, set[str]] = {}
+    for tag, _, key in entries:
+        found = re.search(r"SLOT\W*(\d+)", tag, re.I)
+        if found:
+            slots.setdefault(fullest[key[2]], set()).add(found.group(1))
+    moves = []
+    for tag, index, key in entries:
+        model = fullest[key[2]]
+        found = re.search(r"SLOT\W*(\d+)", tag, re.I)
+        known = sorted(slots.get(model, ()))
+        if found:
+            name = f"{model} SLOT{found.group(1)}"
+        elif len(known) == 1:
+            name = f"{model} SLOT{known[0]}"
+        elif not known:
+            name = model
+        else:
+            continue
+        moves.append((tag, index, name, model))
+    for tag, index, name, model in sorted(moves, key=lambda m: -m[1]):
+        label, device, _ = occurrences[tag].pop(index)
+        device = device.model_copy(update={"model": model})
+        occurrences.setdefault(name, []).append((label, device, _key(device)))
+    for tag in [tag for tag, seen in occurrences.items() if not seen]:
+        occurrences.pop(tag)
 
 
 def _detail(key: tuple) -> int:
@@ -227,14 +308,47 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
     because that disagreement is the finding.
     """
     occurrences: dict[str, list[tuple[str, object, tuple]]] = {}
+    from_bare_range: set[str] = set()
+    drawn: set[str] = set()
     for sheet in sheets:
         label = sheet.sheet.sheet_label
         for device in sheet.devices:
-            for tag in device.tags_expanded or expand_range(device.tag):
+            device = _true_class(device)
+            tags = device.tags_expanded or expand_range(device.tag)
+            for tag in tags:
                 if PLACEHOLDER.search(tag):
                     # `F...`, `Q..`: a family from a parts list, not a device.
                     continue
+                if len(tags) > 1 and _bare(_key(device)):
+                    from_bare_range.add(tag)
+                else:
+                    drawn.add(tag)
                 occurrences.setdefault(tag, []).append((label, device, _key(device)))
+    # A layout sheet labels a run of breakers `F361——F381`. Expanded, that
+    # names every number between, including ones no single-line draws
+    # (F370-F380 on 4382.26-8). A tag known only from such a range is not
+    # a device.
+    for tag in from_bare_range - drawn:
+        occurrences.pop(tag, None)
+    # `AF38 ABB` printed beside contactor QC190 was read as a device tagged
+    # AF38. A "tag" that is some device's model, with no model of its own,
+    # is that label, not a device.
+    known_models = {key[2] for seen in occurrences.values() for _, _, key in seen if key[2]}
+    for tag in list(occurrences):
+        if _norm(tag) in known_models and all(not key[2] for _, _, key in occurrences[tag]):
+            occurrences.pop(tag)
+    for tag in list(occurrences):
+        # `SHE/1`, `SHE/2`: the lugs of switch SHE, not devices of their own.
+        base = re.match(r"^(.+)/\d+$", tag)
+        if base and base.group(1) in occurrences:
+            occurrences.pop(tag)
+            continue
+        # `QO` on a layout sheet is `Q0` misread: the letter for the digit.
+        zeroed = re.sub(r"O(?=\d|$)", "0", tag)
+        if zeroed != tag and zeroed in occurrences and all(_bare(key) for _, _, key in occurrences[tag]):
+            occurrences.pop(tag)
+
+    _plc_identities(occurrences)
 
     # An MS116 is motor protection wherever it is drawn; one sheet filing it
     # as an MCCB split it off its own line. The parts list settles the class.
@@ -254,7 +368,7 @@ def build_bom(sheets: list[SheetExtraction]) -> list[BOMLine]:
             match = next((c for c in chosen if _compatible(c[2], key)), None)
             if match is None:
                 chosen.append([label, device, key])
-            elif _detail(key) > _detail(match[2]):
+            elif _bare(match[2]) and not _bare(key) or _detail(key) > _detail(match[2]):
                 match[:] = [label, device, key]
         for label, device, key in chosen:
             line = grouped.get(key)

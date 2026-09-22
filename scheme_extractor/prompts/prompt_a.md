@@ -101,8 +101,24 @@ phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
   `poles` is the pole count alone (`3`, `2`); `setting` is an `Inc=` value.
 - `manufacturer` is printed per device on these drawings (`ABB`); record it on
   every device that shows it.
+- One symbol, one device. A model printed beside a contactor's coil or
+  contacts (`AF190 ABB` next to the contact of `QC300`) is that contactor's
+  `model`, never a device of its own. A breaker's motor operator, shunt-trip
+  coil or auxiliary contact drawn beside it belongs to that breaker: record
+  a shunt trip (`TC-QU1`) as `shunt_trip`, but never list the breaker's tag
+  a second time for its operator.
 - Terminal blocks (`X181`, `XU497`, `XP13`) are `terminal`. A breaker model
   such as `XT1C` printed near a terminal is still the breaker's `model`.
+
+## Sheets that show devices without specifying them
+- A front view or arrangement drawing (cabinets drawn in elevation, with
+  dimensions and device labels on the mounting plates) is layout, not a
+  single-line. Return `devices: []` for it; its labels repeat devices the
+  single-lines already specify.
+- A cable termination labelled after its device (`SHE/1`, `SHE/2` at the
+  lugs of switch `SHE`) is not a device.
+- A PLC module usually carries no tag of its own. Tag it by its slot as
+  printed (`SLOT3`), else by its model; never invent a name.
 
 ## Parts lists and the board data table are not devices
 - A table listing part FAMILIES — a tag pattern such as `F...`, `Q..`,

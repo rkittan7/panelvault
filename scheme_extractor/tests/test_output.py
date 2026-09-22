@@ -188,3 +188,79 @@ def test_one_motor_breaker_is_one_line_whatever_dash_or_class_a_sheet_used():
     ]
     bom = build_bom(sheets)
     assert [(line.device_class, line.qty) for line in bom] == [("motor_protection", 2)]
+
+
+def test_a_bare_layout_range_adds_no_device_the_single_lines_do_not_draw():
+    sheets = [
+        _sheet(29, [{"tag": "F361", "device_class": "mcb", "manufacturer": "ABB", "rating": "16A"},
+                    {"tag": "F381", "device_class": "mcb", "manufacturer": "ABB", "rating": "16A"}]),
+        _sheet(33, [{"tag": "F361-F381", "device_class": "mcb", "qty": 21,
+                     "tags_expanded": [f"F{n}" for n in range(361, 382)]}]),
+    ]
+    assert sorted(t for line in build_bom(sheets) for t in line.tags) == ["F361", "F381"]
+
+
+def test_plc_modules_named_differently_per_sheet_are_one_module_per_slot():
+    sheets = [
+        _sheet(18, [{"tag": "PLC-AI8", "device_class": "plc_module", "model": "TM3AI8"},
+                    {"tag": "PLC-DI32", "device_class": "plc_module", "model": "TM3DI32K"}]),
+        _sheet(19, [{"tag": "PLC-SLOT-1", "device_class": "plc_module", "model": "TM3DI32K"}]),
+        _sheet(23, [{"tag": "SLOT-4-TM3AI8", "device_class": "plc_module", "model": "TM3AI8"}]),
+    ]
+    assert {line.model: line.qty for line in build_bom(sheets)} == {"TM3AI8": 1, "TM3DI32K": 1}
+
+
+def test_a_bare_mention_of_another_class_joins_the_specified_device():
+    sheets = [
+        _sheet(28, [{"tag": "F02", "device_class": "mccb", "rating": "3X40A", "poles": "3"}]),
+        _sheet(33, [{"tag": "F02", "device_class": "mcb"}]),
+        _sheet(6, [{"tag": "QC361", "device_class": "relay"}]),
+        _sheet(10, [{"tag": "QC361", "device_class": "contactor", "manufacturer": "ABB", "model": "AF38"}]),
+    ]
+    bom = build_bom(sheets)
+    assert sorted((line.device_class, line.qty) for line in bom) == [("contactor", 1), ("mccb", 1)]
+
+
+def test_a_breaker_with_a_trip_curve_is_an_mcb_whatever_class_it_was_read_as():
+    sheets = [_sheet(28, [
+        {"tag": "F01", "device_class": "mcb", "rating": "3X40A", "poles": "3", "curve": "C"},
+        {"tag": "F02", "device_class": "mccb", "rating": "3X40A", "poles": "3", "curve": "C"},
+        {"tag": "F03", "device_class": "fuse", "rating": "3X40A", "poles": "3", "curve": "C"},
+    ])]
+    assert [(line.device_class, line.qty) for line in build_bom(sheets)] == [("mcb", 3)]
+
+
+def test_lugs_and_letter_o_misreads_are_not_devices():
+    sheets = [
+        _sheet(2, [{"tag": "SHE", "device_class": "switch", "rating": "4x250A"},
+                   {"tag": "SHE/1", "device_class": "switch"}, {"tag": "SHE/2", "device_class": "switch"}]),
+        _sheet(24, [{"tag": "Q0", "device_class": "mccb", "model": "XT3N", "rating": "3X250A"}]),
+        _sheet(33, [{"tag": "QO", "device_class": "switch"}]),
+    ]
+    assert sorted(t for line in build_bom(sheets) for t in line.tags) == ["Q0", "SHE"]
+
+
+def test_a_module_named_short_on_one_sheet_is_the_full_model_on_another():
+    sheets = [
+        _sheet(18, [{"tag": "TM3DQ16", "device_class": "plc_module", "model": "TM3DQ16"}]),
+        _sheet(22, [{"tag": "SLOT3", "device_class": "plc_module", "model": "TM3DQ16R"}]),
+    ]
+    assert [(line.model, line.qty) for line in build_bom(sheets)] == [("TM3DQ16R", 1)]
+
+
+def test_a_model_label_read_as_a_tag_is_not_a_device():
+    sheets = [
+        _sheet(10, [{"tag": "QC211", "device_class": "contactor", "manufacturer": "ABB", "model": "AF38"}]),
+        _sheet(30, [{"tag": "AF38", "device_class": "switch", "manufacturer": "ABB"}]),
+    ]
+    assert [t for line in build_bom(sheets) for t in line.tags] == ["QC211"]
+
+
+def test_a_module_and_its_cable_sharing_a_slot_tag_stay_two_parts():
+    sheets = [
+        _sheet(19, [{"tag": "SLOT1", "device_class": "plc_module", "model": "TM3DI32K"}]),
+        _sheet(20, [{"tag": "SLOT1", "device_class": "plc_module", "model": "TWDFCW30K"}]),
+        _sheet(18, [{"tag": "PLC-DI32", "device_class": "plc_module", "model": "TM3DI32K"}]),
+    ]
+    assert sorted((line.model, line.qty, tuple(line.tags)) for line in build_bom(sheets)) == [
+        ("TM3DI32K", 1, ("TM3DI32K SLOT1",)), ("TWDFCW30K", 1, ("TWDFCW30K SLOT1",))]

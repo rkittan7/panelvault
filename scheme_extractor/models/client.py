@@ -270,7 +270,12 @@ class AnthropicClient:
         for block in getattr(message, "content", []):
             if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
                 # Never string-match a serialized tool input; take the parsed dict.
-                return dict(block.input)
+                payload = dict(block.input)
+                # Unconstrained by strict mode, a model sometimes nests its
+                # whole answer under the tool's own name.
+                if list(payload) == [tool_name] and isinstance(payload[tool_name], dict):
+                    payload = dict(payload[tool_name])
+                return payload
         raise SchemaError(f"No {tool_name} tool call in the response.")
 
     # -- single call -----------------------------------------------------

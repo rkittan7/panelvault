@@ -77,14 +77,18 @@ If a future export keeps its text layer intact, `text_coverage` returns
 ## Cost
 
 Per-stage tokens and dollars land on every run under `cost`. The price table
-is in `config.py`, never at a call site. A run above `$1.50` warns, because
-the only two ways to get there are a missed cache or a zoom stage firing on
-most sheets — both real problems.
+is in `config.py`, never at a call site. A full run of 4382.26-8 costs about
+$2.20; one above `$3.00` warns, because the only two ways to get there are a
+missed cache or a zoom stage firing on most sheets — both real problems.
+
+Sheets are read by Sonnet 5, and so is the sheet sent with the title block
+(the `title` stage). Both were Haiku 4.5 at first; on this drawing Haiku
+misread the Hebrew title block wholesale, hung columns on a group RCD and
+dropped model numbers, where Sonnet read the same sheets right. Zoom and
+audit stay on Haiku.
 
 Every stage's model is overridable from config, the environment
-(`SCHEME_MODEL_AUDIT=claude-sonnet-5`) and the request body. Upgrading the
-audit stage is a one-line change, which is the point: if Haiku fails the
-merged-span or cross-sheet gates, upgrade stage 7 alone first.
+(`SCHEME_MODEL_EXTRACT=claude-haiku-4-5`) and the request body.
 
 ## Tests
 
