@@ -210,9 +210,8 @@ def test_the_title_block_crop_starts_at_its_border_and_keeps_pairs_whole(cache_d
     width, height = tokens.width, tokens.height
     # The frame's top rule sits at about 81% of the page on this producer's sheets.
     assert 0.78 * height < block.box[1] < 0.83 * height
-    assert len(block.chunks) == 2
-    left, right = (Image.open(chunk).size[0] for chunk in block.chunks)
-    assert left + right - width >= 0.09 * width  # the pieces overlap
+    pieces = [Image.open(chunk) for chunk in block.chunks]
+    assert len(pieces) >= 3 and all(piece.size[0] <= 1500 for piece in pieces)
 
 
 

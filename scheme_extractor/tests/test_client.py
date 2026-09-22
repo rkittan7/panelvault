@@ -39,8 +39,11 @@ def test_sdk_1x_accepts_the_request_and_temperature_reaches_the_body():
 
 
 def test_a_newer_model_gets_no_temperature_and_no_thinking_with_a_forced_tool():
+    from dataclasses import replace
     seen: list[dict] = []
-    _client(seen).complete("extract", CALL)  # Sonnet 5
+    client = _client(seen)
+    client.config.models["title"] = replace(client.config.models["title"], model="claude-sonnet-5")
+    client.complete("title", CALL)
     assert "temperature" not in seen[-1]
     assert seen[-1]["thinking"] == {"type": "disabled"}
 

@@ -107,8 +107,9 @@ phrase spans 2 columns or 4, give your best estimate AND set needs_zoom: true.
   coil or auxiliary contact drawn beside it belongs to that breaker: record
   a shunt trip (`TC-QU1`) as `shunt_trip`, but never list the breaker's tag
   a second time for its operator.
-- Terminal blocks (`X181`, `XU497`, `XP13`) are `terminal`. A breaker model
-  such as `XT1C` printed near a terminal is still the breaker's `model`.
+- Terminal blocks (`X181`, `XU497`, `XP13`) are not devices: a destination
+  terminal belongs in `circuit_table` and nowhere else. A breaker model such
+  as `XT1C` printed near a terminal is still the breaker's `model`.
 
 ## Sheets that show devices without specifying them
 - A front view or arrangement drawing (cabinets drawn in elevation, with
@@ -171,5 +172,8 @@ destination column; the ones above it feed it.
   on the table region.
 - Did you mark any cell "spare" without seeing שמור printed? Undo it.
 - Does every `qty` equal the length of its own `tags_expanded`?
+
+Leave out any field you have nothing for — never write `null`, `""` or `[]`
+for it. Every omitted field costs nothing; every written one is paid for.
 
 Return ONLY valid JSON matching the supplied schema. No markdown fence, no prose.

@@ -264,3 +264,23 @@ def test_a_module_and_its_cable_sharing_a_slot_tag_stay_two_parts():
     ]
     assert sorted((line.model, line.qty, tuple(line.tags)) for line in build_bom(sheets)) == [
         ("TM3DI32K", 1, ("TM3DI32K SLOT1",)), ("TWDFCW30K", 1, ("TWDFCW30K SLOT1",))]
+
+
+def test_of_two_listed_families_the_one_naming_the_current_is_chosen():
+    items = [{"tag_pattern": "Q..", "device_class": "mccb", "manufacturer": "ABB", "model": "XT3N 250 36kA"},
+             {"tag_pattern": "Q..", "device_class": "mccb", "manufacturer": "ABB", "model": "XT1C 160 25kA"}]
+    sheets = [_listed(24, [{"tag": "Q0", "device_class": "mccb", "rating": "3X250A", "poles": "3"}]),
+              _listed(35, [], items)]
+    assert build_bom(sheets)[0].model == "XT3N 250 36kA"
+
+
+def test_a_slot_written_into_the_model_is_stripped():
+    sheets = [_sheet(23, [{"tag": "SLOT-4-TM3AI8", "device_class": "plc_module", "model": "SLOT-4-TM3AI8"}]),
+              _sheet(18, [{"tag": "PLC-AI8", "device_class": "plc_module", "model": "TM3AI8"}])]
+    assert [(line.model, line.qty) for line in build_bom(sheets)] == [("TM3AI8", 1)]
+
+
+def test_a_placeholder_in_the_parts_list_is_not_a_model():
+    items = [{"tag_pattern": "PF1...", "device_class": "lamp", "manufacturer": "SALZER", "model": "N.D.S"}]
+    sheets = [_listed(2, [{"tag": "PF1E", "device_class": "lamp"}]), _listed(35, [], items)]
+    assert build_bom(sheets)[0].model is None

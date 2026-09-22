@@ -406,8 +406,14 @@ UNSUPPORTED_CONSTRAINTS = (
 )
 
 
-def tool_schema(model: type[BaseModel]) -> dict[str, Any]:
+def tool_schema(model: type[BaseModel], *, require_all: bool = True) -> dict[str, Any]:
     """A JSON Schema the strict tool-use parameter will accept.
+
+    `require_all=False` keeps Pydantic's own required list instead, for a
+    schema that goes out unstrict anyway (the sheet schema): the model may
+    then leave out a field it has nothing for, rather than writing
+    `"curve": null` onto every device — on 4382.26-8 output tokens were
+    two-thirds of the reading stage's bill.
 
     Pydantic emits `$ref`/`$defs` and marks only non-defaulted fields as
     required. Strict mode wants every property required, no additional
@@ -446,7 +452,12 @@ def tool_schema(model: type[BaseModel]) -> dict[str, Any]:
             node.pop("server_side", None)
             if node.get("type") == "object" and "properties" in node:
                 node["additionalProperties"] = False
-                node["required"] = list(node["properties"].keys())
+                if require_all:
+                    node["required"] = list(node["properties"].keys())
+                else:
+                    node["required"] = [
+                        name for name in node.get("required", []) if name in node["properties"]
+                    ]
             # `default` is advisory and strict mode does not honour it; the
             # model must emit every field explicitly.
             node.pop("default", None)

@@ -76,7 +76,7 @@ def region_guidance(regions: PageRegions, chunk_overlap: int) -> str:
     if title:
         parts.append(
             f"{index}. `region_title_block` — the title block, in {len(title.chunks)} piece(s) "
-            "left to right that overlap by a tenth of its width. Each label sits to the RIGHT "
+            "left to right that overlap by a quarter of its width. Each label sits to the RIGHT "
             "of its own value (Hebrew order); pair them within one piece, never across two."
         )
         index += 1
@@ -183,7 +183,7 @@ def build_call(
             system=system,
             content=content,
             tool_name="sheet_extraction",
-            schema=tool_schema(SheetExtraction),
+            schema=tool_schema(SheetExtraction, require_all=False),
         ),
     )
 

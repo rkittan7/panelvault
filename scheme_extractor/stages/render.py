@@ -167,26 +167,31 @@ def title_block_top(image: Image.Image, anchor_y: int) -> int | None:
     return None
 
 
-def split_title_block(image: Image.Image, stem: Path) -> list[Path]:
-    """Two pieces of 55% width each, overlapping by a tenth of the block.
+def title_piece_lefts(width: int, piece_width: int) -> list[int]:
+    """Left edges of pieces `piece_width` wide, overlapping by a quarter of `width`."""
+    step = max(1, piece_width - round(width * 0.25))
+    return list(range(0, width - piece_width, step)) + [width - piece_width]
 
-    Hebrew title blocks put each label to the right of its value. Cut at a
-    fixed chunk width, the labels landed in one piece and their values in
-    the other, and the model paired "שם המזמין" with the project. With this
-    overlap every label/value pair on the frame (a fifth of its width at
-    most) is whole in at least one piece, and neither piece is wide enough
-    for the API to shrink its text.
+
+def split_title_block(image: Image.Image, stem: Path, piece_width: int = 1500) -> list[Path]:
+    """Pieces narrow enough to reach the model unshrunk, overlapping by a quarter.
+
+    Hebrew title blocks put each label to the right of its value, and a
+    label/value pair spans up to a fifth of the block (שם המזמין on
+    4382.26-8 runs from 42% to 62% of its width). Cut at a fixed width, or
+    with too thin an overlap, the label lands in one piece and its value in
+    the next, and the model pairs the wrong ones. With a quarter-width
+    overlap every pair is whole in at least one piece.
     """
     width, height = image.size
-    piece = round(width * 0.55)
-    if piece >= width:
+    if width <= piece_width:
         path = stem.with_name(f"{stem.name}-00.png")
         image.save(path)
         return [path]
     paths = []
-    for index, left in enumerate((0, width - piece)):
+    for index, left in enumerate(title_piece_lefts(width, piece_width)):
         path = stem.with_name(f"{stem.name}-{index:02d}.png")
-        image.crop((left, 0, left + piece, height)).save(path)
+        image.crop((left, 0, left + piece_width, height)).save(path)
         paths.append(path)
     return paths
 
@@ -372,7 +377,12 @@ def page_regions(
             notes.append("Title block border not found; cropped a fixed band above it.")
         tb_box = (0, max(0, top - pad), width, height)
         tb_stem = cache.path(page, "title_block")
-        tb_paths = split_title_block(base.crop(tb_box), tb_stem)
+        # Rendered afresh at its own resolution: the Hebrew in the title
+        # block is what names the board, and it is small.
+        with Image.open(render_page(pdf, page, settings.title_block_dpi, cache, timeout)) as fine:
+            ratio = fine.size[0] / width
+            fine_box = tuple(round(v * ratio) for v in tb_box)
+            tb_paths = split_title_block(fine.crop(fine_box), tb_stem)
         regions["title_block"] = Region(
             "title_block", tb_paths[0], tb_box, pct(tb_box, (width, height)),
             settings.title_block_dpi, tb_paths,

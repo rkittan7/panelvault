@@ -35,17 +35,16 @@ class StageModel:
 # §9 harness exists precisely to prove or disprove that choice. If it fails
 # the gates, upgrade `audit` first — that is one line here.
 DEFAULT_MODELS: dict[str, StageModel] = {
-    # Sonnet 5, not Haiku: on 4382.26-8 Haiku hung columns on a group RCD
-    # (sheet 12), dropped Q0's XT3N and clipped characters from tags; Sonnet
-    # read both sheets right. It costs about twice as much per token.
-    "extract": StageModel("claude-sonnet-5", 16000, use_batch=True),
+    # Haiku, batched on the site (half price). Sonnet 5 read 4382.26-8 better
+    # but cost $2.20 a run against about $1; what Haiku misses on that set is
+    # covered in code (parts-list models, column links) where it can be.
+    "extract": StageModel("claude-haiku-4-5-20251001", 8000, use_batch=True),
     "zoom": StageModel("claude-haiku-4-5-20251001", 2000),
     "audit": StageModel("claude-haiku-4-5-20251001", 8000),
-    # The sheet carrying the title block and the board data table, alone.
-    # Haiku misread its Hebrew wholesale on 4382.26-8 — the project as the
-    # builder, ס.מ.ע as ת.ח.ע — where Sonnet 5 read every field; it is one
-    # call per drawing, about two cents.
-    "title": StageModel("claude-sonnet-5", 16000),
+    # The sheet carrying the title block and the board data table. Its own
+    # stage so it can be moved to a stronger model with one line
+    # (SCHEME_MODEL_TITLE=claude-sonnet-5, about five cents a drawing).
+    "title": StageModel("claude-haiku-4-5-20251001", 8000),
 }
 
 
@@ -98,7 +97,7 @@ class RenderSettings:
 
     single_line_dpi: int = 220
     table_band_dpi: int = 350
-    title_block_dpi: int = 220
+    title_block_dpi: int = 300
     zoom_dpi: int = 600
     context_long_edge: int = 1536
     chunk_width: int = 1400

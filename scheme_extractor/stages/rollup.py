@@ -143,6 +143,12 @@ def _item_poles(item) -> str | None:
     return found.group(1) if found else None
 
 
+def _amps(rating: str | None) -> str | None:
+    """`3X250A` -> `250`."""
+    found = re.search(r"(\d+(?:\.\d+)?)\s*A\b", (rating or "").upper())
+    return found.group(1) if found else None
+
+
 def _pattern_covers(pattern: str, tags: list[str]) -> bool:
     """`F...` names F361 and FU461; `IRL` does not name R211.
 
@@ -178,16 +184,27 @@ def _models_from_equipment_list(grouped: dict[tuple, BOMLine], items: list) -> N
         if line.model:
             continue
         poles = _pole_count(line.poles, line.rating, line.device_class)
-        fits = {
-            (item.manufacturer, item.model)
+        candidates = [
+            item
             for item in items
-            if item.model
+            # `N.D.S`, `AF -`: a parts list's placeholder where no model was
+            # chosen. Every real model number carries a digit.
+            if item.model and re.search(r"\d", item.model)
             and item.device_class == line.device_class
             and _pattern_covers(item.tag_pattern, line.tags)
             and (not line.manufacturer or not item.manufacturer or _norm(item.manufacturer) == _norm(line.manufacturer))
             and (_item_poles(item) is None or poles is None or _item_poles(item) == poles)
-            and (_item_poles(item) is not None or len([i for i in items if i.device_class == line.device_class and i.model]) == 1)
-        }
+        ]
+        fits = {(item.manufacturer, item.model) for item in candidates}
+        if len(fits) > 1:
+            # Two MCCB families listed (`XT3N 250 36kA`, `XT1C 160 25kA`):
+            # the one naming this line's current is the one it belongs to.
+            amps = _amps(line.rating)
+            fits = {
+                (item.manufacturer, item.model) for item in candidates
+                if amps and amps in re.findall(r"\d+(?:\.\d+)?", " ".join(
+                    part for part in (item.model, item.rating, item.description_he) if part))
+            }
         if len(fits) != 1:
             continue
         maker, model = fits.pop()
@@ -257,6 +274,14 @@ def _plc_identities(occurrences: dict[str, list]) -> None:
     Mentions are renamed one by one, because two different parts can share
     a raw tag (`SLOT1` for a module and the cable wired to it).
     """
+    # Haiku wrote the slot into the model (`SLOT-4-TM3AI8`).
+    for seen in occurrences.values():
+        for index, (label, device, key) in enumerate(seen):
+            if device.device_class in {"plc", "plc_module"} and device.model:
+                bare_model = re.sub(r"^SLOT\W*\d+\W*", "", device.model, flags=re.I)
+                if bare_model and bare_model != device.model:
+                    device = device.model_copy(update={"model": bare_model})
+                    seen[index] = (label, device, _key(device))
     entries = [
         (tag, index, key)
         for tag, seen in occurrences.items()

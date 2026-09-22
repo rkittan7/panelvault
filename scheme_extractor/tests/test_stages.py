@@ -293,3 +293,14 @@ def test_columns_hung_on_a_group_rcd_are_reported():
     problems = column_problems(sheet)
     assert any("FB0U1.1 is named by 2 separate columns" in p for p in problems)
     assert any("FU401, FU402 drawn with no column" in p for p in problems)
+
+
+
+def test_every_fifth_of_a_title_block_is_whole_in_some_piece():
+    from scheme_extractor.stages.render import title_piece_lefts
+
+    width, piece = 3509, 1500  # 4382.26-8's title block at 300 dpi
+    spans = [(left, left + piece) for left in title_piece_lefts(width, piece)]
+    assert spans[0][0] == 0 and spans[-1][1] == width
+    for start in range(0, width - width // 5):
+        assert any(a <= start and start + width // 5 <= b for a, b in spans), start
