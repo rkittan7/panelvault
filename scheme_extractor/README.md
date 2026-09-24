@@ -71,6 +71,12 @@ up to the board's own width counts the cabinets (`500+600+600+800+800+600` is
 six), and the sheet says whether it closes with panels or a plate. Both reach
 the board form, which had been filling in one cabinet and Panels by default.
 
+Each cabinet is also a part. The widths, with the height and depth from the
+data table's `מידה כללית`, become one BOM line per size — `T4P-M 1950x600x500
+x3` — under the maker that table names (`פח-תמחש` is Tamhash), flagged
+`from_elevation`. The catalogue carries the T4P-M series and its common
+widths, so a board's cabinets are priced like everything else on it.
+
 ## Terminals from the cables
 
 A destination table's cable is the only place a drawing says what lands on

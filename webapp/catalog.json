@@ -5002,5 +5002,77 @@
 "about": "Screw-clamp rail terminal for conductors up to 35mm². The number is the largest conductor it takes, so a circuit's cable size picks the terminal: a 2.5mm cable lands on an AVK 4. Accessories (end plate, end stop, jumpers) are ordered separately.",
 "group": "terminals",
 "groupName": "Terminals & Wiring"
+},
+{
+"id": "tamhash-t4p-m",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M",
+"rating": "IP-20 indoor",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash floor-standing bayed cabinet, the series the data table names as ייצרן מקורי on boards built by this shop. Cabinets are made to the drawing's own dimensions, so the size rows below are the widths seen on drawings, not order codes; give the elevation's height x width x depth when ordering.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
+},
+{
+"id": "tamhash-t4p-m-1950x400x500",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M 1950x400x500",
+"rating": "1950x400x500mm",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash T4P-M cabinet 400mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
+},
+{
+"id": "tamhash-t4p-m-1950x500x500",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M 1950x500x500",
+"rating": "1950x500x500mm",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash T4P-M cabinet 500mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
+},
+{
+"id": "tamhash-t4p-m-1950x600x500",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M 1950x600x500",
+"rating": "1950x600x500mm",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash T4P-M cabinet 600mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
+},
+{
+"id": "tamhash-t4p-m-1950x800x500",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M 1950x800x500",
+"rating": "1950x800x500mm",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash T4P-M cabinet 800mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
+},
+{
+"id": "tamhash-t4p-m-1950x1000x500",
+"manufacturer": "Tamhash",
+"type": "Enclosure",
+"model": "T4P-M 1950x1000x500",
+"rating": "1950x1000x500mm",
+"poles": "Floor standing",
+"curve": "Bayed, panels",
+"about": "Tamhash T4P-M cabinet 1000mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
+"group": "enclosure",
+"groupName": "Enclosure & Climate"
 }
 ]

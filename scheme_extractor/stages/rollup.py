@@ -543,6 +543,28 @@ def terminal_blocks(circuits: list[CircuitRow]) -> list[BOMLine]:
     return lines
 
 
+def cabinet_lines(widths: list[int], height: int | None, depth: int | None,
+                  manufacturer: str | None, series: str | None, sheet: str = "") -> list[BOMLine]:
+    """One line per cabinet size, as the enclosure is ordered.
+
+    A board is bought cabinet by cabinet, and the front elevation dimensions
+    each one: 4382.26-1 is 500+600+600+800+800+600 at 1950 high and 500 deep.
+    Same size, same line.
+    """
+    lines = []
+    for width in sorted(set(widths)):
+        size = "x".join(str(part) for part in (height, width, depth) if part)
+        lines.append(BOMLine(
+            device_class="enclosure", manufacturer=manufacturer or None,
+            model=" ".join(part for part in (series, size) if part) or None,
+            rating=f"{size}mm" if size else None,
+            qty=sum(1 for w in widths if w == width),
+            tags=[], breakdown={sheet: sum(1 for w in widths if w == width)} if sheet else {},
+            flags=["from_elevation"],
+        ))
+    return lines
+
+
 def flatten_circuits(sheets: list[SheetExtraction]) -> tuple[list[CircuitRow], CircuitCounts]:
     """One row per terminal, with merged spans expanded.
 

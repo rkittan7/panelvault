@@ -329,3 +329,15 @@ def test_every_cable_core_lands_on_a_klemsan_terminal_of_its_own_size():
     assert lines["AVK 4"].breakdown == {"03": 8}
     assert lines["AVK 6"].qty == 3
     assert lines["AVK 4"].flags == ["from_cable_sizes"]
+
+
+def test_each_cabinet_size_is_its_own_line_of_the_board():
+    from scheme_extractor.stages.rollup import cabinet_lines
+
+    lines = cabinet_lines([500, 600, 600, 800, 800, 600], 1950, 500, "Tamhash", "T4P-M", "40")
+    assert [(l.qty, l.model) for l in lines] == [
+        (1, "T4P-M 1950x500x500"), (3, "T4P-M 1950x600x500"), (2, "T4P-M 1950x800x500"),
+    ]
+    assert lines[0].device_class == "enclosure" and lines[0].manufacturer == "Tamhash"
+    assert lines[1].rating == "1950x600x500mm" and lines[1].breakdown == {"40": 3}
+    assert lines[0].flags == ["from_elevation"]

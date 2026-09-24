@@ -235,6 +235,19 @@ def _amps(rating: str | None) -> float:
     return float(found.group(1)) if found else 0.0
 
 
+# The data table names the enclosure maker in Hebrew beside its series:
+# `פח-תמחש T4P-M`. The BOM carries the name the catalogue is written in.
+ENCLOSURE_MAKERS = {"פח-תמחש": "Tamhash", "תמחש": "Tamhash", "יקיר": "Yakir", "ריטל": "Rittal"}
+
+
+def _hebrew_part(value: str) -> str:
+    return " ".join(w for w in (value or "").split() if re.search(r"[֐-׿]", w))
+
+
+def _latin_part(value: str) -> str:
+    return " ".join(w for w in (value or "").split() if not re.search(r"[֐-׿]", w))
+
+
 def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None = None) -> ExtractionRun:
     """The same run, read from a DWF's own text: no model, no rendering.
 
@@ -271,11 +284,19 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
     circuits, counts = rollup.flatten_circuits(sheets)
     bom += rollup.terminal_blocks(circuits)
 
-    # How the board is built: the front elevation's cabinets and format.
+    # How the board is built: the front elevation's cabinets and format. The
+    # data table prints the board's own size as height x width x depth.
     overall = next((d.value for s in sheets for d in s.board_data if "מידה" in d.label_he), "")
-    size = re.search(r"(\d{3,5})\s*[xX]\s*(\d{3,5})", overall or "")
-    build = dwf_sheet.enclosure_build(
-        [page.page for page in pages], max(int(size.group(1)), int(size.group(2))) if size else None)
+    size = re.search(r"(\d{3,5})\s*[xX]\s*(\d{3,5})\s*[xX]\s*(\d{3,5})", overall or "")
+    height, total_width, depth = (int(g) for g in size.groups()) if size else (None, None, None)
+    build = dwf_sheet.enclosure_build([page.page for page in pages], total_width)
+    elevation = build.pop("elevation_sheet", "")
+    if build.get("cabinet_widths"):
+        maker = next((d.value for s in sheets for d in s.board_data if "ייצרן" in d.label_he
+                      or "יצרן" in d.label_he), "")
+        bom += rollup.cabinet_lines(
+            [int(w) for w in build["cabinet_widths"].split("+")], height, depth,
+            ENCLOSURE_MAKERS.get(_hebrew_part(maker), _hebrew_part(maker)), _latin_part(maker), elevation)
 
     # The board's incomer: the highest-rated breaker or switch it carries.
     incomers = [d for s in sheets for d in s.devices if d.device_class in {"mccb", "switch"} and d.rating]

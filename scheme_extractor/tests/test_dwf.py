@@ -243,7 +243,7 @@ def test_the_front_elevation_counts_the_cabinets_and_names_the_format():
     ])
     build = enclosure_build([page], width=3900)
     assert build == {"cabinet_count": "6", "cabinet_widths": "500+600+600+800+800+600",
-                     "build_format": "Panels"}
+                     "elevation_sheet": "01", "build_format": "Panels"}
 
 
 def test_the_title_is_what_most_sheets_read():
@@ -263,3 +263,6 @@ def test_a_dwf_set_reads_end_to_end_without_a_model():
     assert result.cost == {"total_usd": 0.0}
     assert sum(line.qty for line in result.bom) > 100
     assert result.circuits and result.sheets[0].sheet.title_block.drawing_no
+    cabinets = [line for line in result.bom if line.device_class == "enclosure"]
+    assert sum(line.qty for line in cabinets) == int(
+        next(fact.value for fact in result.audit.panel if fact.field == "cabinet_count"))

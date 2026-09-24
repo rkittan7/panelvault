@@ -632,8 +632,8 @@ def enclosure_build(pages: list[whip.Page], width: int | None = None) -> dict[st
     The same sheets say whether the board is closed with panels or a plate.
     """
     found: dict[str, str] = {}
-    elevations = [p for p in pages if any(ELEVATION in t.text for t in p.texts)]
-    for page in elevations:
+    elevations = [(n, p) for n, p in enumerate(pages, 1) if any(ELEVATION in t.text for t in p.texts)]
+    for number, page in elevations:
         rows: dict[int, list[whip.Text]] = {}
         for text in page.texts:
             if re.fullmatch(r"\d{3,4}", text.text):
@@ -643,13 +643,15 @@ def enclosure_build(pages: list[whip.Page], width: int | None = None) -> dict[st
             if len(widths) >= 2 and (width is None or sum(widths) == width):
                 found["cabinet_count"] = str(len(widths))
                 found["cabinet_widths"] = "+".join(str(w) for w in widths)
+                found["elevation_sheet"] = f"{number:02d}"
                 break
         if "cabinet_count" in found:
             break
     if "cabinet_count" not in found and elevations:
-        labels = {(t.x, t.y) for p in elevations for t in p.texts if FIELD.match(t.text)}
+        labels = {(t.x, t.y) for _, p in elevations for t in p.texts if FIELD.match(t.text)}
         if labels:
             found["cabinet_count"] = str(len(labels))
+            found["elevation_sheet"] = f"{elevations[0][0]:02d}"
     words = {t.text for page in pages for t in page.texts}
     if any(PANELS in word for word in words):
         found["build_format"] = "Panels"
