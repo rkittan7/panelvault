@@ -15,7 +15,7 @@ from scheme_extractor.dwf.sheet import (
     Grid, board_data, circuit_table, consensus_title, device, enclosure_build, equipment_list, read_sheet,
     stacks, title_block,
 )
-from scheme_extractor.models.schema import TitleBlock
+from scheme_extractor.models.schema import Device, TitleBlock
 
 REFERENCE_DWF = os.environ.get("SCHEME_REFERENCE_DWF")
 needs_reference = pytest.mark.skipif(
@@ -257,6 +257,24 @@ def test_title_values_are_found_at_the_offset_the_drawing_number_measures():
     assert title.project == "אגרובנק TOWER B"
     assert title.client == 'ס.מ.ע עבודות חשמל בע"מ'
     assert title.panel == "לוח חשמל E2 קומה 22"
+
+
+def test_a_switch_marked_one_nought_two_is_a_changeover_switch_everywhere():
+    from scheme_extractor.dwf.sheet import apply_switch_positions
+    from scheme_extractor.models.schema import Sheet, SheetExtraction
+
+    # Only the cabinet layout marks the positions; the single-line draws the
+    # same switch without them.
+    layout = _stack(14244, 4153, "SHE", "Socomec", "4x400A", "1-0-2")
+    marked, = [d for b in stacks(layout) if (d := device(b))]
+    assert (marked.setting, marked.rating) == ("I-0-II", "4x400A")
+
+    sheets = [SheetExtraction(sheet=Sheet(page_number=40, sheet_label="40"), devices=[marked]),
+              SheetExtraction(sheet=Sheet(page_number=2, sheet_label="02"),
+                              devices=[Device(tag="SHE", device_class="switch", rating="4x400A")])]
+    apply_switch_positions(sheets)
+    assert all(d.device_class == "changeover_switch" and d.setting == "I-0-II"
+               for sheet in sheets for d in sheet.devices)
 
 
 def test_the_front_elevation_counts_the_cabinets_and_names_the_format():

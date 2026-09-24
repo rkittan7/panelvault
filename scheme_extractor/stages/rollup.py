@@ -458,6 +458,7 @@ def build_bom(sheets: list[SheetExtraction], *, exact_text: bool = False) -> lis
 
     grouped: dict[tuple, BOMLine] = {}
     curves: dict[tuple, set[str]] = {}
+    settings: dict[tuple, set[str]] = {}
     for tag, seen in occurrences.items():
         chosen: list[list] = []  # [label, device, key]
         for label, device, key in seen:
@@ -482,6 +483,7 @@ def build_bom(sheets: list[SheetExtraction], *, exact_text: bool = False) -> lis
             line.tags.append(tag)
             line.breakdown[label] = line.breakdown.get(label, 0) + 1
             curves.setdefault(key, set()).add(device.curve or "")
+            settings.setdefault(key, set()).add(device.setting or "")
             flags = [*device.flags, *(["duplicate_tag"] if len(chosen) > 1 else [])]
             for flag in flags:
                 if flag not in line.flags:
@@ -491,6 +493,8 @@ def build_bom(sheets: list[SheetExtraction], *, exact_text: bool = False) -> lis
     for key, line in grouped.items():
         seen = {value for value in curves.get(key, set()) if value}
         line.curve = seen.pop() if len(seen) == 1 else None
+        marked = {value for value in settings.get(key, set()) if value}
+        line.setting = marked.pop() if len(marked) == 1 else None
 
     _fold_unnamed(grouped)
     _models_from_equipment_list(grouped, [item for sheet in sheets for item in sheet.equipment_list])

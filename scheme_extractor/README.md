@@ -69,6 +69,10 @@ Things the reading has to account for:
   disagrees with what they drew, an `S` over a drawn `C`.
 - A lone letter is read only as a trip curve on the line under a breaker's
   current, written or drawn, where a single letter can mean nothing else.
+- A switch marked `1-0-2` is a changeover switch, and the marking travels
+  with its tag to every sheet that draws it: only the cabinet layout marks
+  SHE, which the single-line draws plain. The catalogue answers it with
+  SIRCOVER I-0-II rather than the overlapping switch of the same family.
 - A breaker marked `עם נעילה` is ordered a lock: ABB's S2C-PD-S200 padlock
   device for the S200 family, counted from the notes so a breaker whose own
   label could not be read is still counted, and flagged `from_note`.

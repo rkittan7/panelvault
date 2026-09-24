@@ -363,6 +363,26 @@ function poleKey(...values) {
   return "";
 }
 
+/** The positions a changeover switch is marked with, as the catalog writes
+ *  them: a drawing's `1-0-2` is the catalog's `I-0-II`, and a switch that
+ *  passes through off is not the overlapping one. */
+function switchPositions(...values) {
+  for (const value of values) {
+    // Spaces are kept: `SIRCOVER I-0-II` names the positions after its
+    // family, and squeezing them together would hide the boundary.
+    const source = String(value || "").toUpperCase();
+    if (/(?:^|[^A-Z0-9+])(?:1|I)-(?:1\+2|I\+II)-(?:2|II)(?![A-Z0-9])/.test(source)) return "I-I+II-II";
+    if (/(?:^|[^A-Z0-9+])(?:1|I)-0-(?:2|II)(?![A-Z0-9])/.test(source)) return "I-0-II";
+  }
+  return "";
+}
+
+/** A catalog row often lists every arrangement one family is built in
+ *  ("3P/4P"). Such a row answers a drawing that names one of them. */
+function poleArrangements(value) {
+  return String(value || "").toUpperCase().split(/[\/,]/).map((part) => poleKey(part.trim())).filter(Boolean);
+}
+
 function typeKey(value) {
   const key = partKey(value);
   if (key === "mcb" || key.includes("miniaturecircuitbreaker")) return "mcb";
@@ -371,6 +391,10 @@ function typeKey(value) {
   if (["button", "pushbutton", "pushbuttonoperator", "pushbuttonswitch", "momentarypushbutton"].includes(key)) return "pushbutton";
   if (["lamp", "pilot", "pilotlight", "pilotlightoperator", "pilotlamp", "indicator", "indicatorlight", "indicatorlamp", "signallamp", "controllamp"].includes(key)) return "pilotlight";
   if (["selectorswitch", "selector", "keyswitch", "keyselectorswitch"].includes(key)) return "selectorswitch";
+  // One kind under the many names a drawing gives it: a switch that breaks
+  // load and isolates. Anything with a fuse in it is not one of these.
+  if (["switch", "isolator", "switchdisconnector", "disconnector", "loadbreakswitch",
+    "mainswitch", "isolatingswitch"].includes(key)) return "switch";
   if (["emergencystop", "emergencystopbutton", "emergencystopoperator", "estop", "estopbutton"].includes(key)) return "emergencystop";
   if (["doorswitch", "doorpositionswitch", "limitswitch", "doorlimitswitch"].includes(key)) return "doorswitch";
   if (["latchingrelay", "impulserelay", "teleruptor", "impulseswitch", "remoteswitch", "bistablerelay", "steprelay"].includes(key)) return "latchingrelay";
@@ -512,6 +536,7 @@ function matchCatalogPart(catalog, part) {
   const requestedPoles = poleKey(part.poles, part.rawText, part.rating);
   const requestedAmpere = ampereRating(part.rating, part.rawText);
   const requestedColour = lensColour(part.curve, part.model, part.rawText);
+  const requestedPositions = switchPositions(part.rawText, part.model, part.rating);
 
   const scoreCatalog = (wanted, exactOnly) => catalog
     .map((candidate) => {
@@ -550,7 +575,8 @@ function matchCatalogPart(catalog, part) {
         // when brand, device type and one fixed pole arrangement identify a
         // single catalog family; the tie check below still refuses ambiguity.
         if (!manufacturer || !requestedType || !requestedPoles) return null;
-        if (candidateType !== requestedType || candidatePoles !== requestedPoles) return null;
+        const arrangements = candidatePoles ? [candidatePoles] : poleArrangements(candidate.poles);
+        if (candidateType !== requestedType || !arrangements.includes(requestedPoles)) return null;
         score += 2;
       }
 
@@ -577,6 +603,9 @@ function matchCatalogPart(catalog, part) {
       // nothing: a colour must not lift a weaker model match into a tie.
       const candidateColour = lensColour(candidate.model);
       if (requestedColour && candidateColour && requestedColour !== candidateColour) return null;
+      // A switch through off is not the overlapping one, whatever else fits.
+      const candidatePositions = switchPositions(candidate.model);
+      if (requestedPositions && candidatePositions && requestedPositions !== candidatePositions) return null;
       return { candidate, score, modelMatched };
     })
     .filter(Boolean)

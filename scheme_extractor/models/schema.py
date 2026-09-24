@@ -22,7 +22,8 @@ SPARE_WORDS = ("שמור", "שמורים")
 DeviceClass = Literal[
     "mccb", "mcb", "rcd", "contactor", "motor_protection", "switch", "fuse",
     "spd", "lamp", "relay", "step_relay", "shunt_trip", "plc", "plc_module",
-    "psu", "terminal", "alarm_interface", "enclosure", "accessory", "label", "external",
+    "psu", "terminal", "alarm_interface", "enclosure", "accessory", "changeover_switch",
+    "label", "external",
 ]
 Confidence = Literal["high", "medium", "low"]
 FindingType = Literal[
@@ -421,6 +422,9 @@ class BOMLine(Contract):
     # when they do not, so a disagreement never masquerades as a fact.
     curve: Optional[str] = None
     sensitivity: Optional[str] = None
+    # A switch's positions as the drawing marks them (`I-0-II`): what tells a
+    # changeover switch from an isolator, and one changeover from another.
+    setting: Optional[str] = None
     qty: int
     tags: list[str] = Field(default_factory=list)
     # Every line carries this, not only the ones over twenty units, so a

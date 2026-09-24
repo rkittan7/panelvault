@@ -5096,5 +5096,27 @@
 "about": "Padlock device for DS201 RCBOs, the residual-current version of the S2C-PD-S200: it locks the toggle so the circuit cannot be switched back on until the padlock is removed.",
 "group": "mcbs",
 "groupName": "MCBs & Accessories"
+},
+{
+"id": "socomec-sirco-m-lbs",
+"manufacturer": "Socomec",
+"type": "Load Break Switch",
+"model": "SIRCO M",
+"rating": "16-160A",
+"poles": "1P/2P/3P/4P",
+"about": "Universal load break switch for DIN rail or plate, made and broken under load and safe to isolate behind. The size on a drawing is the switch: a 3x40A bypass switch beside a contactor is a 3P 40A SIRCO M.",
+"group": "switching",
+"groupName": "Switching & Isolation"
+},
+{
+"id": "socomec-sirco-lbs",
+"manufacturer": "Socomec",
+"type": "Load Break Switch",
+"model": "SIRCO",
+"rating": "125-5000A",
+"poles": "3P/4P",
+"about": "Load break switch for power distribution, the larger sibling of the SIRCO M: double breaking per pole on a sliding contact system, front or side operation. Used as a board's incoming isolator where no changeover is needed.",
+"group": "switching",
+"groupName": "Switching & Isolation"
 }
 ]

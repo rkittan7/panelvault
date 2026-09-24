@@ -279,6 +279,7 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
     for reading in sheets:
         reading.sheet.title_block = identity
     dwf_sheet.complete_plc_models(sheets)
+    dwf_sheet.apply_switch_positions(sheets)
 
     bom = rollup.build_bom(sheets, exact_text=True)
     circuits, counts = rollup.flatten_circuits(sheets)

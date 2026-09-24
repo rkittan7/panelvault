@@ -38,6 +38,9 @@ PLC_MODEL = re.compile(r"^TM\d{1,3}[A-Z0-9]{2,}$")
 # Modules drawn as a box with their model inside and no tag of their own.
 TAGLESS = ((PLC_MODEL, "plc_module", "Schneider"), (re.compile(r"^IRLA\d+S$"), "relay", "GIC"))
 SETTING = re.compile(r"^Inc\s*=\s*\S+$", re.I)
+# How a switch's positions are marked beside it: `1-0-2` is a changeover
+# through off, `0-1` an ordinary on-off. The catalogue writes them I-0-II.
+POSITIONS = re.compile(r"^([01I])\s*-\s*(?:0\s*-\s*)?(?:2|II|1)$", re.I)
 CURVE = re.compile(r"^[BCDKZ]$")
 SENSITIVITY = re.compile(r"^\d+\s*mA$", re.I)
 MAKERS = {
@@ -139,9 +142,17 @@ def stacks(texts: list[whip.Text]) -> list[Block]:
             reach = 2.6 * max(text.height, last.height)
             if leads and any(_names_device(t.text) for t in block.texts):
                 continue
-            # A Hebrew note is set out from the labels it belongs to (עם
-            # נעילה under a breaker), so it hangs from a wider column.
-            reach_x = (6 if HEBREW.search(text.text) else 3) * text.height
+            # A note or a plain attribute is set out from the labels it
+            # belongs to — עם נעילה under a breaker, `Socomec / 4x400A /
+            # 1-0-2` beside a cabinet's switch — so both hang from a wider
+            # column than a label that could be a device in its own right.
+            if HEBREW.search(text.text):
+                reach_x = 6 * text.height
+            elif (RATING.match(text.text) or POSITIONS.match(text.text)
+                  or text.text.upper() in MAKERS or text.text in MAKERS):
+                reach_x = 4 * text.height
+            else:
+                reach_x = 3 * text.height
             if abs(text.x - block.anchor) < reach_x and 0 <= last.y - text.y < reach:
                 block.texts.append(text)
                 break
@@ -241,7 +252,9 @@ def device(block: Block) -> Device | None:
         if value == tag:
             continue
         words = value.split()
-        if SETTING.match(value):
+        if POSITIONS.match(value):
+            setting = "I-0-II" if "0-" in value.replace(" ", "")[1:] else "0-1"
+        elif SETTING.match(value):
             setting = value
         elif RATING.match(value) and rating is None:
             rating = value
@@ -291,6 +304,20 @@ def model_only(block: Block) -> tuple[str, str | None, str] | None:
         return None
     maker = next((MAKERS[v.upper()] for v in values if v.upper() in MAKERS), None)
     return model, maker, cls
+
+
+def lend_positions(devices: list[tuple[Device, Block]], texts: list[whip.Text]) -> None:
+    """A `1-0-2` beside a switch marks that switch, stacked with it or not."""
+    switches = [(d, b) for d, b in devices if d.device_class in {"switch", "changeover_switch"}]
+    for text in texts:
+        if not POSITIONS.match(text.text) or "0" not in text.text[1:]:
+            continue
+        height = text.height or 100
+        near = [(d, b) for d, b in switches
+                if abs(b.x - text.x) < 6 * height and abs(b.y - text.y) < 6 * height]
+        if near:
+            device, _ = min(near, key=lambda db: abs(db[1].x - text.x) + abs(db[1].y - text.y))
+            device.setting = device.setting or "I-0-II"
 
 
 def lend_models(devices: list[tuple[Device, Block]], orphans: list[tuple[tuple, Block]]) -> None:
@@ -598,6 +625,7 @@ def read_sheet(number: int, page: whip.Page, board_number: str,
         elif (loose := model_only(block)) is not None:
             orphans.append((loose, block))
     lend_models(devices, orphans)
+    lend_positions(devices, schematic)
     # A PLC's modules and the alarm interface carry no tag, only their model
     # inside the drawing of each (TM3DI16, IRLA04S): the model names them.
     stacked = {d.model for d, _ in devices if d.model}
@@ -674,6 +702,22 @@ def enclosure_build(pages: list[whip.Page], width: int | None = None) -> dict[st
     elif any(word.startswith(PLATE[:4]) for word in words):
         found["build_format"] = "Plate"
     return found
+
+
+def apply_switch_positions(sheets: list[SheetExtraction]) -> None:
+    """A switch marked `1-0-2` is a changeover switch, on every sheet.
+
+    Only the cabinet layout carries the marking on 4382.26-1, and a tag is
+    one device across the set, so what that sheet says about SHE holds where
+    the single-line draws it too.
+    """
+    marked = {d.tag: d.setting for sheet in sheets for d in sheet.devices
+              if d.setting == "I-0-II" and d.device_class in {"switch", "changeover_switch"}}
+    for sheet in sheets:
+        for device in sheet.devices:
+            if device.tag in marked:
+                device.device_class = "changeover_switch"
+                device.setting = marked[device.tag]
 
 
 def complete_plc_models(sheets: list[SheetExtraction]) -> None:

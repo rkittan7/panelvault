@@ -744,3 +744,33 @@ test("the PLC and relay modules printed on 4382.26-8 match their catalog rows", 
     "Modicon M262 TM262L20MESE8T", "Modicon TM3DI32K", "Modicon TM3AI8", "IRLA04S isolated relay module",
   ]);
 });
+
+const SWITCHES = [
+  { id: "socomec-sircover-i-0-ii", manufacturer: "Socomec", model: "SIRCOVER I-0-II",
+    type: "Manual Changeover Switch", rating: "125-3200A", poles: "3P/4P" },
+  { id: "socomec-sircover-overlap", manufacturer: "Socomec", model: "SIRCOVER I-I+II-II",
+    type: "Manual Changeover Switch", rating: "125-1600A", poles: "3P/4P" },
+  { id: "socomec-sirco-m-lbs", manufacturer: "Socomec", model: "SIRCO M",
+    type: "Load Break Switch", rating: "16-160A", poles: "1P/2P/3P/4P" },
+];
+
+test("a switch is matched by what it breaks and the positions it is marked with", () => {
+  // 4382.26-1 marks SHE `1-0-2` beside Socomec 4x400A, and never names a model.
+  const changeover = matchCatalogPart(SWITCHES, {
+    manufacturer: "Socomec", model: "", type: "Manual Changeover Switch", rating: "4x400A", poles: "4P",
+    rawText: "Socomec Manual Changeover Switch 4x400A 4P I-0-II",
+  });
+  assert.equal(changeover.model, "SIRCOVER I-0-II");   // not the overlapping I-I+II-II of the same family
+
+  // A row listing every arrangement it is built in answers a drawing naming one.
+  const bypass = matchCatalogPart(SWITCHES, {
+    manufacturer: "Socomec", model: "", type: "Switch", rating: "3X40A", poles: "3P",
+    rawText: "Socomec Switch 3X40A 3P",
+  });
+  assert.equal(bypass.model, "SIRCO M");               // an isolator by any of its names
+
+  assert.equal(matchCatalogPart(SWITCHES, {
+    manufacturer: "Socomec", model: "", type: "Manual Changeover Switch", rating: "4x400A", poles: "4P",
+    rawText: "Socomec Manual Changeover Switch 4x400A 4P I-I+II-II",
+  }).model, "SIRCOVER I-I+II-II");
+});

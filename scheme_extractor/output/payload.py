@@ -21,6 +21,7 @@ PANELVAULT_TYPE = {
     "contactor": "Contactor",
     "motor_protection": "Motor Protection",
     "switch": "Switch",
+    "changeover_switch": "Manual Changeover Switch",
     "fuse": "Fuse",
     "spd": "Surge Protection",
     "lamp": "Pilot Light",
@@ -52,7 +53,8 @@ def _component(line: BOMLine, board_number: str, main_tag: str) -> dict[str, Any
     # Name the line by what it is before what it is rated: "MCB 3X40A 3P C",
     # not "3X40A 3", which gave the reviewer and the matcher nothing to go on.
     raw = " ".join(
-        part for part in (line.manufacturer, line.model, kind, line.rating, poles, line.curve) if part
+        part for part in
+        (line.manufacturer, line.model, kind, line.rating, poles, line.curve, line.setting) if part
     )
     is_main = bool(main_tag) and main_tag in line.tags
     return {
@@ -62,7 +64,9 @@ def _component(line: BOMLine, board_number: str, main_tag: str) -> dict[str, Any
         "model": line.model or "",
         "type": kind,
         "rating": line.rating or "",
-        "poles": line.poles or "",
+        # `4P`, not `4`: the contract's own spelling, and what the catalogue
+        # matcher reads a pole arrangement from.
+        "poles": poles or "",
         "curve": line.curve or "",
         "sensitivity": line.sensitivity or "",
         "quantity": line.qty,
