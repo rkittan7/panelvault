@@ -64,7 +64,11 @@ Things the reading has to account for:
   over the strokes of the whole label. That character names the glyph under
   it, but only one per label, and only where the font already reads the rest.
   A label that repeats text already on the sheet, whole or in part
-  (`100A` under `Inc=100A`), is dropped.
+  (`100A` under `Inc=100A`), is dropped, but a stray single character never
+  counts as the label: these exports leave one behind that sometimes
+  disagrees with what they drew, an `S` over a drawn `C`.
+- A lone letter is read only as a trip curve on the line under a breaker's
+  current, written or drawn, where a single letter can mean nothing else.
 - A breaker marked `עם נעילה` is ordered a lock: ABB's S2C-PD-S200 padlock
   device for the S200 family, counted from the notes so a breaker whose own
   label could not be read is still counted, and flagged `from_note`.

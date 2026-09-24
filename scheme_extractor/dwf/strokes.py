@@ -26,6 +26,8 @@ READABLE = re.compile(
     r"|\d+[xX]\d+[A-Z0-9./+-]*"          # a rating written by poles: 3X40A
     r"|\d{1,4}(?:\.\d+)?A(?:\+N)?"      # or by current, with a neutral: 16A+N
 )
+CURVE = re.compile(r"[BCDKZ]")       # a breaker's trip curve, printed alone
+RATING_ABOVE = re.compile(r"\d\s*[xX]?\s*\d*\s*A(\+N)?$")
 CAP_HEIGHT = 0.77            # a glyph's height as a share of the font's
 
 
@@ -86,7 +88,7 @@ def _words(page: whip.Page, min_height: int = 40, max_height: int = 400) -> list
             words.append(word)
     full = []
     for word in words:
-        if len(word) < 2:
+        if len(word) < 1:
             continue
         left = min(r[0] for r in word)
         right = max(r[2] for r in word)
@@ -120,6 +122,14 @@ def _hinted(hints: list[whip.Text], left: float, base: float, size: float) -> st
     return near[0][1].text.strip()
 
 
+def _under_a_rating(labels: list[whip.Text], left: float, base: float, size: float) -> bool:
+    """Is a breaker's current written or drawn on the line above this one?"""
+    return any(
+        RATING_ABOVE.search(t.text) and abs(t.x - left) < 1.5 * size and 0 < t.y - base < 2.5 * size
+        for t in labels
+    )
+
+
 def read(page: whip.Page) -> list[whip.Text]:
     """The page's stroke-drawn labels, as text with a position.
 
@@ -130,7 +140,8 @@ def read(page: whip.Page) -> list[whip.Text]:
     table = font()
     written = [(t.x, t.y, len(t.text.strip())) for t in page.texts if t.text.strip("? ")]
     hints = [t for t in page.texts if len(t.text.strip()) == 1 and t.text.strip().isalnum()]
-    found = []
+    found: list[whip.Text] = []
+    alone: list[whip.Text] = []
     for word in _words(page):
         base = min(r[1] for r in word)
         left = min(r[0] for r in word)
@@ -141,11 +152,17 @@ def read(page: whip.Page) -> list[whip.Text]:
         # Text already written over the label: an export that kept the whole
         # label needs no reading. A stray character of one it lost (a lone
         # `F` where `FU491` is drawn) does not count as the label.
-        if any(abs(x - left) < 1.5 * size and abs(y - base) < size and 2 * length >= len(glyphs)
+        # A stray single character is not the label: these exports leave one
+        # behind that sometimes disagrees with what they drew (`S` over a
+        # drawn `C`), so only a text of its own counts as already written.
+        if any(abs(x - left) < 1.5 * size and abs(y - base) < size
+               and length >= 2 and 2 * length >= len(glyphs)
                for x, y, length in written):
             continue
         # Two shaped characters at least: a pair of plain strokes is not `II`.
-        if sum(1 for g in glyphs if sum(len(run) for run in g) >= 4) < 2:
+        # A single one is held back for the curve pass below.
+        shaped = sum(1 for g in glyphs if sum(len(run) for run in g) >= 4)
+        if shaped < 1 or (shaped < 2 and len(glyphs) > 1):
             continue
         characters = []
         hinted = 0
@@ -159,10 +176,10 @@ def read(page: whip.Page) -> list[whip.Text]:
         # One character may be named by the text written over it, and only in
         # a label the font already reads: a row of identical symbols under a
         # phase marker is not the word `RRRRRR`.
-        if not all(characters) or hinted > 1 or len(glyphs) - hinted < 2:
+        if not all(characters) or hinted > 1 or (len(glyphs) > 1 and len(glyphs) - hinted < 2):
             continue
         text = "".join(characters)
-        if not READABLE.fullmatch(text):
+        if not (READABLE.fullmatch(text) or (len(text) == 1 and CURVE.fullmatch(text))):
             continue
         # Part of a label the export did keep: `Inc=100A` is written there,
         # and only its `100A` was drawn in a font this table knows.
@@ -170,6 +187,13 @@ def read(page: whip.Page) -> list[whip.Text]:
                for t in page.texts):
             continue
         layers = [page.line_layers[r[5]] for r in word]
-        found.append(whip.Text(int(left), int(base), text, max(set(layers), key=layers.count),
-                               int(size / CAP_HEIGHT), 0))
+        label = whip.Text(int(left), int(base), text, max(set(layers), key=layers.count),
+                          int(size / CAP_HEIGHT), 0)
+        (alone if len(glyphs) == 1 else found).append(label)
+    # A breaker prints its trip curve alone on the line under its current,
+    # where a single letter can mean nothing else. The rating above may be
+    # drawn rather than written, so the labels just read count too.
+    rated = list(page.texts) + found
+    found += [t for t in alone if CURVE.fullmatch(t.text)
+              and _under_a_rating(rated, t.x, t.y, t.height * CAP_HEIGHT)]
     return found
