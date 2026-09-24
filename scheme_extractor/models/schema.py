@@ -22,7 +22,7 @@ SPARE_WORDS = ("שמור", "שמורים")
 DeviceClass = Literal[
     "mccb", "mcb", "rcd", "contactor", "motor_protection", "switch", "fuse",
     "spd", "lamp", "relay", "step_relay", "shunt_trip", "plc", "plc_module",
-    "psu", "terminal", "alarm_interface", "enclosure", "label", "external",
+    "psu", "terminal", "alarm_interface", "enclosure", "accessory", "label", "external",
 ]
 Confidence = Literal["high", "medium", "low"]
 FindingType = Literal[

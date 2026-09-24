@@ -60,6 +60,14 @@ Things the reading has to account for:
 - A model beside a device rather than under it (`AF40 / ABB` next to a
   contactor's box) is not a device of its own: it goes to the nearest device
   of its kind that has no model.
+- A stroke label can be half-written: the export keeps one character as text
+  over the strokes of the whole label. That character names the glyph under
+  it, but only one per label, and only where the font already reads the rest.
+  A label that repeats text already on the sheet, whole or in part
+  (`100A` under `Inc=100A`), is dropped.
+- A breaker marked `עם נעילה` is ordered a lock: ABB's S2C-PD-S200 padlock
+  device for the S200 family, counted from the notes so a breaker whose own
+  label could not be read is still counted, and flagged `from_note`.
 - A cabinet-door label can shorten a tag (`QU97` for `QU497`); it is not
   counted twice.
 

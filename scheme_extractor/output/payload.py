@@ -33,6 +33,7 @@ PANELVAULT_TYPE = {
     "terminal": "Terminal Block",
     "alarm_interface": "Alarm Interface",
     "enclosure": "Enclosure",
+    "accessory": "Accessory",
     "label": "Label",
     "external": "External",
 }

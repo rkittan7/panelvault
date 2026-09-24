@@ -309,6 +309,10 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
             PanelFact(field="main_breaker_model", value=main.model),
             PanelFact(field="main_breaker_rating", value=main.rating),
         ]
+    bom += rollup.lock_accessories(sheets, {
+        f"{page.number:02d}": dwf_sheet.lock_notes(page.page)
+        for page in pages if dwf_sheet.lock_notes(page.page)
+    })
     facts += [PanelFact(field=field, value=value) for field, value in build.items()]
     unresolved = [line for line in bom if line.needs_human]
     if unresolved:

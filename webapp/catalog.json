@@ -5074,5 +5074,27 @@
 "about": "Tamhash T4P-M cabinet 1000mm wide, 1950mm high and 500mm deep, one field of a bayed board. Ordered per cabinet: a six-cabinet board is six of these in its own widths.",
 "group": "enclosure",
 "groupName": "Enclosure & Climate"
+},
+{
+"id": "abb-s2c-pd-s200",
+"manufacturer": "ABB",
+"type": "Accessory",
+"model": "S2C-PD-S200",
+"rating": "S200 MCB",
+"poles": "Toggle",
+"about": "Padlock device for System pro M compact S200 breakers: it clamps onto the toggle so the breaker cannot be switched until the padlock is off, and stays on the device in normal service. Sold as SA1 in North America. Drawings mark the breakers that need it עם נעילה; the RCBO version of the same accessory is the S2C-PD-DS201E.",
+"group": "mcbs",
+"groupName": "MCBs & Accessories"
+},
+{
+"id": "abb-s2c-pd-ds201e",
+"manufacturer": "ABB",
+"type": "Accessory",
+"model": "S2C-PD-DS201E",
+"rating": "DS201 RCBO",
+"poles": "Toggle",
+"about": "Padlock device for DS201 RCBOs, the residual-current version of the S2C-PD-S200: it locks the toggle so the circuit cannot be switched back on until the padlock is removed.",
+"group": "mcbs",
+"groupName": "MCBs & Accessories"
 }
 ]

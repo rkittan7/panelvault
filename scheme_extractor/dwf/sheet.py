@@ -115,9 +115,13 @@ class Block:
 
     @property
     def anchor(self) -> int:
-        """Where the stack hangs: a Hebrew note beside a device is set out
-        from the labels, so it does not decide the column."""
-        return next((t.x for t in self.texts if not HEBREW.search(t.text)), self.texts[0].x)
+        """Where the stack hangs: its tag if it has one, since a Hebrew note
+        beside a device and a phase letter above it are both set out from the
+        labels and neither decides the column."""
+        return next(
+            (t.x for t in self.texts if _names_device(t.text)),
+            next((t.x for t in self.texts if not HEBREW.search(t.text)), self.texts[0].x),
+        )
 
     @property
     def y(self) -> int:
@@ -135,7 +139,10 @@ def stacks(texts: list[whip.Text]) -> list[Block]:
             reach = 2.6 * max(text.height, last.height)
             if leads and any(_names_device(t.text) for t in block.texts):
                 continue
-            if abs(text.x - block.anchor) < 3 * text.height and 0 <= last.y - text.y < reach:
+            # A Hebrew note is set out from the labels it belongs to (עם
+            # נעילה under a breaker), so it hangs from a wider column.
+            reach_x = (6 if HEBREW.search(text.text) else 3) * text.height
+            if abs(text.x - block.anchor) < reach_x and 0 <= last.y - text.y < reach:
                 block.texts.append(text)
                 break
         else:
@@ -188,6 +195,10 @@ def _is_letter_tag(value: str) -> bool:
 
 
 def _is_model(word: str) -> bool:
+    # `XRU1`, `XQ98`: a terminal's tag, not a model. `XT1C` is a model, and
+    # says so by belonging to a family.
+    if re.match(r"^X[A-Z]*\d", word) and not any(p.search(word) for p, _ in MODEL_CLASS):
+        return False
     return (
         bool(re.match(r"^[A-Z][A-Z0-9-]*\d", word) or re.match(r"^[A-Z]{2,}-[A-Z]", word))
         and "--" not in word and not word.upper().startswith(NOT_MODELS)
@@ -621,6 +632,11 @@ def read_sheet(number: int, page: whip.Page, board_number: str,
 ELEVATION = "מראה לוח"          # the sheet that draws the board's front
 PANELS, PLATE = "פנלים", "פלטה"
 FIELD = re.compile(r"^שדה\s")   # a cabinet's own label: שדה חיוני, שדה אלפסק
+
+
+def lock_notes(page: whip.Page) -> int:
+    """How many devices this sheet marks `עם נעילה`, with a lock."""
+    return sum(1 for text in {(t.x, t.y, t.text) for t in page.texts} if "נעילה" in text[2])
 
 
 def enclosure_build(pages: list[whip.Page], width: int | None = None) -> dict[str, str]:

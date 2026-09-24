@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scheme_extractor.dwf import hebrew, package, whip
+from scheme_extractor.dwf import hebrew, package, strokes, whip
 from scheme_extractor.dwf.sheet import (
     Grid, board_data, circuit_table, consensus_title, device, enclosure_build, equipment_list, read_sheet,
     stacks, title_block,
@@ -119,6 +119,32 @@ def test_a_package_is_its_header_and_a_zip_with_a_manifest():
     assert [(s.number, s.title) for s in sheets] == [(1, "4382.26-1-1")]
     assert sheets[0].page.texts[0].text == "שם הלוח:"
     assert package.board_number(sheets) == "4382.26-1"
+
+
+# ------------------------------------------------- labels drawn as strokes
+
+def _box(x: int, y: int, w: int, h: int) -> list[tuple[int, int]]:
+    return [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
+
+
+def test_a_letters_loose_bar_joins_the_word_its_box_holds():
+    # Some exports draw an A's crossbar apart from the rest of the letter.
+    page = whip.Page(lines=[_box(0, 0, 60, 100), _box(100, 0, 60, 100), [(110, 40), (150, 40)]])
+    words = strokes._words(page)
+    assert len(words) == 1 and len(words[0]) == 3
+    assert len(strokes._glyphs(words[0])) == 2       # the bar belongs to the second letter
+
+
+def test_a_wide_gap_ends_a_word_and_a_letters_gap_does_not():
+    page = whip.Page(lines=[_box(0, 0, 60, 100), _box(110, 0, 60, 100), _box(400, 0, 60, 100),
+                            _box(510, 0, 60, 100)])
+    assert [len(w) for w in strokes._words(page)] == [2, 2]
+
+
+def test_a_character_written_over_a_glyph_names_it_only_when_it_is_the_nearer():
+    hints = [whip.Text(100, 200, "F", "A", 120, 0), whip.Text(118, 125, "A", "A", 120, 0)]
+    assert strokes._hinted(hints, 100, 200, 94) == "F"        # F sits exactly on the glyph
+    assert strokes._hinted(hints, 109, 162, 94) is None        # between the two: neither names it
 
 
 # ------------------------------------------------------------ sheet layout

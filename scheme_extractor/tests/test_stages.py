@@ -341,3 +341,34 @@ def test_each_cabinet_size_is_its_own_line_of_the_board():
     assert lines[0].device_class == "enclosure" and lines[0].manufacturer == "Tamhash"
     assert lines[1].rating == "1950x600x500mm" and lines[1].breakdown == {"40": 3}
     assert lines[0].flags == ["from_elevation"]
+
+
+def test_a_breaker_marked_with_a_lock_is_ordered_one():
+    from scheme_extractor.models.schema import Device, Sheet, SheetExtraction
+    from scheme_extractor.stages.rollup import lock_accessories
+
+    sheets = [SheetExtraction(
+        sheet=Sheet(page_number=20, sheet_label="20"),
+        devices=[Device(tag="FU491", device_class="mcb", manufacturer="ABB", description_he="עם נעילה")],
+    )]
+    line, = lock_accessories(sheets, {"20": 2})      # two marked, one of them read
+    assert (line.manufacturer, line.model, line.qty) == ("ABB", "S2C-PD-S200", 2)
+    assert line.tags == ["FU491"] and line.flags == ["from_note"]
+    assert not lock_accessories(sheets, {})
+
+
+def test_a_breaker_printed_with_a_neutral_is_the_single_pole_one():
+    from scheme_extractor.models.schema import Device, Sheet, SheetExtraction
+    from scheme_extractor.stages.rollup import build_bom
+
+    items = [{"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S201M",
+              "poles": "1"},
+             {"tag_pattern": "F...", "device_class": "mcb", "manufacturer": "ABB", "model": "S203M",
+              "poles": "3"}]
+    sheets = [
+        SheetExtraction(sheet=Sheet(page_number=15, sheet_label="15"),
+                        devices=[Device(tag="FIRLU", device_class="mcb", rating="6A+N")]),
+        SheetExtraction(sheet=Sheet(page_number=42, sheet_label="42"), equipment_list=items),
+    ]
+    line = next(l for l in build_bom(sheets) if "FIRLU" in l.tags)
+    assert line.model == "S201M"

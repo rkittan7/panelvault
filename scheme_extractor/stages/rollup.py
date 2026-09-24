@@ -130,7 +130,9 @@ def _pole_count(poles: str | None, rating: str | None, device_class: str) -> str
     match = re.match(r"(\d)X", rating)
     if match:
         return match.group(1)
-    if device_class == "mcb" and re.fullmatch(r"\d+(?:\.\d+)?A", rating):
+    # `6A+N` is one protected pole beside a switched neutral: the breaker
+    # ordered for it is the single-pole one the parts list names.
+    if device_class == "mcb" and re.fullmatch(r"\d+(?:\.\d+)?A(?:\+N)?", rating):
         return "1"
     return None
 
@@ -563,6 +565,34 @@ def cabinet_lines(widths: list[int], height: int | None, depth: int | None,
             flags=["from_elevation"],
         ))
     return lines
+
+
+LOCK_NOTE = "נעילה"           # `עם נעילה`: with a lock
+# ABB's padlock device for the S200 family, which clamps the toggle so the
+# breaker cannot be switched until the padlock is taken off.
+LOCK_PART = ("ABB", "S2C-PD-S200")
+
+
+def lock_accessories(sheets: list[SheetExtraction], notes: dict[str, int]) -> list[BOMLine]:
+    """A lock for every breaker the drawing marks `עם נעילה`.
+
+    The note is the order: the breaker itself is the same one as its
+    neighbours. Counted from the notes rather than from the devices that
+    carry them, because a note belongs to its breaker even where the label
+    beside it could not be read.
+    """
+    total = sum(notes.values())
+    if not total:
+        return []
+    locked = [d for sheet in sheets for d in sheet.devices
+              if d.description_he and LOCK_NOTE in d.description_he]
+    makers = {d.manufacturer for d in locked if d.manufacturer}
+    maker, model = LOCK_PART if makers <= {"ABB"} else (None, None)
+    return [BOMLine(
+        device_class="accessory", manufacturer=maker, model=model,
+        qty=total, tags=sorted({d.tag for d in locked}),
+        breakdown={label: count for label, count in notes.items()}, flags=["from_note"],
+    )]
 
 
 def flatten_circuits(sheets: list[SheetExtraction]) -> tuple[list[CircuitRow], CircuitCounts]:

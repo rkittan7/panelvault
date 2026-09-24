@@ -21,7 +21,11 @@ from pathlib import Path
 from . import whip
 
 # A model (AF38, IRLA04S, SOCOMEC) or a rating (3X40A).
-READABLE = re.compile(r"[A-Z][A-Z0-9./+-]{2,15}|\d+[xX]\d+[A-Z0-9./+-]*")
+READABLE = re.compile(
+    r"[A-Z][A-Z0-9./+-]{2,15}"           # a tag or a model: FU491, IRLA04S, SOCOMEC
+    r"|\d+[xX]\d+[A-Z0-9./+-]*"          # a rating written by poles: 3X40A
+    r"|\d{1,4}(?:\.\d+)?A(?:\+N)?"      # or by current, with a neutral: 16A+N
+)
 CAP_HEIGHT = 0.77            # a glyph's height as a share of the font's
 
 
@@ -45,14 +49,22 @@ def _signature(glyph: list, left: float, base: float, size: float) -> tuple:
 
 
 def _words(page: whip.Page, min_height: int = 40, max_height: int = 400) -> list[list[tuple]]:
-    """Glyph-sized runs grouped into words: one baseline, no wide gap."""
-    runs = []
+    """Glyph-sized runs grouped into words: one baseline, no wide gap.
+
+    A letter is not always one stroke — some exports draw A's and F's bar
+    apart from the rest — so flat pieces are collected too and given to the
+    word whose box holds them.
+    """
+    runs, bars = [], []
     for index, run in enumerate(page.lines):
         xs = [p[0] for p in run]
         ys = [p[1] for p in run]
         width, height = max(xs) - min(xs), max(ys) - min(ys)
+        piece = (min(xs), min(ys), max(xs), max(ys), run, index)
         if min_height <= height <= max_height and width <= 2 * height:
-            runs.append((min(xs), min(ys), max(xs), max(ys), run, index))
+            runs.append(piece)
+        elif height < min_height and min_height * 0.2 <= width <= max_height:
+            bars.append(piece)
     bands: dict[int, list] = defaultdict(list)
     for run in runs:
         bands[round(run[1] / 8)].append(run)
@@ -64,13 +76,24 @@ def _words(page: whip.Page, min_height: int = 40, max_height: int = 400) -> list
         size = max((r[3] - r[1] for r in band), default=0)
         word: list = []
         for run in band:
-            if word and run[0] > max(r[2] for r in word) + 0.55 * size:
+            # A letter's gap in these fonts runs to about half its height;
+            # anything wider is the space between two labels.
+            if word and run[0] > max(r[2] for r in word) + 0.75 * size:
                 words.append(word)
                 word = []
             word.append(run)
         if word:
             words.append(word)
-    return [w for w in words if len(w) >= 2]
+    full = []
+    for word in words:
+        if len(word) < 2:
+            continue
+        left = min(r[0] for r in word)
+        right = max(r[2] for r in word)
+        base = min(r[1] for r in word)
+        top = max(r[3] for r in word)
+        full.append(word + [b for b in bars if left <= b[0] and b[2] <= right and base <= b[1] <= top])
+    return full
 
 
 def _glyphs(word: list[tuple]) -> list[list]:
@@ -85,26 +108,66 @@ def _glyphs(word: list[tuple]) -> list[list]:
     return [c[1] for c in chars]
 
 
+def _hinted(hints: list[whip.Text], left: float, base: float, size: float) -> str | None:
+    """A single character written over this glyph names it."""
+    near = sorted(
+        ((abs(t.x - left) + abs(t.y - base), t) for t in hints
+         if abs(t.x - left) < 0.5 * size and abs(t.y - base) < 1.2 * size),
+        key=lambda pair: pair[0],
+    )
+    if not near or (len(near) > 1 and near[1][0] < 1.5 * near[0][0] + 0.2 * size):
+        return None          # two characters as close: neither names this glyph
+    return near[0][1].text.strip()
+
+
 def read(page: whip.Page) -> list[whip.Text]:
-    """The page's stroke-drawn labels, as text with a position."""
+    """The page's stroke-drawn labels, as text with a position.
+
+    Some exports keep one character of a label as text and draw the whole
+    label anyway (a lone `F` over the strokes of `FU491`). Such a character
+    names the glyph under it, so it is used where the shape is unknown.
+    """
     table = font()
-    written = [(t.x, t.y, t.height) for t in page.texts if t.text.strip("? ")]
+    written = [(t.x, t.y, len(t.text.strip())) for t in page.texts if t.text.strip("? ")]
+    hints = [t for t in page.texts if len(t.text.strip()) == 1 and t.text.strip().isalnum()]
     found = []
     for word in _words(page):
         base = min(r[1] for r in word)
         left = min(r[0] for r in word)
         size = max(r[3] for r in word) - base
-        if not size or any(abs(x - left) < 1.5 * size and abs(y - base) < 0.8 * size for x, y, _ in written):
+        if not size:
             continue
         glyphs = _glyphs(word)
+        # Text already written over the label: an export that kept the whole
+        # label needs no reading. A stray character of one it lost (a lone
+        # `F` where `FU491` is drawn) does not count as the label.
+        if any(abs(x - left) < 1.5 * size and abs(y - base) < size and 2 * length >= len(glyphs)
+               for x, y, length in written):
+            continue
         # Two shaped characters at least: a pair of plain strokes is not `II`.
         if sum(1 for g in glyphs if sum(len(run) for run in g) >= 4) < 2:
             continue
-        signatures = [_signature(g, min(p[0] for r in g for p in r), base, size) for g in glyphs]
-        if not all(s in table for s in signatures):
+        characters = []
+        hinted = 0
+        for glyph in glyphs:
+            left_edge = min(p[0] for r in glyph for p in r)
+            char = table.get(_signature(glyph, left_edge, base, size))
+            if char is None:
+                char = _hinted(hints, left_edge, base, size)
+                hinted += 1
+            characters.append(char)
+        # One character may be named by the text written over it, and only in
+        # a label the font already reads: a row of identical symbols under a
+        # phase marker is not the word `RRRRRR`.
+        if not all(characters) or hinted > 1 or len(glyphs) - hinted < 2:
             continue
-        text = "".join(table[s] for s in signatures)
+        text = "".join(characters)
         if not READABLE.fullmatch(text):
+            continue
+        # Part of a label the export did keep: `Inc=100A` is written there,
+        # and only its `100A` was drawn in a font this table knows.
+        if any(text in t.text and abs(t.x - left) < 4 * size and abs(t.y - base) < 1.5 * size
+               for t in page.texts):
             continue
         layers = [page.line_layers[r[5]] for r in word]
         found.append(whip.Text(int(left), int(base), text, max(set(layers), key=layers.count),
