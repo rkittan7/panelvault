@@ -52,7 +52,7 @@ jobs:
           build
 
   structural:
-    name: Catalog and generated-source checks
+    name: Type, catalog and generated-source checks
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +61,9 @@ jobs:
           python-version: '3.13'
       - run: python3 tools/gen_web_catalog.py --check
       - run: python3 tools/check_worker.py
-      - run: swiftc -parse ios/Runner/*.swift
-      - run: find worker/Sources -name '*.swift' -print0 | xargs -0 swiftc -parse
-      - run: find warehouse/Sources -name '*.swift' -print0 | xargs -0 swiftc -parse
+      # Type-checks all three apps against the iOS Simulator SDK. This replaces
+      # the `swiftc -parse` runs that were here: parsing is syntax only, so a
+      # method called on the wrong type passed this job and only failed in the
+      # xcodebuild matrix above. `-typecheck` is the same type checker the build
+      # runs, without the build.
+      - run: python3 tools/typecheck_swift.py
