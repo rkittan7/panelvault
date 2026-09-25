@@ -14,7 +14,7 @@
 // Build and run (macOS, Command Line Tools are enough):
 //
 //     swiftc -O tools/cutout.swift -o /tmp/cutout
-//     /tmp/cutout in.jpg out.png [--max 1400]
+//     /tmp/cutout in.jpg out.png [--max 800]
 //     /tmp/cutout in.png out.png --trim     # already cut out: drop strays, crop
 //
 // `--trim` is for a photo that is already a cut-out. It keeps the alpha it has
@@ -394,7 +394,7 @@ func write(_ bitmap: Bitmap, crop: CGRect, maxSide: Int, to path: String) -> Boo
 // MARK: - main
 
 var arguments = Array(CommandLine.arguments.dropFirst())
-var maxSide = 1400
+var maxSide = 800
 var islandShare = 0.03
 
 func number(_ flag: String) -> Double? {
@@ -415,7 +415,7 @@ if let at = arguments.firstIndex(of: "--plain") { wantsPlain = true; arguments.r
 var wantsTrim = false
 if let at = arguments.firstIndex(of: "--trim") { wantsTrim = true; arguments.remove(at: at) }
 guard arguments.count == 2 else {
-    FileHandle.standardError.write("usage: cutout <in> <out.png> [--max 1400] [--trim]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: cutout <in> <out.png> [--max 800] [--trim]\n".data(using: .utf8)!)
     exit(2)
 }
 if wantsTrim {

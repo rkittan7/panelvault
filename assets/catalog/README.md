@@ -57,9 +57,9 @@ guessed at, with the candidate ids listed — rename it to the id you meant.
 choice for logos: the apps render them in a bubble that assumes a cut-out mark,
 and the website drops them on both light and dark backgrounds.
 
-Keep the long side at or below **1400px**. These files ship inside the app
-binary, so 199 full-resolution camera originals would add hundreds of megabytes
-to every install.
+Keep the long side at or below **800px**. These files ship inside the app
+binary: at 1400px the 200 photos came to 115 MB of every install, and 800px is
+still sharper than any place the apps or the website draw a part.
 
 ## What the apps do with them
 
