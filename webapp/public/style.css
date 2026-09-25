@@ -1692,7 +1692,8 @@ img.brand-logo {
   .sidebar .nav .count, .sidebar .user-chip-text, .sidebar .skin, .sidebar #logout,
   .board-save-state, .board-save-state.syncing, .board-save-state.syncing i,
   .board-stage, .board-stage-tracker.changing .board-stage, .check-row, .check-row.just-changed,
-  .check-row.just-changed .check-mark, .check-row.just-changed.checked .check-mark {
+  .check-row.just-changed .check-mark, .check-row.just-changed.checked .check-mark,
+  .part-sheet-body {
     animation: none;
     transition: none;
   }
@@ -2012,6 +2013,23 @@ img.brand-logo {
 /* Same reason as the main-breaker sheet below: the modal scrolls, so nothing
    inside it may be squeezed to make the content fit instead. */
 .part-sheet > * { flex-shrink: 0; }
+/* The part is drawn into a body of its own so switching to a family member
+   can slide one body out and the next in. The body is the column the modal
+   used to be, so every section keeps its spacing. */
+.part-sheet-body { display: flex; flex-direction: column; gap: 13px; }
+.part-sheet-body > * { flex-shrink: 0; }
+/* The two bodies cross in one place: the leaving one is lifted out of the
+   flow, so the sheet takes the new part's height at once instead of stacking
+   both for the length of the slide. The script pins it where it stood. */
+.part-sheet-body[class*="leave-"] { position: absolute; left: 18px; right: 18px; pointer-events: none; }
+.part-sheet-body.leave-to-left { animation: part-leave-left .26s cubic-bezier(.4, 0, .2, 1) forwards; }
+.part-sheet-body.leave-to-right { animation: part-leave-right .26s cubic-bezier(.4, 0, .2, 1) forwards; }
+.part-sheet-body.enter-from-right { animation: part-enter-right .3s cubic-bezier(.2, .9, .3, 1); }
+.part-sheet-body.enter-from-left { animation: part-enter-left .3s cubic-bezier(.2, .9, .3, 1); }
+@keyframes part-leave-left { to { opacity: 0; transform: translateX(-36px); } }
+@keyframes part-leave-right { to { opacity: 0; transform: translateX(36px); } }
+@keyframes part-enter-right { from { opacity: 0; transform: translateX(36px); } }
+@keyframes part-enter-left { from { opacity: 0; transform: translateX(-36px); } }
 /* The main-breaker sheet is the part sheet's content inside the drill-down
    modal: photo, specification, what the drawing said, then the other boards
    carrying it. Its own stack, so the sections do not run together. */

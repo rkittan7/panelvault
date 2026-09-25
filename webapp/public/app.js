@@ -307,6 +307,120 @@ function polesOffered(part) {
   return [];
 }
 
+/* Parts the catalog keeps as separate rows although they are one product:
+   ABB's S201 to S204 are the same breaker in each pole count, SATEC's PM172P,
+   PM172E and PM172EH one meter at three levels, Salzer's red and green lamp
+   one lamp. The part sheet steps between them the way it already switches
+   poles within a single row.
+
+   Read off the rows themselves rather than listed, so a row added later in the
+   same pattern joins its family. Only rows of one brand, type and category are
+   ever related, the rules run in order, and a part joins the first family that
+   has another member in it. */
+const FAMILY_COLOURS = ["red", "green", "amber", "yellow", "blue", "white", "clear"];
+const FAMILY_VERSION_RANK = { "": 0, P: 1, E: 2, EH: 3 };
+const FAMILY_RULES = [
+  // A row per pole count, the count also written into the model:
+  // S201 1P ... S204 4P, E91 ... E94, "EasyLine XLP 1P" ... "4P".
+  ["poles", (part) => {
+    const poles = String(part.poles || "").toUpperCase().replace(/\s+/g, "");
+    const count = poles.match(/^([1-4])P(\+N)?$/);
+    if (!count) return null;
+    const model = String(part.model || "").trim();
+    let stem = null;
+    if (/\s[1-4]P$/i.test(model)) stem = model.replace(/\s+[1-4]P$/i, "");
+    else if (model.endsWith(count[1])) stem = `${model.slice(0, -1)}#`;
+    return stem ? { stem, label: poles, order: Number(count[1]) + (count[2] ? 0.5 : 0) } : null;
+  }],
+  // The same lamp or operator in another colour: "M22 pilot light, red".
+  ["colour", (part) => {
+    const match = String(part.model || "").trim().match(/^(.*?),?\s+(\w+)$/);
+    const colour = match && match[2].toLowerCase();
+    if (!colour || !FAMILY_COLOURS.includes(colour)) return null;
+    return { stem: match[1], label: colour[0].toUpperCase() + colour.slice(1), order: FAMILY_COLOURS.indexOf(colour) };
+  }],
+  // One model number at more than one level: PM172P, PM172E, PM172EH and
+  // PM172 PRO; MS132 and MS132-K.
+  ["version", (part) => {
+    const model = String(part.model || "").trim();
+    const token = model.split(/\s+/)[0];
+    const match = token.match(/^([A-Z]+\d+)([A-Z-]*)$/i);
+    const rest = model.slice(token.length).trim();
+    if (!match || (rest && !/^(PLUS|PRO)$/i.test(rest))) return null;
+    const rank = FAMILY_VERSION_RANK[match[2].toUpperCase()] ?? 4;
+    return { stem: match[1].toUpperCase(), label: model, order: rank + (/^PRO$/i.test(rest) ? 5 : 0) };
+  }],
+  // A size on the end: "AVK 4" ... "AVK 35", "T4P-M 1950x600x500".
+  ["size", (part) => {
+    const match = String(part.model || "").trim().match(/^(.*\S)\s+(\d+(?:\.\d+)?|\d+x\d+x\d+)$/i);
+    if (!match) return null;
+    const figures = match[2].split("x").map(Number);
+    return { stem: match[1], label: match[2], order: figures[1] ?? figures[0] };
+  }],
+  // A channel count inside the first word, the rest identical:
+  // "IRLA01S isolated relay module" ... "IRLA08S isolated relay module".
+  // Letters on both sides of the number, so a bare frame or model number (P1
+  // beside P3, EM720 beside EM920) is left as the separate product it is.
+  ["numbered", (part) => {
+    const model = String(part.model || "").trim();
+    const token = model.split(/\s+/)[0];
+    const rest = model.slice(token.length).trim();
+    const number = token.match(/^[A-Z]+(\d+)[A-Z]+$/i);
+    if (!number || !rest) return null;
+    return { stem: `${token.replace(/\d+/, "#")} ${rest}`, label: token, order: Number(number[1]) };
+  }],
+];
+
+const FAMILY_SWITCH_NAMES = {
+  poles: "Pole count", colour: "Colour", version: "Version", size: "Size", numbered: "Channels",
+};
+
+const familyCache = new WeakMap();
+
+/** The variants of `part` kept as rows of their own, in order, with the label
+ *  each goes by on the switch — or null when the part stands alone. */
+function partFamily(part) {
+  if (!part || !Array.isArray(catalog)) return null;
+  if (!familyCache.has(catalog)) familyCache.set(catalog, buildFamilies(catalog));
+  return familyCache.get(catalog).get(part.id) || null;
+}
+
+function buildFamilies(parts) {
+  const byPart = new Map();
+  for (const [rule, read] of FAMILY_RULES) {
+    const groups = new Map();
+    for (const part of parts) {
+      if (byPart.has(part.id)) continue;
+      const found = read(part);
+      if (!found) continue;
+      const key = [part.manufacturer, part.type, part.group, rule, found.stem].join("|").toLowerCase();
+      if (!groups.has(key)) groups.set(key, { stem: found.stem, members: [] });
+      groups.get(key).members.push({ part, label: found.label, order: found.order });
+    }
+    for (const group of groups.values()) {
+      // The range row a sized family grows from ("T4P-M" beside its
+      // 1950x600x500) belongs to it too, ahead of the sizes.
+      if (rule === "size" && group.members.length) {
+        const first = group.members[0].part;
+        for (const part of parts) {
+          if (!byPart.has(part.id) && !group.members.some((m) => m.part === part)
+            && part.manufacturer === first.manufacturer && part.type === first.type
+            && part.group === first.group && String(part.model || "").trim() === group.stem) {
+            group.members.push({ part, label: "Any size", order: -1 });
+          }
+        }
+      }
+      if (group.members.length < 2) continue;
+      // Two rows reading the same on the switch would be a switch nobody can use.
+      if (new Set(group.members.map((m) => m.label)).size !== group.members.length) continue;
+      const members = group.members.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+      const family = { rule, members };
+      members.forEach((member) => byPart.set(member.part.id, family));
+    }
+  }
+  return byPart;
+}
+
 function brandLogoURL(name) {
   return imageURL(catalogImages.manufacturers[brandSlug(name)]);
 }
@@ -3862,157 +3976,216 @@ function infoLines(rows) {
 /* The catalog part sheet, following ComponentDetailSheet: the photo first
    under its brand-coloured halo, then the type tile beside the model and its
    manufacturer, then Description and Specification. */
-function openCatalogPartModal(part) {
-  const entry = stockByPart().get(part.id);
+function openCatalogPartModal(startPart) {
   openModal((modal, close) => {
-    tintByBrand(modal, part.manufacturer);
     modal.classList.add("part-sheet");
-
-    const poles = polesOffered(part);
-    const classes = classesOffered(part);
-    let pole = poles[0] || null;
-    let klass = classes.length ? classes[0].letter : null;
-    const url = partPhotoURL(part, pole, klass);
-    let img = null;
-    if (url) {
-      const figure = el("div", "part-hero");
-      img = el("img");
-      img.src = url;
-      img.alt = `${part.manufacturer} ${part.model}`;
-      img.addEventListener("error", () => figure.remove());
-      figure.append(img);
-      modal.append(figure);
-    }
-
-    // The switches belong to the part, not to its photograph: a part sold three
-    // ways and four ways is still sold both ways before anyone photographs it,
-    // and the specification lines under them follow the choice either way.
-    const refresh = () => {
-      if (img) img.src = partPhotoURL(part, pole, klass) || url;
-      const poleLine = modal.querySelector("[data-poles-value]");
-      if (poleLine) poleLine.textContent = `${pole} — sold as ${part.poles}`;
-      const classLine = modal.querySelector("[data-class-value]");
-      const picked = classes.find((option) => option.letter === klass);
-      if (classLine && picked) classLine.textContent = classLabel(picked);
+    // The sheet is drawn into this body so a family switch can replace it in
+    // place — the same dialog, its close button and focus trap untouched —
+    // instead of closing one sheet and opening the next.
+    let body = null;
+    const show = (part, direction = 0) => {
+      const next = el("div", "part-sheet-body");
+      drawCatalogPart(next, part, close, show);
+      tintByBrand(modal, part.manufacturer);
+      if (!body) {
+        modal.append(next);
+      } else {
+        const leaving = body;
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          leaving.replaceWith(next);
+        } else {
+          // Pinned where it stood before it leaves the flow, so it slides away
+          // from its own place while the next part takes the sheet.
+          leaving.style.top = `${leaving.offsetTop}px`;
+          next.classList.add(direction < 0 ? "enter-from-left" : "enter-from-right");
+          leaving.classList.add(direction < 0 ? "leave-to-right" : "leave-to-left");
+          leaving.setAttribute("aria-hidden", "true");
+          leaving.after(next);
+          const done = () => leaving.remove();
+          leaving.addEventListener("animationend", done, { once: true });
+          // Should the animation never run to its end, the old body still goes.
+          setTimeout(done, 400);
+        }
+        next.querySelector(".family-tabs button.active")?.focus({ preventScroll: true });
+      }
+      body = next;
     };
-
-    const switcher = (label, options, isActive, choose) => {
-      const tabs = el("div", "board-detail-tabs pole-tabs");
-      tabs.setAttribute("role", "tablist");
-      tabs.setAttribute("aria-label", label);
-      const draw = () => {
-        tabs.replaceChildren();
-        options.forEach((option) => {
-          const button = el("button", isActive(option) ? "active" : "", option);
-          button.type = "button";
-          button.setAttribute("role", "tab");
-          button.setAttribute("aria-selected", String(isActive(option)));
-          button.addEventListener("click", () => {
-            choose(option);
-            draw();
-            refresh();
-          });
-          tabs.append(button);
-        });
-      };
-      draw();
-      modal.append(tabs);
-    };
-
-    if (classes.length > 1) {
-      switcher("Breaking capacity class", classes.map((option) => option.letter),
-        (letter) => letter === klass, (letter) => { klass = letter; });
-    }
-    if (poles.length > 1) {
-      switcher("Pole count", poles, (option) => option === pole, (option) => { pole = option; });
-    }
-
-    // The brand's own mark leads when there is one — a reader recognises the
-    // logo faster than the category glyph, and the type is spelled out in the
-    // line below and again in the specification. The type icon stays as the
-    // fallback for the brands with no logo yet.
-    const head = el("div", "part-title-row");
-    const logoURL = brandLogoURL(part.manufacturer);
-    if (logoURL) {
-      const tile = el("div", "brand-tile");
-      tile.style.setProperty("--glow", brandLogoGlow(part.manufacturer));
-      const img = el("img");
-      img.src = logoURL;
-      img.alt = part.manufacturer;
-      // A manifest entry with no file behind it must not leave a gap where the
-      // mark should be: fall back to the glyph the app would have shown.
-      img.addEventListener("error", () => {
-        const fallback = el("div", "type-tile");
-        fallback.append(icon(iconForType(part.type), 28));
-        tile.replaceWith(fallback);
-      });
-      tile.append(img);
-      head.append(tile);
-    } else {
-      const tile = el("div", "type-tile");
-      tile.append(icon(iconForType(part.type), 28));
-      head.append(tile);
-    }
-    const text = el("div", "part-title-text");
-    text.append(el("div", "part-title", part.model));
-    const brand = el("button", "part-brand");
-    brand.type = "button";
-    brand.setAttribute("aria-label", `View manufacturer: ${part.manufacturer}`);
-    brand.append(
-      icon("tag", 13),
-      el("span", null, part.manufacturer),
-      icon("chevron", 11),
-    );
-    // Replace the component sheet with the existing manufacturer overview so
-    // the user can move between records without stacking modal layers.
-    brand.addEventListener("click", () => {
-      close();
-      openManufacturerOverview(part.manufacturer);
-    });
-    text.append(brand);
-    head.append(text);
-    modal.append(head);
-
-    modal.append(el("div", "part-stock-note",
-      entry ? `${entry.onHand} on hand` : "not tracked in stock"));
-
-    if (part.about) {
-      modal.append(refSection("Description", "note",
-        el("p", "ref-body", part.about)));
-    }
-
-    modal.append(partManualCard(part.id, () => {
-      close();
-      openCatalogPartModal(part);
-    }));
-
-    modal.append(refSection("Specification", "layers", infoLines([
-      ["Type", part.type],
-      ["Rating", part.rating],
-      ["Class", classes.length > 1 ? classLabel(classes.find((option) => option.letter === klass)) : "", "classValue"],
-      ["Poles / phase", poles.length > 1 ? `${pole} — sold as ${part.poles}` : part.poles, "polesValue"],
-      ["Serial number", part.serialNumber],
-      ["Curve / notes", part.curve],
-      ["Category", part.groupName],
-      ["Part id", part.id],
-    ])));
-
-    if (entry) {
-      modal.append(modalActions(close, "Go to stock", () => {
-        close();
-        switchView("stock");
-      }));
-    } else if (isAdmin()) {
-      modal.append(modalActions(close, "Choose variant", () => openStockVariantModal(part)));
-    } else {
-      // Staff can read the catalog but not decide what the company tracks.
-      const actions = el("div", "actions");
-      const done = el("button", "btn-primary", "Close");
-      done.addEventListener("click", close);
-      actions.append(done);
-      modal.append(actions);
-    }
+    show(startPart);
   });
+}
+
+/** One part drawn into the sheet body; `show` moves the sheet to another part. */
+function drawCatalogPart(sheet, part, close, show) {
+  const entry = stockByPart().get(part.id);
+  const family = partFamily(part);
+  const poles = polesOffered(part);
+  const classes = classesOffered(part);
+  let pole = poles[0] || null;
+  let klass = classes.length ? classes[0].letter : null;
+  const url = partPhotoURL(part, pole, klass);
+  let img = null;
+  if (url) {
+    const figure = el("div", "part-hero");
+    img = el("img");
+    img.src = url;
+    img.alt = `${part.manufacturer} ${part.model}`;
+    img.addEventListener("error", () => figure.remove());
+    figure.append(img);
+    sheet.append(figure);
+  }
+
+  // The switches belong to the part, not to its photograph: a part sold three
+  // ways and four ways is still sold both ways before anyone photographs it,
+  // and the specification lines under them follow the choice either way.
+  const refresh = () => {
+    if (img) img.src = partPhotoURL(part, pole, klass) || url;
+    const poleLine = sheet.querySelector("[data-poles-value]");
+    if (poleLine) poleLine.textContent = `${pole} — sold as ${part.poles}`;
+    const classLine = sheet.querySelector("[data-class-value]");
+    const picked = classes.find((option) => option.letter === klass);
+    if (classLine && picked) classLine.textContent = classLabel(picked);
+  };
+
+  const switcher = (label, options, isActive, choose) => {
+    const tabs = el("div", "board-detail-tabs pole-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", label);
+    const draw = () => {
+      tabs.replaceChildren();
+      options.forEach((option) => {
+        const button = el("button", isActive(option) ? "active" : "", option);
+        button.type = "button";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", String(isActive(option)));
+        button.addEventListener("click", () => {
+          choose(option);
+          draw();
+          refresh();
+        });
+        tabs.append(button);
+      });
+    };
+    draw();
+    sheet.append(tabs);
+  };
+
+  // The rows this part shares a product with. Unlike the switches below it
+  // does not rewrite this sheet: it moves the sheet to the other row, whose
+  // photo, rating, stock and id are that row's own.
+  if (family) {
+    const here = family.members.findIndex((member) => member.part.id === part.id);
+    const tabs = el("div", "board-detail-tabs pole-tabs family-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", FAMILY_SWITCH_NAMES[family.rule]);
+    family.members.forEach((member, index) => {
+      const active = index === here;
+      const button = el("button", active ? "active" : "", member.label);
+      button.type = "button";
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", String(active));
+      button.title = `${member.part.manufacturer} ${member.part.model}`;
+      if (!active) button.addEventListener("click", () => show(member.part, index > here ? 1 : -1));
+      tabs.append(button);
+      // Warm the neighbours' photos so the swap has its picture at once.
+      const sibling = !active && partPhotoURL(member.part);
+      if (sibling) new Image().src = sibling;
+    });
+    sheet.append(tabs);
+  }
+
+  if (classes.length > 1) {
+    switcher("Breaking capacity class", classes.map((option) => option.letter),
+      (letter) => letter === klass, (letter) => { klass = letter; });
+  }
+  if (poles.length > 1) {
+    switcher("Pole count", poles, (option) => option === pole, (option) => { pole = option; });
+  }
+
+  // The brand's own mark leads when there is one — a reader recognises the
+  // logo faster than the category glyph, and the type is spelled out in the
+  // line below and again in the specification. The type icon stays as the
+  // fallback for the brands with no logo yet.
+  const head = el("div", "part-title-row");
+  const logoURL = brandLogoURL(part.manufacturer);
+  if (logoURL) {
+    const tile = el("div", "brand-tile");
+    tile.style.setProperty("--glow", brandLogoGlow(part.manufacturer));
+    const img = el("img");
+    img.src = logoURL;
+    img.alt = part.manufacturer;
+    // A manifest entry with no file behind it must not leave a gap where the
+    // mark should be: fall back to the glyph the app would have shown.
+    img.addEventListener("error", () => {
+      const fallback = el("div", "type-tile");
+      fallback.append(icon(iconForType(part.type), 28));
+      tile.replaceWith(fallback);
+    });
+    tile.append(img);
+    head.append(tile);
+  } else {
+    const tile = el("div", "type-tile");
+    tile.append(icon(iconForType(part.type), 28));
+    head.append(tile);
+  }
+  const text = el("div", "part-title-text");
+  text.append(el("div", "part-title", part.model));
+  const brand = el("button", "part-brand");
+  brand.type = "button";
+  brand.setAttribute("aria-label", `View manufacturer: ${part.manufacturer}`);
+  brand.append(
+    icon("tag", 13),
+    el("span", null, part.manufacturer),
+    icon("chevron", 11),
+  );
+  // Replace the component sheet with the existing manufacturer overview so
+  // the user can move between records without stacking modal layers.
+  brand.addEventListener("click", () => {
+    close();
+    openManufacturerOverview(part.manufacturer);
+  });
+  text.append(brand);
+  head.append(text);
+  sheet.append(head);
+
+  sheet.append(el("div", "part-stock-note",
+    entry ? `${entry.onHand} on hand` : "not tracked in stock"));
+
+  if (part.about) {
+    sheet.append(refSection("Description", "note",
+      el("p", "ref-body", part.about)));
+  }
+
+  sheet.append(partManualCard(part.id, () => {
+    close();
+    openCatalogPartModal(part);
+  }));
+
+  sheet.append(refSection("Specification", "layers", infoLines([
+    ["Type", part.type],
+    ["Rating", part.rating],
+    ["Class", classes.length > 1 ? classLabel(classes.find((option) => option.letter === klass)) : "", "classValue"],
+    ["Poles / phase", poles.length > 1 ? `${pole} — sold as ${part.poles}` : part.poles, "polesValue"],
+    ["Serial number", part.serialNumber],
+    ["Curve / notes", part.curve],
+    ["Category", part.groupName],
+    ["Part id", part.id],
+  ])));
+
+  if (entry) {
+    sheet.append(modalActions(close, "Go to stock", () => {
+      close();
+      switchView("stock");
+    }));
+  } else if (isAdmin()) {
+    sheet.append(modalActions(close, "Choose variant", () => openStockVariantModal(part)));
+  } else {
+    // Staff can read the catalog but not decide what the company tracks.
+    const actions = el("div", "actions");
+    const done = el("button", "btn-primary", "Close");
+    done.addEventListener("click", close);
+    actions.append(done);
+    sheet.append(actions);
+  }
 }
 
 /** Create a part the catalog does not carry.

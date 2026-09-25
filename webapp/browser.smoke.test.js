@@ -320,3 +320,48 @@ test("an administrator can record a signed stock correction from the stock scree
   const correction = state.movements.find((movement) => movement.kind === "adjust");
   expect(correction).toMatchObject({ partID, quantity: -3, reference: "Cycle count" });
 });
+
+test("a part kept as one row per pole count or version switches to its siblings in place", async ({ page }) => {
+  const failures = [];
+  page.on("pageerror", (error) => failures.push(`page: ${error.message}`));
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.getByRole("tab", { name: "Sign up", exact: true }).click();
+  await page.getByRole("radio", { name: /Start a company/ }).click();
+  await page.locator('#signup-create input[name="companyName"]').fill("Family Test Panels");
+  await page.locator("#form-signup").getByLabel("Name").fill("Family Owner");
+  await page.locator("#form-signup").getByLabel("Email").fill("family-owner@example.com");
+  await page.locator("#form-signup").getByLabel("Password").fill("family-secret-12");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Catalog", exact: true }).click();
+  const search = page.locator("#view-catalog .search-wrap input");
+  await search.fill("S201");
+  await page.locator("#view-catalog .row").filter({ hasText: "S201" }).first().click();
+
+  // ABB sells S201 to S204 as four rows; the sheet offers all four and walks
+  // between them without closing.
+  const sheet = page.locator(".modal.part-sheet");
+  const poles = sheet.getByRole("tablist", { name: "Pole count" });
+  await expect(poles.getByRole("tab")).toHaveText(["1P", "2P", "3P", "4P"]);
+  await expect(poles.getByRole("tab", { name: "1P" })).toHaveAttribute("aria-selected", "true");
+  await poles.getByRole("tab", { name: "3P" }).click();
+  const current = sheet.locator(".part-sheet-body:not([aria-hidden])");
+  await expect(current.locator(".part-title")).toHaveText("S203");
+  await expect(current).toContainText("abb-s203-3p");
+  await expect(sheet.locator(".part-sheet-body")).toHaveCount(1);
+  await expect(current.getByRole("tab", { name: "3P" })).toHaveAttribute("aria-selected", "true");
+  await expect(current.getByRole("tab", { name: "3P" })).toBeFocused();
+  await current.getByRole("tab", { name: "1P" }).click();
+  await expect(sheet.locator(".part-sheet-body:not([aria-hidden]) .part-title")).toHaveText("S201");
+  await page.keyboard.press("Escape");
+
+  // A version family: SATEC's PM172 in four versions.
+  await search.fill("PM172E");
+  await page.locator("#view-catalog .row").filter({ hasText: "PM172E" }).first().click();
+  const versions = sheet.getByRole("tablist", { name: "Version" });
+  await expect(versions.getByRole("tab")).toHaveText(["PM172P", "PM172E", "PM172EH", "PM172 PRO"]);
+  await versions.getByRole("tab", { name: "PM172 PRO" }).click();
+  await expect(sheet.locator(".part-sheet-body:not([aria-hidden]) .part-title")).toHaveText("PM172 PRO");
+  expect(failures).toEqual([]);
+});
