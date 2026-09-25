@@ -132,6 +132,21 @@ def _board_data(run: ExtractionRun) -> dict[str, str]:
     return found
 
 
+# The board record's own words for what a board is fed through, which are
+# not the catalogue's: it lists a Changeover Switch, the catalogue a Manual
+# Changeover Switch.
+BOARD_MAIN_TYPE = {
+    "mccb": "MCCB", "mcb": "MCB", "rcd": "RCBO", "acb": "ACB",
+    "switch": "Switch Disconnector", "changeover_switch": "Changeover Switch",
+    "fuse": "Fuse Switch",
+}
+
+
+def _main_breaker_type(value: str) -> str:
+    """A class as the audit names it, or a type as a model wrote it."""
+    return BOARD_MAIN_TYPE.get(value, value)
+
+
 def board_draft(run: ExtractionRun) -> dict[str, Any]:
     facts: dict[str, str] = {}
     for fact in run.audit.panel:
@@ -168,8 +183,8 @@ def board_draft(run: ExtractionRun) -> dict[str, Any]:
             "manufacturer": enclosure,
             "manufacturerRole": "enclosure" if enclosure else None,
             "panelBuilder": pick("panel_builder", "panel_builder"),
-            "mainBreakerType": facts.get("main_breaker_type", "")
-                or (PANELVAULT_TYPE.get(main_line.device_class, "") if main_line else ""),
+            "mainBreakerType": _main_breaker_type(facts.get("main_breaker_type", ""))
+                or (BOARD_MAIN_TYPE.get(main_line.device_class, "") if main_line else ""),
             "mainBreakerModel": facts.get("main_breaker_model", "") or (main_line.model or "" if main_line else ""),
             "mainBreakerAmpere": facts.get("main_breaker_rating", "") or (main_line.rating or "" if main_line else ""),
             "mainBreakerReference": main_tag,

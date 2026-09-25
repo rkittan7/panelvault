@@ -895,6 +895,10 @@ function normalizeReading(reading, catalog, options = {}) {
 
   const components = [];
   const unmatched = [];
+  // What the catalog answered for the incomer, for a board whose drawing
+  // names no model for it: SHE is printed `Socomec 4x400A 1-0-2` and nothing
+  // more, and the board record should still say which switch that is.
+  let mainCatalogPart = null;
   // The response contract permits 200 door rows and 200 schematic rows. Do
   // not re-apply a 200-row cap after combining them: that used to discard the
   // tail of otherwise valid scans, usually the ordinary schematic components
@@ -916,6 +920,7 @@ function normalizeReading(reading, catalog, options = {}) {
       curve: detectedCurve,
     };
     const hit = matchCatalogPart(catalog, normalizedPart);
+    if (hit && isMain && !mainCatalogPart) mainCatalogPart = hit;
     if (hit) {
       components.push({
         partID: hit.id,
@@ -965,7 +970,7 @@ function normalizeReading(reading, catalog, options = {}) {
       typeEvidence: text(safeBoard.typeEvidence, 240),
       manufacturer: resolveBoardManufacturer(safeBoard),
       mainBreakerType: readMatchesTarget ? mainType : "",
-      mainBreakerModel: readMatchesTarget ? mainModel : "",
+      mainBreakerModel: readMatchesTarget ? (mainModel || storedMainBreakerModel(mainCatalogPart, "")) : "",
       mainBreakerAmpere: readMatchesTarget ? mainAmpere || text(safeBoard.mainBreakerAmpere, 20) : "",
       mainBreakerReference: readMatchesTarget ? text(mainBreakerPart?.part?.reference || safeBoard.mainBreakerReference, 120) : "",
       mainBreakerEvidence: readMatchesTarget ? text(safeBoard.mainBreakerEvidence, 300) : "",

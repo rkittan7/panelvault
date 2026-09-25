@@ -232,3 +232,20 @@ def test_the_title_stage_names_the_board(cache_dir):
     first = next(s for s in result.sheets if s.sheet.page_number == 1)
     assert first.sheet.title_block.project == "אגרובנק TOWER B"
     assert not any("title block could not be read" in w for w in result.warnings)
+
+
+def test_the_board_comes_in_through_what_it_is_rated_for_not_the_biggest_breaker():
+    from scheme_extractor.models.schema import Device
+    from scheme_extractor.pipeline import choose_incomer
+
+    # 4382.26-1: the board is rated 3X400A and comes in through SHE, while Q0
+    # is the 250A main of one field inside it.
+    she = Device(tag="SHE", device_class="changeover_switch", rating="4x400A")
+    q0 = Device(tag="Q0", device_class="mccb", rating="3X250A",
+                description_he="מפסק ראשי שדה ב. חיוני")
+    assert choose_incomer([q0, she], "3X400A").tag == "SHE"
+    # With nothing printed to compare against, a field's own main still ranks
+    # below a device that names no field.
+    assert choose_incomer([q0, she], "").tag == "SHE"
+    assert choose_incomer([q0], "3X400A").tag == "Q0"
+    assert choose_incomer([Device(tag="F1", device_class="mcb", rating="16A")], "") is None

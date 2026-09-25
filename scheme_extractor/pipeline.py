@@ -230,6 +230,33 @@ def run(
 
 # ------------------------------------------------------------------ DWF
 
+# What a board can be fed through: a breaker, an isolator or a changeover.
+INCOMER_CLASSES = {"mccb", "switch", "changeover_switch"}
+FIELD = "שדה"          # `מפסק ראשי שדה ב. חיוני`: the main of one field
+
+
+def _serves_a_field(device) -> bool:
+    """Does the drawing name this device as one field's main, not the board's?"""
+    return FIELD in (device.description_he or "")
+
+
+def choose_incomer(devices: list, rated: str | None):
+    """The device the whole board is fed through.
+
+    Not simply the largest: 4382.26-1 carries a 250A incomer for its
+    non-essential field beside the 400A changeover the board itself comes
+    in on. The data table prints what the board is rated for, and the
+    incomer is the device built for exactly that; a field's own main is
+    rated lower and the drawing says which field it serves.
+    """
+    candidates = [d for d in devices if d.device_class in INCOMER_CLASSES and d.rating]
+    if not candidates:
+        return None
+    wanted = _amps(rated)
+    return max(candidates, key=lambda d: (
+        _amps(d.rating) == wanted, not _serves_a_field(d), _amps(d.rating)))
+
+
 def _amps(rating: str | None) -> float:
     found = re.search(r"(\d+(?:\.\d+)?)\s*A\b", (rating or "").upper())
     return float(found.group(1)) if found else 0.0
@@ -299,11 +326,14 @@ def run_dwf(path: Path, *, job_id: str | None = None, progress: Progress | None 
             [int(w) for w in build["cabinet_widths"].split("+")], height, depth,
             ENCLOSURE_MAKERS.get(_hebrew_part(maker), _hebrew_part(maker)), _latin_part(maker), elevation)
 
-    # The board's incomer: the highest-rated breaker or switch it carries.
-    incomers = [d for s in sheets for d in s.devices if d.device_class in {"mccb", "switch"} and d.rating]
+    # The board's incomer: the switch or breaker the whole board is fed
+    # through. The data table prints what the board is rated for (`זרם הלוח`
+    # 3X400A), and the incomer is the device built for exactly that; a field's
+    # own main sits below it, rated lower, and says which field it serves.
+    rated = next((d.value for s in sheets for d in s.board_data if "זרם" in d.label_he), "")
+    main = choose_incomer([d for sheet in sheets for d in sheet.devices], rated)
     facts = []
-    if incomers:
-        main = max(incomers, key=lambda d: _amps(d.rating))
+    if main:
         facts = [
             PanelFact(field="main_breaker_reference", value=main.tag),
             PanelFact(field="main_breaker_type", value=main.device_class),

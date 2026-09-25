@@ -774,3 +774,21 @@ test("a switch is matched by what it breaks and the positions it is marked with"
     rawText: "Socomec Manual Changeover Switch 4x400A 4P I-I+II-II",
   }).model, "SIRCOVER I-I+II-II");
 });
+
+test("the board's incomer keeps the model the catalog answered when the drawing names none", () => {
+  const reading = {
+    board: {
+      number: "4382.26-1", mainBreakerReference: "SHE", mainBreakerType: "Changeover Switch",
+      mainBreakerAmpere: "4x400A", mainBreakerModel: "",
+    },
+    components: [{
+      manufacturer: "Socomec", model: "", type: "Manual Changeover Switch", rating: "4x400A",
+      poles: "4P", quantity: 1, reference: "SHE", supplyRole: "board_main", isMainBreaker: true,
+      rawText: "Socomec Manual Changeover Switch 4x400A 4P I-0-II",
+    }],
+  };
+  const result = normalizeReading(reading, [...CATALOG, ...SWITCHES]);
+  assert.equal(result.board.mainBreakerReference, "SHE");
+  assert.equal(result.board.mainBreakerType, "Changeover Switch");
+  assert.equal(result.board.mainBreakerModel, "Socomec SIRCOVER I-0-II");
+});

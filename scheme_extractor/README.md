@@ -80,7 +80,10 @@ Things the reading has to account for:
   counted twice.
 
 From there the run is the same: grouping, parts-list models, the board draft
-and the workbook. The main breaker is the highest-rated breaker or switch.
+and the workbook. The board's incomer is the device it is rated for, not the
+largest one on it: the data table prints `זרם הלוח 3X400A` and 4382.26-1 comes
+in through SHE at 4x400A, while Q0 at 3X250A is the main of one field inside
+it and says so (`מפסק ראשי שדה ב. חיוני`).
 
 The front elevation also gives the board's build: the row of widths that adds
 up to the board's own width counts the cabinets (`500+600+600+800+800+600` is
