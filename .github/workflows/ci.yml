@@ -26,6 +26,30 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
 
+  extractor:
+    name: Drawing reader tests and image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The service ships on 3.11 (scheme_extractor/Dockerfile), so it is
+          # tested on 3.11, not on whatever the runner defaults to.
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: scheme_extractor/requirements.txt
+      # probe and textlayer shell out to pdftotext/pdftoppm.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - run: pip install -r scheme_extractor/requirements.txt pytest
+      # -rs prints the skip reasons: the 13 tests that need the reference
+      # drawing skip here, because the PDF is a customer's IP and is not in
+      # the repo. Set SCHEME_REFERENCE_PDF to a checked-out copy to run them.
+      - run: python -m pytest scheme_extractor/tests -q -rs
+      - run: docker build -t scheme-extractor scheme_extractor
+      # The suite never imports api.py or output/, which is the whole surface
+      # webapp talks to. This loads them, in the image that would be deployed.
+      - run: docker run --rm scheme-extractor python -c 'import scheme_extractor.api'
+
   native:
     name: Native iOS builds
     runs-on: macos-15
